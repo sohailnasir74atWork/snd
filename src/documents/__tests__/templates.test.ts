@@ -33,6 +33,9 @@ const order: Order = {
   id: 'o1',
   orderNo: 'ORD-2026-0001',
   invoiceNo: 'INV-2026-0001',
+  bookedBy: 'u-booker',
+  assignedTo: 'u-rider',
+  deliveryDate: '2026-08-05',
   shopId: 's1',
   shopSnapshot: { name: 'Bismillah Store', phone: '0311-7654321', area: 'Satellite Town' },
   items: [

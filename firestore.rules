@@ -50,9 +50,25 @@ service cloud.firestore {
 
       match /settings/{docId} {
         allow read: if inCompany(companyId);
-        // settings/company is owner-only; settings/day (route started / handover
-        // state) is written by the field roles as part of their day (FR-6.2, FR-7.9).
-        allow write: if isAdmin(companyId) || (docId == 'day' && inCompany(companyId));
+        allow write: if isAdmin(companyId);
+      }
+
+      // One day document per person: his own route lock and handover state.
+      // He may start his own route and hand over; ONLY an admin confirms
+      // (FR-6.2, FR-7.9, FR-7.11).
+      match /days/{staffId} {
+        allow read: if inCompany(companyId);
+        // Creating his own day: allowed, but never already-confirmed.
+        allow create: if isAdmin(companyId)
+                      || (request.auth.uid == staffId
+                          && request.resource.data.get('handoverConfirmed', false) == false);
+        // Updating his own day: he may start his route and hand over; only an
+        // admin may ever touch handoverConfirmed (FR-7.11).
+        allow update: if isAdmin(companyId)
+                      || (request.auth.uid == staffId
+                          && !request.resource.data.diff(resource.data)
+                                .affectedKeys().hasAny(['handoverConfirmed']));
+        allow delete: if false;
       }
 
       // Mirror of the server-side directory for the Employees screen (display only;
@@ -63,8 +79,13 @@ service cloud.firestore {
 
       match /shops/{shopId} {
         allow read: if inCompany(companyId);
-        allow create, update: if isAdmin(companyId)
-                              || isBooker(companyId)
+        allow create: if isAdmin(companyId) || isBooker(companyId);
+        // A booker may keep shop details and flag a collection — but he can
+        // never move the balance; that is what payments are for (FR-7.10).
+        allow update: if isAdmin(companyId)
+                      || (isBooker(companyId)
+                          && !request.resource.data.diff(resource.data)
+                                .affectedKeys().hasAny(['outstanding']))
                               // rider may only clear/set collection flags in transactions
                               || (isRider(companyId)
                                   && request.resource.data.diff(resource.data)
@@ -110,9 +131,16 @@ service cloud.firestore {
       match /payments/{paymentId} {
         allow read: if isAdmin(companyId)
                     || (signedIn() && resource.data.collectedBy == request.auth.uid);
-        allow create: if isAdmin(companyId)
-                      || isRider(companyId)
-                      || (isBooker(companyId) && request.resource.data.exception == true);
+        // A new payment is ALWAYS unconfirmed, always attributed to the person
+        // making it, always positive. Without these three lines a modified app
+        // could mint already-confirmed cash in someone else's name (FR-7.11).
+        allow create: if request.resource.data.confirmed == false
+                      && request.resource.data.collectedBy == request.auth.uid
+                      && request.resource.data.amount is int
+                      && request.resource.data.amount > 0
+                      && (isAdmin(companyId)
+                          || isRider(companyId)
+                          || (isBooker(companyId) && request.resource.data.exception == true));
         // Append-only (FR-7.6) with one exception: the Owner's confirmation
         // flips exactly the `confirmed` flag and nothing else (FR-7.11).
         allow update: if isAdmin(companyId)
@@ -142,9 +170,23 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      // Serial counters may only ever go UP, one at a time. Without this any
+      // staff phone could reset them and re-issue duplicate bill numbers (§8.1).
       match /counters/{year} {
         allow read: if inCompany(companyId);
-        allow write: if inCompany(companyId); // transaction-shape check lands in slice 3
+        allow create: if inCompany(companyId);
+        allow update: if inCompany(companyId)
+                      && request.resource.data.keys().hasOnly(['order', 'invoice', 'receipt', 'reward'])
+                      && (!('order' in request.resource.data) || !('order' in resource.data)
+                          || request.resource.data.order == resource.data.order + 1
+                          || request.resource.data.order == resource.data.order)
+                      && (!('invoice' in request.resource.data) || !('invoice' in resource.data)
+                          || request.resource.data.invoice == resource.data.invoice + 1
+                          || request.resource.data.invoice == resource.data.invoice)
+                      && (!('receipt' in request.resource.data) || !('receipt' in resource.data)
+                          || request.resource.data.receipt == resource.data.receipt + 1
+                          || request.resource.data.receipt == resource.data.receipt);
+        allow delete: if false;
       }
 
       // ---- owner-only money: hard deny for staff (FR-15.1, FR-17.4) --------

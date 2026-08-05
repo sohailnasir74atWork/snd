@@ -8,6 +8,7 @@ import type {
   CompanySettings, DayState, Employee, Expense, FixedCharge,
   Order, Payment, Product, Shop,
 } from './models';
+import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
   BookOrderInput, CloseOutInput, ProductInput, ShopInput, StoreApi, StoreContext,
 } from './store';
@@ -67,7 +68,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     shops: seedShops,
     orders: [],
     payments: [],
-    day: { routeStarted: false, handedOver: false, handoverConfirmed: false },
+    day: EMPTY_DAY(),
     settings: seedSettings,
     employees: [
       { email: 'owner@example.com', name: 'You (preview)', role: 'admin', joined: true },
@@ -82,9 +83,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
     bookOrder(input: BookOrderInput): Order {
       const shop = state.shops.find(s => s.id === input.shopId)!;
+      const deliveryDay = state.day.routeStarted ? 'tomorrow' : input.deliveryDay;
       const order: Order = {
         id: `o${Date.now()}`,
         orderNo: nextSerial('ORD'),
+        bookedBy: 'preview-booker',
+        assignedTo: 'preview-rider',
+        deliveryDate: deliveryDay === 'today' ? todayKey() : tomorrowKey(),
         shopId: shop.id,
         shopSnapshot: { name: shop.name, phone: shop.phone, area: shop.area },
         items: input.items,
@@ -93,7 +98,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         status: 'assigned',
         paymentStatus: 'unpaid',
         amountPaid: 0,
-        deliveryDay: state.day.routeStarted ? 'tomorrow' : input.deliveryDay,
+        deliveryDay,
         bookedAt: Date.now(),
       };
       setState(st => ({

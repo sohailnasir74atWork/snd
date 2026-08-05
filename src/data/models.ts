@@ -43,8 +43,13 @@ export type OrderStatus =
 
 export interface Order {
   id: string;
-  orderNo: string; // ORD-YYYY-NNNN at booking (§8.1)
+  orderNo: string; // ORD-YYYY-NNNN at booking (§8.1) — "local-N" until sync (FR-5.8)
+  provisional?: boolean; // true while the serial is still a local reference
   invoiceNo?: string; // INV-… issued by the rider at delivery (FR-5.2)
+  invoiceProvisional?: boolean;
+  bookedBy: string; // uid — every non-admin security rule keys on this
+  assignedTo?: string; // uid of the rider the order belongs to
+  deliveryDate: string; // 'YYYY-MM-DD' — the day this order belongs to
   shopId: string;
   shopSnapshot: { name: string; phone: string; area: string };
   items: OrderItem[];
@@ -77,11 +82,31 @@ export interface Payment {
   createdAt: number;
 }
 
+/**
+ * The day's state, stamped with the date it belongs to (`YYYY-MM-DD`).
+ * Anything read for a different date is treated as a fresh day — that is
+ * what makes the morning load list come back tomorrow (FR-6.2).
+ */
 export interface DayState {
+  date: string;
   routeStarted: boolean; // FR-6.2 — [Start route] freezes the load
   handedOver: boolean;
   handoverConfirmed: boolean;
 }
+
+/** Today as 'YYYY-MM-DD' in the phone's local time (§12.1). */
+export function todayKey(d: Date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export function tomorrowKey(d: Date = new Date()): string {
+  return todayKey(new Date(d.getTime() + 86400_000));
+}
+
+export const EMPTY_DAY = (date = todayKey()): DayState => ({
+  date, routeStarted: false, handedOver: false, handoverConfirmed: false,
+});
 
 export interface Employee {
   email: string;
@@ -104,6 +129,8 @@ export interface CompanySettings {
   rewardApprovalLimit: number;
   acceptCheques: boolean;
   sendConfirmations: boolean;
+  /** The only rider — orders assign themselves to him (FR-6.1). */
+  autoAssignRiderId?: string;
   receiptFooter?: string;
   logoUrl?: string;
 }

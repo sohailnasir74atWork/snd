@@ -11,6 +11,7 @@ import {
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { Order } from '../../data/models';
+import { todayKey } from '../../data/models';
 import { computeTotals } from '../../lib/order';
 import { amountInWordsLine } from '../../lib/money';
 import { strings } from '../../i18n/strings';
@@ -19,8 +20,10 @@ import { sharePdf } from '../../documents/share';
 
 export function RiderRouteScreen() {
   const store = useStore();
-  const stops = store.orders.filter(o => o.status === 'assigned' || o.status === 'out_for_delivery');
-  const done = store.orders.filter(o => o.status === 'delivered');
+  const today = todayKey();
+  const isToday = (o: Order) => (o.deliveryDate ?? today) === today;
+  const stops = store.orders.filter(o => isToday(o) && (o.status === 'assigned' || o.status === 'out_for_delivery'));
+  const done = store.orders.filter(o => isToday(o) && o.status === 'delivered');
   const [openStop, setOpenStop] = React.useState<Order | null>(null);
 
   if (openStop) return <CloseOutScreen order={openStop} onDone={() => setOpenStop(null)} />;

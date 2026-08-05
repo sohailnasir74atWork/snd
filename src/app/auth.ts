@@ -93,25 +93,46 @@ export async function signOutEverywhere(): Promise<void> {
   await fbSignOut(getAuth()).catch(() => {});
 }
 
-/** Restore a still-signed-in session on app start (FR-1.5: stay signed in). */
+/**
+ * Restore a still-signed-in session on app start (FR-1.5: stay signed in).
+ *
+ * Offline-first: the identity already lives in the cached ID token's custom
+ * claims, so a morning with no signal opens straight into the app on cached
+ * Firestore data. The server is asked only to REFRESH the claims when it is
+ * reachable — and only a definite "you are out" signs the person out. A
+ * network failure never locks a field worker out of his own day.
+ */
 export async function restoreSession(): Promise<SessionUser | null> {
   const user = getAuth().currentUser;
   if (!user) return null;
-  try {
-    const admit = httpsCallable(getFunctions(undefined, 'asia-south1'), 'admitSignIn');
-    const { data } = (await admit({})) as { data: any };
-    if (data.status !== 'admitted') {
-      await signOutEverywhere(); // removed while away (FR-1.9)
-      return null;
-    }
+
+  const fromClaims = async (forceRefresh: boolean): Promise<SessionUser | null> => {
+    const res = await user.getIdTokenResult(forceRefresh);
+    const companyId = res.claims.companyId as string | undefined;
+    const role = res.claims.role as SessionUser['role'] | undefined;
+    if (!companyId || !role) return null;
     return {
       uid: user.uid,
       email: user.email ?? '',
-      name: data.name || user.displayName || '',
-      companyId: data.companyId,
-      role: data.role,
+      name: user.displayName ?? '',
+      companyId,
+      role,
     };
+  };
+
+  // 1. Cached claims — instant, works with no signal.
+  const cached = await fromClaims(false).catch(() => null);
+
+  // 2. Best-effort refresh; a removal revokes the token and throws here.
+  try {
+    const admit = httpsCallable(getFunctions(undefined, 'asia-south1'), 'admitSignIn');
+    const { data } = (await admit({})) as { data: any };
+    if (data.status === 'access_ended' || data.status === 'not_on_list') {
+      await signOutEverywhere(); // removed while away (FR-1.9)
+      return null;
+    }
+    return (await fromClaims(true).catch(() => null)) ?? cached;
   } catch {
-    return null; // offline start with cached auth — screens handle it
+    return cached; // offline: carry on with what the phone already knows
   }
 }
