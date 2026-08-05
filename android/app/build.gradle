@@ -95,10 +95,18 @@ android {
         }
         release {
             // Publisher's existing upload keystore (same as the other Apptech apps).
-            storeFile file('solanalab.keystore')
-            storePassword '798702'
-            keyAlias 'solanalabdev'
-            keyPassword '798702'
+            // Credentials come from android/keystore.properties, which is NOT in
+            // version control — this key signs the whole Apptech Play portfolio,
+            // so it must never travel with the source.
+            def props = new Properties()
+            def propsFile = rootProject.file('keystore.properties')
+            if (propsFile.exists()) {
+                props.load(new FileInputStream(propsFile))
+                storeFile file(props['storeFile'] ?: 'solanalab.keystore')
+                storePassword props['storePassword']
+                keyAlias props['keyAlias']
+                keyPassword props['keyPassword']
+            }
         }
     }
     buildTypes {

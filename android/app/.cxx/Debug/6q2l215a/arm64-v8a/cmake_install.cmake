@@ -44,6 +44,7 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for each subdirectory.
+  include("/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/arm64-v8a/AsyncStorageSpec_autolinked_build/cmake_install.cmake")
   include("/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/arm64-v8a/RNFBAppTurboModules_autolinked_build/cmake_install.cmake")
   include("/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/arm64-v8a/RNFBAuthTurboModules_autolinked_build/cmake_install.cmake")
   include("/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/arm64-v8a/RNFBFirestoreTurboModules_autolinked_build/cmake_install.cmake")

@@ -1,6 +1,9 @@
 /Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/CMakeFiles/appmodules.dir
 /Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/CMakeFiles/edit_cache.dir
 /Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/CMakeFiles/rebuild_cache.dir
+/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/AsyncStorageSpec_autolinked_build/CMakeFiles/react_codegen_AsyncStorageSpec.dir
+/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/AsyncStorageSpec_autolinked_build/CMakeFiles/edit_cache.dir
+/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/AsyncStorageSpec_autolinked_build/CMakeFiles/rebuild_cache.dir
 /Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/RNFBAppTurboModules_autolinked_build/CMakeFiles/react_codegen_RNFBAppTurboModules.dir
 /Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/RNFBAppTurboModules_autolinked_build/CMakeFiles/edit_cache.dir
 /Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86_64/RNFBAppTurboModules_autolinked_build/CMakeFiles/rebuild_cache.dir

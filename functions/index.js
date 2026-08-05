@@ -44,6 +44,19 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
     // flips from "Invited — not joined yet").
     if (!dir.uid) {
       await dirRef.update({ uid, joinedAt: FieldValue.serverTimestamp() });
+      // Keep the owner-facing mirror honest: "Invited" -> "joined".
+      await db.doc(`companies/${dir.companyId}/employeeList/${email}`)
+        .set({ joined: true }, { merge: true })
+        .catch(() => {});
+      // Now that the rider has a uid, orders can be addressed to him (FR-6.1).
+      if (dir.role === 'rider') {
+        const sRef = db.doc(`companies/${dir.companyId}/settings/company`);
+        const sSnap = await sRef.get();
+        const s = sSnap.exists ? sSnap.data() : {};
+        if (!s.autoAssignRiderId || s.autoAssignRiderEmail === email) {
+          await sRef.set({ autoAssignRiderId: uid, autoAssignRiderEmail: email }, { merge: true });
+        }
+      }
       await db.doc(`companies/${dir.companyId}/users/${uid}`).set(
         {
           name: dir.name || '',
@@ -83,6 +96,10 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
     addedBy: uid,
     addedAt: FieldValue.serverTimestamp(),
     joinedAt: FieldValue.serverTimestamp(),
+    // Explicit null, not missing: the last-admin guard queries removedAt == null,
+    // and a missing field never matches (audit finding).
+    removedAt: null,
+    removedBy: null,
   });
   batch.set(db.doc(`companies/${companyRef.id}/users/${uid}`), {
     name: request.auth.token.name || '',
@@ -93,6 +110,10 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
     cashUnconfirmed: 0,
     floatOutstanding: 0,
     createdAt: FieldValue.serverTimestamp(),
+  });
+  batch.set(db.doc(`companies/${companyRef.id}/employeeList/${email}`), {
+    email, name: request.auth.token.name || '', role: 'admin',
+    joined: true, removed: false,
   });
   batch.set(db.doc(`companies/${companyRef.id}/settings/company`), {
     brandName: businessName,
@@ -163,6 +184,16 @@ exports.addEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     removedAt: null,
     removedBy: null,
   });
+
+  // The business has one rider: orders assign themselves to him (FR-6.1).
+  // Recorded here so the booker's phone knows who to assign to.
+  if (role === 'rider') {
+    const settingsRef = db.doc(`companies/${companyId}/settings/company`);
+    const cur = await settingsRef.get();
+    if (!cur.exists || !cur.data().autoAssignRiderEmail) {
+      await settingsRef.set({ autoAssignRiderEmail: email }, { merge: true });
+    }
+  }
   return { status: 'invited', email, role };
 });
 
@@ -205,4 +236,50 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     await getAuth().revokeRefreshTokens(target.uid); // FR-1.9
   }
   return { status: 'removed', email };
+});
+
+/**
+ * uploadUrl — signed, short-lived permission to upload ONE photo (audit finding).
+ *
+ * The storage key never leaves the server. The phone asks for a slot, gets a
+ * single-file URL back, and can do nothing else with it: no listing, no
+ * deleting, no touching the publisher's other apps' assets. Rotating the key
+ * now means changing one secret here, not shipping a new APK.
+ *
+ * Set the key once with:
+ *   npx firebase-tools functions:secrets:set BUNNY_KEY
+ */
+const { defineSecret } = require('firebase-functions/params');
+const BUNNY_KEY = defineSecret('BUNNY_KEY');
+
+const BUNNY = {
+  storageHost: 'storage.bunnycdn.com',
+  storageZone: 'post-gag',
+  cdnBase: 'https://pull-gag.b-cdn.net',
+  prefix: 'snd',
+};
+
+const ALLOWED_KINDS = ['logo', 'product', 'shop', 'proof', 'reward', 'expense'];
+
+exports.uploadUrl = onCall({ region: 'asia-south1', secrets: [BUNNY_KEY] }, async (request) => {
+  const companyId = request.auth?.token?.companyId;
+  if (!companyId) throw new HttpsError('permission-denied', 'Sign in first.');
+
+  const kind = request.data?.kind;
+  if (!ALLOWED_KINDS.includes(kind)) {
+    throw new HttpsError('invalid-argument', 'Unknown photo kind.');
+  }
+
+  // The path is chosen by the SERVER, so a phone can never write outside its
+  // own company's folder or overwrite another business's file.
+  const now = new Date();
+  const yyyymm = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const file = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+  const path = `${BUNNY.prefix}/${companyId}/${kind}/${yyyymm}/${file}`;
+
+  return {
+    uploadUrl: `https://${BUNNY.storageHost}/${BUNNY.storageZone}/${path}`,
+    accessKey: BUNNY_KEY.value(), // scoped to this one call, never bundled
+    publicUrl: `${BUNNY.cdnBase}/${path}`,
+  };
 });

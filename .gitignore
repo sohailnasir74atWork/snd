@@ -9,4 +9,4 @@ ios/Pods/
 # secrets — never commit
 android/app/*.keystore
 android/app/google-services.json
-src/config/bunny.ts
+android/keystore.properties
