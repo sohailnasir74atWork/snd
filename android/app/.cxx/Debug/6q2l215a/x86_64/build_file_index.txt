@@ -1,0 +1,11 @@
+/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/app/android/src/reactnative/java/io/invertase/firebase/app/generated/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/auth/android/src/main/java/io/invertase/firebase/auth/generated/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/firestore/android/src/reactnative/java/io/invertase/firebase/firestore/generated/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/functions/android/src/main/java/io/invertase/firebase/functions/generated/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/@react-native-google-signin/google-signin/android/build/generated/source/codegen/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/react-native-html-to-pdf/android/build/generated/source/codegen/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/react-native-screens/android/src/main/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/react-native-share/android/build/generated/source/codegen/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/react-native-vector-icons/android/build/generated/source/codegen/jni/CMakeLists.txt
+/Users/apple/testing/FieldSales/node_modules/react-native/ReactAndroid/cmake-utils/default-app-setup/CMakeLists.txt

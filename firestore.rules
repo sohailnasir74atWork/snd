@@ -1,0 +1,190 @@
+rules_version = '2';
+
+// SnD Manager — Firestore Security Rules (SRS §10.2, rules slices 1–2).
+// Identity rides in the token: request.auth.token.companyId / .role are set
+// by the admitSignIn Cloud Function (§4.3, §10.1). Default is DENY.
+//
+// Later slices (delivery field-whitelists, visibility toggles inside rules,
+// counters transaction shape) tighten this further per the Plan §6 schedule;
+// every change re-runs the emulator suite before the pilot.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function claims() { return request.auth.token; }
+    function inCompany(companyId) {
+      return signedIn() && claims().companyId == companyId;
+    }
+    function isAdmin(companyId) {
+      return inCompany(companyId) && claims().role == 'admin';
+    }
+    function isBooker(companyId) {
+      return inCompany(companyId) && claims().role == 'booker';
+    }
+    function isRider(companyId) {
+      return inCompany(companyId) && claims().role == 'rider';
+    }
+
+    // ---- employeeDirectory: the door. Clients never touch it. -------------
+    // Only the Cloud Functions (Admin SDK bypasses rules) read or write here;
+    // the Owner manages it through addEmployee/removeEmployee callables.
+    match /employeeDirectory/{email} {
+      allow read, write: if false;
+    }
+
+    // ---- company workspaces ----------------------------------------------
+    match /companies/{companyId} {
+      // The workspace document itself: readable by its members.
+      allow read: if inCompany(companyId);
+      allow write: if false; // created by admitSignIn only
+
+      match /users/{uid} {
+        allow read: if inCompany(companyId);
+        allow update: if isAdmin(companyId)
+                      || (signedIn() && request.auth.uid == uid
+                          && request.resource.data.diff(resource.data)
+                               .affectedKeys().hasOnly(['name', 'photoUrl', 'fcmToken', 'lastSyncAt']));
+        allow create, delete: if false; // admitSignIn / removeEmployee only
+      }
+
+      match /settings/{docId} {
+        allow read: if inCompany(companyId);
+        // settings/company is owner-only; settings/day (route started / handover
+        // state) is written by the field roles as part of their day (FR-6.2, FR-7.9).
+        allow write: if isAdmin(companyId) || (docId == 'day' && inCompany(companyId));
+      }
+
+      // Mirror of the server-side directory for the Employees screen (display only;
+      // the real door is the top-level employeeDirectory, server-only).
+      match /employeeList/{email} {
+        allow read, write: if isAdmin(companyId);
+      }
+
+      match /shops/{shopId} {
+        allow read: if inCompany(companyId);
+        allow create, update: if isAdmin(companyId)
+                              || isBooker(companyId)
+                              // rider may only clear/set collection flags in transactions
+                              || (isRider(companyId)
+                                  && request.resource.data.diff(resource.data)
+                                       .affectedKeys().hasOnly(['collectionFlaggedAt', 'collectionFlaggedBy',
+                                                                'outstanding', 'oldestUnpaidAt', 'oldestUnpaidAmount',
+                                                                'lastShelfCount', 'lastShelfCountAt']));
+        allow delete: if false; // deactivate, never delete
+      }
+
+      match /products/{productId} {
+        allow read: if inCompany(companyId);
+        allow write: if isAdmin(companyId)
+                     // stock/committed move inside delivery transactions
+                     || (isRider(companyId)
+                         && request.resource.data.diff(resource.data)
+                              .affectedKeys().hasOnly(['stockQty', 'committedQty']))
+                     || (isBooker(companyId)
+                         && request.resource.data.diff(resource.data)
+                              .affectedKeys().hasOnly(['committedQty']));
+      }
+
+      match /orders/{orderId} {
+        allow read: if isAdmin(companyId)
+                    || (isBooker(companyId) && resource.data.bookedBy == request.auth.uid)
+                    || (isRider(companyId) && resource.data.assignedTo == request.auth.uid);
+        allow create: if isAdmin(companyId) || isBooker(companyId);
+        allow update: if isAdmin(companyId)
+                      || (isBooker(companyId)
+                          && resource.data.bookedBy == request.auth.uid
+                          && resource.data.status in ['booked', 'assigned'])
+                      || (isRider(companyId)
+                          && resource.data.assignedTo == request.auth.uid
+                          && request.resource.data.diff(resource.data)
+                               .affectedKeys().hasOnly(['items', 'billedTotals', 'invoiceNo', 'invoicedAt',
+                                                        'status', 'paymentStatus', 'amountPaid', 'balance',
+                                                        'deliveredAt', 'proofPhotoUrl', 'undeliveredReason',
+                                                        'deliveryDate', 'seenAt', 'updatedAt']));
+        allow delete: if false; // cancel, never delete (FR-5.7)
+      }
+
+      // ---- payments: THE two lines that carry the money model --------------
+      // Booker create is legal ONLY with the exception flag (FR-7.13/FR-7.10).
+      match /payments/{paymentId} {
+        allow read: if isAdmin(companyId)
+                    || (signedIn() && resource.data.collectedBy == request.auth.uid);
+        allow create: if isAdmin(companyId)
+                      || isRider(companyId)
+                      || (isBooker(companyId) && request.resource.data.exception == true);
+        // Append-only (FR-7.6) with one exception: the Owner's confirmation
+        // flips exactly the `confirmed` flag and nothing else (FR-7.11).
+        allow update: if isAdmin(companyId)
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmed']);
+        allow delete: if false;
+      }
+
+      // Handover confirm is admin-only — the ONLY path to "confirmed" cash (FR-7.11).
+      match /handovers/{handoverId} {
+        allow read: if inCompany(companyId);
+        allow create: if inCompany(companyId)
+                      && request.resource.data.staffId == request.auth.uid;
+        allow update: if isAdmin(companyId); // writes countedByMode/confirmedAt/discrepancy
+        allow delete: if false;
+      }
+
+      match /floatMovements/{id} {
+        allow read: if isAdmin(companyId)
+                    || (signedIn() && resource.data.staffId == request.auth.uid);
+        allow create: if isAdmin(companyId); // issue/return; payout rows via reward txn
+        allow update, delete: if false;
+      }
+
+      match /stockMovements/{id} {
+        allow read: if isAdmin(companyId);
+        allow create: if isAdmin(companyId) || isRider(companyId);
+        allow update, delete: if false;
+      }
+
+      match /counters/{year} {
+        allow read: if inCompany(companyId);
+        allow write: if inCompany(companyId); // transaction-shape check lands in slice 3
+      }
+
+      // ---- owner-only money: hard deny for staff (FR-15.1, FR-17.4) --------
+      match /productCosts/{id}  { allow read, write: if isAdmin(companyId); }
+      match /orderProfit/{id}   { allow read: if isAdmin(companyId); allow write: if false; } // Cloud Function writes
+      match /fixedCharges/{id}  { allow read, write: if isAdmin(companyId); }
+      match /expenses/{id}      { allow read, write: if isAdmin(companyId); }
+
+      match /visits/{id} {
+        allow read: if isAdmin(companyId)
+                    || (isBooker(companyId) && resource.data.by == request.auth.uid);
+        allow create: if isBooker(companyId) || isAdmin(companyId);
+        allow update, delete: if false;
+      }
+
+      match /rewardStaff/{id} {
+        allow read: if isAdmin(companyId) || isBooker(companyId);
+        allow create, update: if isAdmin(companyId) || isBooker(companyId);
+        allow delete: if false;
+      }
+
+      match /rewardClaims/{id} {
+        allow read: if isAdmin(companyId)
+                    || (isBooker(companyId) && resource.data.by == request.auth.uid);
+        allow create: if isBooker(companyId) || isAdmin(companyId);
+        // Approval fields are admin-only; the booker can never approve himself (FR-16.5).
+        allow update: if isAdmin(companyId);
+        allow delete: if false;
+      }
+
+      match /assignments/{id} {
+        allow read: if isAdmin(companyId) || isRider(companyId);
+        allow write: if isAdmin(companyId);
+      }
+
+      match /targets/{id} {
+        allow read: if isAdmin(companyId)
+                    || (isBooker(companyId) && id.matches(request.auth.uid + '_.*'));
+        allow write: if isAdmin(companyId);
+      }
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "buildFiles": [
+    "/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/app/android/src/reactnative/java/io/invertase/firebase/app/generated/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/auth/android/src/main/java/io/invertase/firebase/auth/generated/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/firestore/android/src/reactnative/java/io/invertase/firebase/firestore/generated/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/@react-native-firebase/functions/android/src/main/java/io/invertase/firebase/functions/generated/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/@react-native-google-signin/google-signin/android/build/generated/source/codegen/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/react-native-html-to-pdf/android/build/generated/source/codegen/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/react-native-safe-area-context/android/src/main/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/react-native-screens/android/src/main/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/react-native-share/android/build/generated/source/codegen/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/react-native-vector-icons/android/build/generated/source/codegen/jni/CMakeLists.txt",
+    "/Users/apple/testing/FieldSales/node_modules/react-native/ReactAndroid/cmake-utils/default-app-setup/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/apple/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+      "-C",
+      "/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/apple/Library/Android/sdk/cmake/3.22.1/bin/ninja",
+    "-C",
+    "/Users/apple/testing/FieldSales/android/app/.cxx/Debug/6q2l215a/x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "appmodules::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "appmodules",
+      "output": "/Users/apple/testing/FieldSales/android/app/build/intermediates/cxx/Debug/6q2l215a/obj/x86/libappmodules.so",
+      "runtimeFiles": [
+        "/Users/apple/testing/FieldSales/android/app/build/intermediates/cxx/Debug/6q2l215a/obj/x86/libreact_codegen_safeareacontext.so",
+        "/Users/apple/testing/FieldSales/android/app/build/intermediates/cxx/Debug/6q2l215a/obj/x86/libreact_codegen_rnscreens.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/e8c0ade6303286d57a8d8fc0b119fc1f/transformed/fbjni-0.7.0/prefab/modules/fbjni/libs/android.x86/libfbjni.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/5c7fbfee1dcaeffef56429a3c1bea65c/transformed/react-android-0.86.2-debug/prefab/modules/jsi/libs/android.x86/libjsi.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/5c7fbfee1dcaeffef56429a3c1bea65c/transformed/react-android-0.86.2-debug/prefab/modules/reactnative/libs/android.x86/libreactnative.so"
+      ]
+    },
+    "react_codegen_HtmlToPdfSpec::@b8e1cdd07144a1c1daf8": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_HtmlToPdfSpec"
+    },
+    "react_codegen_RNFBAppTurboModules::@a0d44c1163aba7af3ea1": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNFBAppTurboModules"
+    },
+    "react_codegen_RNFBAuthTurboModules::@27aa017f7fe35a7099bd": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNFBAuthTurboModules"
+    },
+    "react_codegen_RNFBFirestoreTurboModules::@57d2c007211595d8fccf": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNFBFirestoreTurboModules"
+    },
+    "react_codegen_RNFBFunctionsTurboModules::@9216e90d41b146402827": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNFBFunctionsTurboModules"
+    },
+    "react_codegen_RNGoogleSignInCGen::@337b7b353bd94a4215c0": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNGoogleSignInCGen"
+    },
+    "react_codegen_RNShareSpec::@e6c4c2b5aedb2ea213b7": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNShareSpec"
+    },
+    "react_codegen_RNVectorIconsSpec::@479809fae146501fd34d": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_RNVectorIconsSpec"
+    },
+    "react_codegen_rnscreens::@25bcbd507e98d3a854ad": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_rnscreens",
+      "output": "/Users/apple/testing/FieldSales/android/app/build/intermediates/cxx/Debug/6q2l215a/obj/x86/libreact_codegen_rnscreens.so",
+      "runtimeFiles": [
+        "/Users/apple/.gradle/caches/9.3.1/transforms/5c7fbfee1dcaeffef56429a3c1bea65c/transformed/react-android-0.86.2-debug/prefab/modules/reactnative/libs/android.x86/libreactnative.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/5c7fbfee1dcaeffef56429a3c1bea65c/transformed/react-android-0.86.2-debug/prefab/modules/jsi/libs/android.x86/libjsi.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/e8c0ade6303286d57a8d8fc0b119fc1f/transformed/fbjni-0.7.0/prefab/modules/fbjni/libs/android.x86/libfbjni.so"
+      ]
+    },
+    "react_codegen_safeareacontext::@7984cd80db47aa7b952a": {
+      "toolchain": "toolchain",
+      "abi": "x86",
+      "artifactName": "react_codegen_safeareacontext",
+      "output": "/Users/apple/testing/FieldSales/android/app/build/intermediates/cxx/Debug/6q2l215a/obj/x86/libreact_codegen_safeareacontext.so",
+      "runtimeFiles": [
+        "/Users/apple/.gradle/caches/9.3.1/transforms/e8c0ade6303286d57a8d8fc0b119fc1f/transformed/fbjni-0.7.0/prefab/modules/fbjni/libs/android.x86/libfbjni.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/5c7fbfee1dcaeffef56429a3c1bea65c/transformed/react-android-0.86.2-debug/prefab/modules/jsi/libs/android.x86/libjsi.so",
+        "/Users/apple/.gradle/caches/9.3.1/transforms/5c7fbfee1dcaeffef56429a3c1bea65c/transformed/react-android-0.86.2-debug/prefab/modules/reactnative/libs/android.x86/libreactnative.so"
+      ]
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "/Users/apple/Library/Android/sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang.lld",
+      "cppCompilerExecutable": "/Users/apple/Library/Android/sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/darwin-x86_64/bin/clang++.lld"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": [
+    "cpp"
+  ]
+}
