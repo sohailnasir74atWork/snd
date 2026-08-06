@@ -3,7 +3,7 @@
  * Every computation lives in a small pure helper so it can be unit-tested later.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
 import { useStore } from '../../data/store';
 import { profitFor } from '../../lib/profit';
@@ -330,7 +330,8 @@ export function ReportsScreen() {
                   ];
                 }),
               ];
-              void shareCsv(`orders-${preset}`, rows).catch(() => {});
+              void shareCsv(`orders-${preset}`, rows)
+                .catch(e => Alert.alert('Export failed', e instanceof Error ? e.message : String(e)));
             }}
           />
           <Chip
@@ -345,7 +346,8 @@ export function ReportsScreen() {
                   p.confirmed ? 'yes' : 'no', p.exception ? 'yes' : '',
                 ]),
               ];
-              void shareCsv(`payments-${preset}`, rows).catch(() => {});
+              void shareCsv(`payments-${preset}`, rows)
+                .catch(e => Alert.alert('Export failed', e instanceof Error ? e.message : String(e)));
             }}
           />
         </View>

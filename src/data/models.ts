@@ -175,6 +175,27 @@ export interface Employee {
   joined: boolean; // false = "Invited — not joined yet" (FR-1.3)
 }
 
+/**
+ * What staff phones show (FR-2.x) — the owner's call. Everything defaults to
+ * visible; a switch only ever HIDES information, never grants access the
+ * rules don't already give.
+ */
+export interface VisibilitySettings {
+  bookerSeesDelivery: boolean; // status tags on his booked orders
+  bookerSeesPayments: boolean; // reserved — no booker surface shows payments yet
+  bookerSeesBalances: boolean; // shop "owed" amounts (and the exception flow)
+  bookerSeesOwnTotals: boolean; // order amounts on My Day
+  riderSeesOldBalance: boolean; // old khata at close-out + the Collect tab
+}
+
+export const DEFAULT_VISIBILITY: VisibilitySettings = {
+  bookerSeesDelivery: true,
+  bookerSeesPayments: true,
+  bookerSeesBalances: true,
+  bookerSeesOwnTotals: true,
+  riderSeesOldBalance: true,
+};
+
 export interface CompanySettings {
   brandName: string;
   address?: string;
@@ -191,6 +212,7 @@ export interface CompanySettings {
   rewardPerPiece: number;
   acceptCheques: boolean;
   sendConfirmations: boolean;
+  visibility: VisibilitySettings;
   /** The only rider — orders assign themselves to him (FR-6.1). */
   autoAssignRiderId?: string;
   receiptFooter?: string;

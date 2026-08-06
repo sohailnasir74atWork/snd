@@ -57,6 +57,19 @@ export function CollectScreen() {
 
   const shop = shopId ? store.shops.find(s => s.id === shopId) ?? null : null;
 
+  // FR-2.x: this whole tab runs on shop balances — hidden means hidden.
+  if (!store.settings.visibility.riderSeesOldBalance) {
+    return (
+      <View style={styles.screen}>
+        <EmptyState
+          icon="eye-off-outline"
+          title="Collections are handled by the owner"
+          hint="Balances are switched off for riders. You still take payment at each delivery."
+        />
+      </View>
+    );
+  }
+
   const reset = () => {
     setShopId(null);
     setAmountText('');

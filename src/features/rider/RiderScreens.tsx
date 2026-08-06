@@ -123,6 +123,10 @@ function clampMoney(value: number, max: number): number {
 function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void }) {
   const store = useStore();
   const shop = store.shops.find(s => s.id === order.shopId)!;
+  // FR-2.x: the owner may hide old balances — then the rider bills and
+  // collects against TODAY only, and the khata stays the owner's business.
+  const seesOld = store.settings.visibility.riderSeesOldBalance;
+  const oldBalance = seesOld ? shop.outstanding : 0;
   // Quantities pre-filled as fully delivered — adjust only what changed (FR-14.4).
   const [qtys, setQtys] = React.useState<Record<string, number>>(
     Object.fromEntries(order.items.map(i => [i.productId, i.qty])),
@@ -134,8 +138,8 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
 
   const items = order.items.map(i => ({ ...i, deliveredQty: qtys[i.productId] }));
   const billed = computeTotals(items, order.discountPercent, true);
-  // The ceiling on any payment: today's bill plus whatever was already owed.
-  const maxPayable = billed.grandTotal + shop.outstanding;
+  // The ceiling on any payment: today's bill plus whatever he may see is owed.
+  const maxPayable = billed.grandTotal + oldBalance;
 
   // Changing a quantity can shrink the ceiling — pull a too-large typed amount down with it.
   React.useEffect(() => {
@@ -154,7 +158,7 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   const payAmount = clampMoney(rawPay, maxPayable);
   const stillOwed = maxPayable - payAmount;
 
-  const payOptions: readonly PayChoice[] = shop.outstanding > 0
+  const payOptions: readonly PayChoice[] = oldBalance > 0
     ? ['full', 'khata', 'part', 'none']
     : ['full', 'part', 'none'];
   const payLabel = (v: PayChoice) =>
@@ -193,7 +197,7 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
               shop,
               amountInWordsLine: amountInWordsLine(billed.grandTotal),
               received: Math.min(payAmount, billed.grandTotal),
-              previousBalance: shop.outstanding,
+              previousBalance: oldBalance,
             });
             await sharePdf(
               html,
@@ -232,10 +236,10 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
           <Text style={styles.big}>Bill (delivered)</Text>
           <Money amount={billed.grandTotal} size={font.stat} bold />
         </View>
-        {shop.outstanding > 0 && (
+        {oldBalance > 0 && (
           <View style={styles.rowBetween}>
             <Text style={styles.meta}>Old khata</Text>
-            <Money amount={shop.outstanding} color={color.danger} />
+            <Money amount={oldBalance} color={color.danger} />
           </View>
         )}
       </Card>

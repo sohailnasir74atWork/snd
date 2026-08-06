@@ -8,7 +8,7 @@ import type {
   CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
   Order, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
-import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
+import { DEFAULT_VISIBILITY, EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
   BookOrderInput, CloseOutInput, CollectionInput, ProductInput,
   RewardClaimInput, RewardStaffInput, ShopInput, StoreApi, StoreContext,
@@ -50,6 +50,7 @@ const seedSettings: CompanySettings = {
   rewardPerPiece: 40,
   acceptCheques: false,
   sendConfirmations: true,
+  visibility: DEFAULT_VISIBILITY,
 };
 
 interface StoreState {

@@ -29,7 +29,7 @@ import type {
   CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
   Order, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
-import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
+import { DEFAULT_VISIBILITY, EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
   BookOrderInput, CloseOutInput, CollectionInput, ProductInput,
   RewardClaimInput, RewardStaffInput, ShopInput, StoreApi, StoreContext,
@@ -45,6 +45,7 @@ const DEFAULT_SETTINGS: CompanySettings = {
   maxDiscountPercent: 10, defaultDeliveryDay: 'today', shopsPerDay: 20,
   rewardApprovalLimit: 1000, rewardPerPiece: 40,
   acceptCheques: false, sendConfirmations: true,
+  visibility: DEFAULT_VISIBILITY,
 };
 
 function toMillis(v: unknown): number {
@@ -172,7 +173,14 @@ export function FirestoreStoreProvider({
         })), warn('payments')),
 
       onSnapshot(doc(db, `${base}/settings/company`), s => {
-        if (s.exists()) setSettings({ ...DEFAULT_SETTINGS, ...(s.data() as Partial<CompanySettings>) });
+        if (s.exists()) {
+          const data = s.data() as Partial<CompanySettings>;
+          setSettings({
+            ...DEFAULT_SETTINGS, ...data,
+            // Nested object: merge so an older doc missing a flag stays visible.
+            visibility: { ...DEFAULT_VISIBILITY, ...(data.visibility ?? {}) },
+          });
+        }
       }, warn('settings')),
 
       // Day state is per person: the rider's route lock is his own.

@@ -12,13 +12,18 @@ import { toCsv } from '../lib/csv';
 import { utf8ToBase64 } from '../lib/base64';
 
 export async function sharePdf(html: string, fileName: string, message: string): Promise<void> {
-  const { filePath } = await RNHTMLtoPDF.convert({ html, fileName, base64: false });
-  if (!filePath) throw new Error('PDF generation failed');
+  // base64 + data: URL, NOT a file:// path: RNShare's FileProvider does not
+  // cover the directory RNHTMLtoPDF writes to, so file paths 404 at the
+  // share sheet ("Failed to find configured root" — on-device smoke run).
+  const { base64 } = await RNHTMLtoPDF.convert({ html, fileName, base64: true });
+  if (!base64) throw new Error('PDF generation failed');
   await Share.open({
-    url: `file://${filePath}`,
+    url: `data:application/pdf;base64,${base64}`,
+    filename: fileName.replace(/\.pdf$/, ''),
     type: 'application/pdf',
     message,
     failOnCancel: false,
+    useInternalStorage: true,
   });
 }
 
@@ -29,5 +34,9 @@ export async function shareCsv(filename: string, rows: (string | number | undefi
     filename: filename.replace(/\.csv$/, ''), // Android appends the extension from type
     type: 'text/csv',
     failOnCancel: false,
+    // RNShare decodes data: URLs to a file first. Its FileProvider only covers
+    // INTERNAL cache — the external-cache default 404s ("Failed to find
+    // configured root", caught in the on-device smoke run).
+    useInternalStorage: true,
   });
 }

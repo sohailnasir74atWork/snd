@@ -135,6 +135,8 @@ export function BookerRouteScreen() {
   const store = useStore();
   const due = store.shops.filter(s => s.active);
   const byArea = [...new Set(due.map(s => s.area))];
+  // FR-2.x: balances (and everything that acts on them) can be hidden.
+  const seesBalances = store.settings.visibility.bookerSeesBalances;
   const [exceptionShopId, setExceptionShopId] = React.useState<string | null>(null);
   const [shelfShopId, setShelfShopId] = React.useState<string | null>(null);
   const [shelfText, setShelfText] = React.useState('');
@@ -160,7 +162,7 @@ export function BookerRouteScreen() {
             <Card key={shop.id}>
               <View style={styles.rowBetween}>
                 <Text style={styles.shopName}>{shop.name}</Text>
-                {shop.outstanding > 0 && (
+                {seesBalances && shop.outstanding > 0 && (
                   <View style={styles.owedCol}>
                     <Money amount={shop.outstanding} bold color={color.danger} />
                     <Text style={styles.owedLabel}>owed</Text>
@@ -172,12 +174,12 @@ export function BookerRouteScreen() {
                 {shop.lastShelfCount !== undefined ? ` • shelf ${shop.lastShelfCount}` : ''}
               </Text>
               <View style={styles.rowWrap}>
-                {shop.outstanding > 0 && !shop.collectionFlagged && (
+                {seesBalances && shop.outstanding > 0 && !shop.collectionFlagged && (
                   <Chip small danger label={strings.order.tellTheRider} onPress={() => store.flagCollection(shop.id)} />
                 )}
                 <Chip small label="Shelf count"
                   onPress={() => { setShelfShopId(shelfShopId === shop.id ? null : shop.id); setShelfText(''); }} />
-                {shop.outstanding > 0 && (
+                {seesBalances && shop.outstanding > 0 && (
                   <Chip small label="Shop insists on paying me" onPress={() => setExceptionShopId(shop.id)} />
                 )}
               </View>
@@ -267,6 +269,8 @@ export function NewOrderScreen() {
     );
   }
 
+  const seesBalances = store.settings.visibility.bookerSeesBalances;
+
   if (!shop) {
     return (
       <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent}>
@@ -279,7 +283,7 @@ export function NewOrderScreen() {
                 <Text style={styles.shopName}>{s.name}</Text>
                 <Text style={styles.shopMeta}>{s.area}</Text>
               </View>
-              {s.outstanding > 0 && (
+              {seesBalances && s.outstanding > 0 && (
                 <View style={styles.owedCol}>
                   <Money amount={s.outstanding} bold color={color.danger} />
                   <Text style={styles.owedLabel}>owed</Text>
@@ -308,7 +312,7 @@ export function NewOrderScreen() {
             <Text style={styles.shopName}>{shop.name}</Text>
             <Text style={styles.shopMeta}>{shop.area}</Text>
           </View>
-          {shop.outstanding > 0 && (
+          {seesBalances && shop.outstanding > 0 && (
             <View style={styles.owedCol}>
               <Money amount={shop.outstanding} bold color={color.danger} />
               <Text style={styles.owedLabel}>owed</Text>
@@ -403,6 +407,7 @@ export function NewOrderScreen() {
 export function MyDayScreen() {
   const store = useStore();
   const mine = store.orders;
+  const vis = store.settings.visibility;
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
       <Text style={styles.sub}>{mine.length} orders booked</Text>
@@ -410,13 +415,17 @@ export function MyDayScreen() {
         <Card key={o.id}>
           <View style={styles.rowBetween}>
             <Text style={styles.shopName}>{o.shopSnapshot.name}</Text>
-            <Money amount={(o.billedTotals ?? o.orderedTotals).grandTotal} bold />
+            {vis.bookerSeesOwnTotals && (
+              <Money amount={(o.billedTotals ?? o.orderedTotals).grandTotal} bold />
+            )}
           </View>
           <View style={styles.metaRow}>
-            <Tag
-              label={(o.status === 'delivered' ? strings.statuses.done : strings.statuses.toDeliver).toUpperCase()}
-              tone={o.status === 'delivered' ? 'success' : 'primary'}
-            />
+            {vis.bookerSeesDelivery && (
+              <Tag
+                label={(o.status === 'delivered' ? strings.statuses.done : strings.statuses.toDeliver).toUpperCase()}
+                tone={o.status === 'delivered' ? 'success' : 'primary'}
+              />
+            )}
             <Text style={styles.shopMeta}>{o.orderNo} • {o.deliveryDay}</Text>
           </View>
         </Card>

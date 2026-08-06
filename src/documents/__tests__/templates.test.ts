@@ -1,4 +1,5 @@
 import { orderConfirmationHtml, billHtml, receiptHtml } from '../templates';
+import { DEFAULT_VISIBILITY } from '../../data/models';
 import type { CompanySettings, Order, Payment, Shop } from '../../data/models';
 
 const settings: CompanySettings = {
@@ -13,6 +14,7 @@ const settings: CompanySettings = {
   shopsPerDay: 30,
   rewardApprovalLimit: 5000,
   rewardPerPiece: 40,
+  visibility: DEFAULT_VISIBILITY,
   acceptCheques: true,
   sendConfirmations: true,
   receiptFooter: 'Thank you for your business',

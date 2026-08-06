@@ -148,6 +148,47 @@ export function SettingsScreen() {
           last
         />
       </Card>
+
+      <SectionLabel>What staff can see</SectionLabel>
+      <Card style={styles.tightCard}>
+        <SwitchRow
+          icon="cash-multiple"
+          title="Booker sees shop balances"
+          sub="Owed amounts on his route — also the cash-exception button"
+          value={s.visibility.bookerSeesBalances}
+          onToggle={() => store.updateSettings({
+            visibility: { ...s.visibility, bookerSeesBalances: !s.visibility.bookerSeesBalances },
+          })}
+        />
+        <SwitchRow
+          icon="truck-outline"
+          title="Booker sees delivery status"
+          sub="Done / to-deliver tags on his booked orders"
+          value={s.visibility.bookerSeesDelivery}
+          onToggle={() => store.updateSettings({
+            visibility: { ...s.visibility, bookerSeesDelivery: !s.visibility.bookerSeesDelivery },
+          })}
+        />
+        <SwitchRow
+          icon="sigma"
+          title="Booker sees his order amounts"
+          sub="Rupee totals on My Day"
+          value={s.visibility.bookerSeesOwnTotals}
+          onToggle={() => store.updateSettings({
+            visibility: { ...s.visibility, bookerSeesOwnTotals: !s.visibility.bookerSeesOwnTotals },
+          })}
+        />
+        <SwitchRow
+          icon="history"
+          title="Rider sees old balances"
+          sub="Old khata at close-out and the whole Collect tab"
+          value={s.visibility.riderSeesOldBalance}
+          onToggle={() => store.updateSettings({
+            visibility: { ...s.visibility, riderSeesOldBalance: !s.visibility.riderSeesOldBalance },
+          })}
+          last
+        />
+      </Card>
     </ScrollView>
   );
 }
