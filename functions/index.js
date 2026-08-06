@@ -56,6 +56,21 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
         const s = sSnap.exists ? sSnap.data() : {};
         if (!s.autoAssignRiderId || s.autoAssignRiderEmail === email) {
           await sRef.set({ autoAssignRiderId: uid, autoAssignRiderEmail: email }, { merge: true });
+          // Orders the booker wrote before this rider existed carry
+          // assignedTo: null. The rules key a rider's read on assignedTo, so
+          // those orders are invisible to EVERYONE until they are re-addressed
+          // — hand them to him now, at the one moment we know he has arrived.
+          const orphans = await db
+            .collection(`companies/${dir.companyId}/orders`)
+            .where('assignedTo', '==', null)
+            .where('status', 'in', ['booked', 'assigned'])
+            .limit(400)
+            .get();
+          if (!orphans.empty) {
+            const batch = db.batch();
+            orphans.docs.forEach((d) => batch.update(d.ref, { assignedTo: uid }));
+            await batch.commit().catch((e) => console.warn('orphan reassign', e.message));
+          }
         }
       }
       await db.doc(`companies/${dir.companyId}/users/${uid}`).set(

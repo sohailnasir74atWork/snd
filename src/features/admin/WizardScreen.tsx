@@ -6,6 +6,7 @@
  */
 import React from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
@@ -41,6 +42,7 @@ function CardHead({ icon, label }: { icon: string; label: string }) {
 
 export function WizardScreen({ onDone }: { onDone: () => void }) {
   const [step, setStep] = React.useState(0);
+  const insets = useSafeAreaInsets();
 
   const next = () => {
     if (step >= STEP_COUNT - 1) onDone();
@@ -48,7 +50,10 @@ export function WizardScreen({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <ScrollView style={styles.screen} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={{ paddingTop: insets.top + space.s, paddingBottom: insets.bottom + space.xl }}
+      keyboardShouldPersistTaps="handled">
       <View style={styles.headerRow}>
         <View style={styles.dots}>
           {STEP_META.map((_, i) => (
@@ -534,7 +539,10 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
 /* ------------------------------------------------------------------ styles */
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: color.bg, paddingTop: space.s },
+  // Top/bottom padding comes from the safe-area insets at render time — this
+  // screen sits OUTSIDE the navigator, so nothing else keeps "Skip" and the
+  // step dots clear of the status bar (Android 15+ forces edge-to-edge).
+  screen: { flex: 1, backgroundColor: color.bg },
   headerRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginHorizontal: space.l, marginTop: space.s,

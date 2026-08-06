@@ -53,19 +53,28 @@ service cloud.firestore {
         allow write: if isAdmin(companyId);
       }
 
-      // One day document per person: his own route lock and handover state.
-      // He may start his own route and hand over; ONLY an admin confirms
-      // (FR-6.2, FR-7.9, FR-7.11).
-      match /days/{staffId} {
+      // One day document per person PER DATE — the id is "{uid}_{YYYY-MM-DD}",
+      // and ownership is proven by the staffId FIELD rather than the id, so the
+      // id shape can change without reopening the rules.
+      //
+      // Why per-date: a single reused document carried yesterday's
+      // handoverConfirmed into today. The staff phone then showed "confirmed"
+      // before the owner had counted a rupee, the owner's confirm card never
+      // appeared, and — because a rider's [Start route] rewrites the whole day
+      // — his morning write became an UPDATE that flipped handoverConfirmed
+      // back to false, which this rule (correctly) refuses. He could never
+      // start a route again. A fresh document each morning is a CREATE, so
+      // none of that can happen (FR-6.2, FR-7.9, FR-7.11).
+      match /days/{dayId} {
         allow read: if inCompany(companyId);
-        // Creating his own day: allowed, but never already-confirmed.
+        // His own fresh day: allowed, but never already-confirmed.
         allow create: if isAdmin(companyId)
-                      || (request.auth.uid == staffId
+                      || (request.resource.data.staffId == request.auth.uid
                           && request.resource.data.get('handoverConfirmed', false) == false);
         // Updating his own day: he may start his route and hand over; only an
         // admin may ever touch handoverConfirmed (FR-7.11).
         allow update: if isAdmin(companyId)
-                      || (request.auth.uid == staffId
+                      || (resource.data.staffId == request.auth.uid
                           && !request.resource.data.diff(resource.data)
                                 .affectedKeys().hasAny(['handoverConfirmed']));
         allow delete: if false;
@@ -89,7 +98,8 @@ service cloud.firestore {
                               // rider may only clear/set collection flags in transactions
                               || (isRider(companyId)
                                   && request.resource.data.diff(resource.data)
-                                       .affectedKeys().hasOnly(['collectionFlaggedAt', 'collectionFlaggedBy',
+                                       .affectedKeys().hasOnly(['collectionFlagged', 'collectionFlaggedAt',
+                                                                'collectionFlaggedBy',
                                                                 'outstanding', 'oldestUnpaidAt', 'oldestUnpaidAmount',
                                                                 'lastShelfCount', 'lastShelfCountAt']));
         allow delete: if false; // deactivate, never delete
@@ -151,9 +161,12 @@ service cloud.firestore {
         // handover (FR-7.11) and VOIDING a wrong entry — the row stays visible
         // forever, only the flag flips (a rider typo must be correctable
         // without ever deleting money history).
+        // `orderIds` rides along because a booker's exception payment is
+        // allocated across bills only at confirmation time — without persisting
+        // that split, voiding it later could not un-apply it (FR-7.13).
         allow update: if isAdmin(companyId)
                       && request.resource.data.diff(resource.data).affectedKeys()
-                           .hasOnly(['confirmed', 'voided', 'voidedBy', 'voidedAt']);
+                           .hasOnly(['confirmed', 'voided', 'voidedBy', 'voidedAt', 'orderIds']);
         allow delete: if false;
       }
 

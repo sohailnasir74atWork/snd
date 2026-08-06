@@ -48,6 +48,41 @@ const DEFAULT_SETTINGS: CompanySettings = {
   visibility: DEFAULT_VISIBILITY,
 };
 
+/**
+ * An optional field the user left blank arrives here as `undefined`, and
+ * Firestore THROWS on it — synchronously, while serialising the arguments, so
+ * the `.catch()` on every write below never runs and the screen dies. It
+ * killed the first-run wizard (blank address/phone) and Add Shop (blank owner
+ * name). Telling Firestore to drop undefined keys gives exactly the semantics
+ * these forms want: "left blank" means "don't store it".
+ *
+ * Set once, before any read or write. Failure is non-fatal — worst case we are
+ * back to the old behaviour, so it must never take the app down on startup.
+ */
+let undefinedGuardApplied = false;
+function applyUndefinedGuard(db: ReturnType<typeof getFirestore>): void {
+  if (undefinedGuardApplied) return;
+  undefinedGuardApplied = true;
+  // settings() lives on the module instance getFirestore() returns, but the
+  // modular Firestore type doesn't surface it — hence the narrow cast.
+  const withSettings = db as unknown as {
+    settings?: (s: Record<string, unknown>) => Promise<void>;
+  };
+  try {
+    withSettings.settings?.({ ignoreUndefinedProperties: true })
+      ?.catch((e: unknown) => console.warn('[snd] ignoreUndefinedProperties', e));
+  } catch (e) {
+    console.warn('[snd] ignoreUndefinedProperties', e);
+  }
+}
+
+/** Belt-and-braces for the guard above: drop blank optional fields locally. */
+function stripUndefined<T extends object>(obj: T): T {
+  const out = {} as Record<string, unknown>;
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined) out[k] = v;
+  return out as T;
+}
+
 function toMillis(v: unknown): number {
   if (!v) return 0;
   if (typeof v === 'number') return v;
@@ -81,6 +116,7 @@ export function FirestoreStoreProvider({
 }: { user: SessionUser; children: React.ReactNode }) {
   const companyId = user.companyId;
   const db = getFirestore();
+  applyUndefinedGuard(db);
   const base = `companies/${companyId}`;
   const isAdmin = user.role === 'admin';
   const isRider = user.role === 'rider';
@@ -99,11 +135,17 @@ export function FirestoreStoreProvider({
   const [rewardStaff, setRewardStaff] = React.useState<RewardStaff[]>([]);
   const [rewardClaims, setRewardClaims] = React.useState<RewardClaim[]>([]);
   const [floatMovements, setFloatMovements] = React.useState<FloatMovement[]>([]);
-  const [rawDay, setRawDay] = React.useState<DayState>(EMPTY_DAY());
   const [ready, setReady] = React.useState(false);
 
-  /** A day document from an earlier date is yesterday's — start fresh (FR-6.2). */
-  const day: DayState = rawDay.date === todayKey() ? rawDay : EMPTY_DAY();
+  /**
+   * One day document per person PER DATE, id "{uid}_{YYYY-MM-DD}". Reusing a
+   * single doc leaked yesterday's handoverConfirmed into today, which both
+   * faked a confirmation on the staff phone and made the rider's morning
+   * [Start route] an illegal update. Today's doc is simply a new one.
+   */
+  const dayDocId = (staffId: string) => `${staffId}_${todayKey()}`;
+  const day: DayState =
+    staffDays.find(d => d.staffId === user.uid && d.date === todayKey()) ?? EMPTY_DAY();
 
   React.useEffect(() => {
     const warn = (label: string) => (e: unknown) =>
@@ -150,10 +192,10 @@ export function FirestoreStoreProvider({
             id: d.id, ...(data as unknown as Omit<Shop, 'id'>),
             lastVisitAt: toMillis(data.lastVisitAt),
             lastShelfCountAt: data.lastShelfCountAt ? toMillis(data.lastShelfCountAt) : undefined,
-            // Production writes a TIMESTAMP; every screen reads this boolean.
-            // Deriving it here is what makes "Tell the rider" real (audit
-            // blocker: the flag was demo-only).
-            collectionFlagged: !!data.collectionFlaggedAt,
+            // Screens read this boolean. Prefer the stored flag (visible the
+            // instant it is written, even offline) and fall back to the
+            // timestamp for shops flagged by an older build.
+            collectionFlagged: data.collectionFlagged === true || !!data.collectionFlaggedAt,
           } as Shop;
         })), warn('shops')),
 
@@ -190,18 +232,15 @@ export function FirestoreStoreProvider({
         }
       }, warn('settings')),
 
-      // Day state is per person: the rider's route lock is his own.
-      onSnapshot(doc(db, `${base}/days/${user.uid}`), s => {
-        if (s.exists()) setRawDay({ ...EMPTY_DAY(), ...(s.data() as Partial<DayState>) } as DayState);
-      }, warn('day')),
-
-      // EVERY role listens to everyone's day docs (2-3 tiny documents): the
-      // booker needs the RIDER's route lock to freeze the van (audit blocker:
-      // the freeze was checked against the booker's own day and never fired),
-      // and the owner needs them for the handover cards.
-      onSnapshot(collection(db, `${base}/days`), s =>
-        setStaffDays(s.docs.map(d => ({
-          ...EMPTY_DAY(), ...(d.data() as Partial<DayState>), staffId: d.id,
+      // TODAY's day docs for the whole team — a handful of tiny documents.
+      // Every role needs them: the booker reads the RIDER's route lock to
+      // freeze the van, the owner reads them for the handover cards, and each
+      // person finds their own in here. Scoped to today so the collection
+      // cannot grow into the listener over months.
+      onSnapshot(
+        query(collection(db, `${base}/days`), where('date', '==', todayKey())),
+        s => setStaffDays(s.docs.map(d => ({
+          ...EMPTY_DAY(), ...(d.data() as Partial<DayState>),
         }) as DayState)), warn('days')),
     ];
 
@@ -448,19 +487,24 @@ export function FirestoreStoreProvider({
 
     flagCollection(shopId) {
       updateDoc(doc(db, `${base}/shops/${shopId}`), {
+        // The boolean rides alongside the timestamp on purpose:
+        // serverTimestamp() is NULL in the local cache until the server
+        // answers, so offline in a market the booker tapped "Tell the rider"
+        // and nothing on screen changed. The plain boolean lands instantly.
+        collectionFlagged: true,
         collectionFlaggedAt: serverTimestamp(),
         collectionFlaggedBy: user.uid,
       }).catch(writeRejected('Collection flag'));
     },
 
     startRoute() {
-      setDoc(doc(db, `${base}/days/${user.uid}`), {
+      setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
         ...EMPTY_DAY(), routeStarted: true, staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Start route'));
     },
 
     undoStartRoute() {
-      setDoc(doc(db, `${base}/days/${user.uid}`), {
+      setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
         date: todayKey(), routeStarted: false, staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Undo start route'));
     },
@@ -468,8 +512,20 @@ export function FirestoreStoreProvider({
     riderRouteStarted: riderRouteStartedNow,
 
     async closeOutStop({ orderId, deliveredQtys, paymentAmount, mode }: CloseOutInput) {
-      const order = orders.find(o => o.id === orderId)!;
-      const shop = shops.find(s => s.id === order.shopId)!;
+      const order = orders.find(o => o.id === orderId);
+      const shop = order ? shops.find(s => s.id === order.shopId) : undefined;
+      // The booker can cancel from his phone while the rider stands at the
+      // counter. Delivering a cancelled order would bill a shop that cancelled
+      // AND release its committed stock a second time, driving the count
+      // negative for every later day.
+      if (!order || !shop || order.status === 'cancelled' || order.status === 'returned'
+          || order.status === 'delivered') {
+        throw new Error(
+          order && order.status === 'cancelled'
+            ? 'This order was cancelled — do not deliver it.'
+            : 'This stop is no longer open. Go back to the route and reopen it.',
+        );
+      }
       const items = order.items.map(it => ({ ...it, deliveredQty: deliveredQtys[it.productId] ?? it.qty }));
       const billed = computeTotals(items, order.discountPercent, true);
 
@@ -485,14 +541,21 @@ export function FirestoreStoreProvider({
         allocations = allocateFifo(paymentAmount, bills).allocations;
       }
 
+      // What THIS bill actually received — FIFO may have sent every rupee to
+      // the older khata instead. Writing the raw cash figure here marked a
+      // bill paid that got nothing, and permanently excluded it from every
+      // later collection.
+      const paidToThisBill = allocations.find(a => a.orderId === orderId)?.amount ?? 0;
+
       // Everything the stop changes, in ONE batch (audit finding #4).
       const batch = writeBatch(db);
       batch.update(doc(db, `${base}/orders/${orderId}`), {
         items, billedTotals: billed,
         invoiceNo: inv.value, invoiceProvisional: inv.provisional,
         status: 'delivered', deliveredAt: serverTimestamp(),
-        amountPaid: Math.min(paymentAmount, billed.grandTotal),
-        paymentStatus: paymentAmount >= billed.grandTotal ? 'paid' : paymentAmount > 0 ? 'partial' : 'unpaid',
+        amountPaid: paidToThisBill,
+        paymentStatus: paidToThisBill >= billed.grandTotal ? 'paid'
+          : paidToThisBill > 0 ? 'partial' : 'unpaid',
       });
       if (rcp) {
         batch.set(doc(collection(db, `${base}/payments`)), {
@@ -506,7 +569,7 @@ export function FirestoreStoreProvider({
       // committedQty and outstanding at the same time (audit blocker #2).
       batch.update(doc(db, `${base}/shops/${shop.id}`), {
         outstanding: increment(billed.grandTotal - paymentAmount),
-        collectionFlaggedAt: null, collectionFlaggedBy: null,
+        collectionFlagged: false, collectionFlaggedAt: null, collectionFlaggedBy: null,
       });
       for (const it of items) {
         const p = products.find(pp => pp.id === it.productId);
@@ -551,7 +614,7 @@ export function FirestoreStoreProvider({
           billedAt: o.deliveredAt ?? o.bookedAt,
         }))
         .filter(b => b.balance > 0);
-      const { allocations } = allocateFifo(amount, unpaid);
+      const { allocations, unallocated } = allocateFifo(amount, unpaid);
 
       const batch = writeBatch(db);
       const payRef = doc(collection(db, `${base}/payments`));
@@ -560,13 +623,18 @@ export function FirestoreStoreProvider({
         shopId, orderIds: allocations, amount, mode,
         collectedBy: user.uid, confirmed: false,
         exception: exception === true,
+        // Money that landed on the khata but could not be matched to a bill
+        // THIS PHONE can see — a rider only receives orders assigned to him,
+        // so a previous rider's unpaid bills are invisible here. Recorded so
+        // the owner can reconcile instead of it vanishing silently.
+        unallocated: unallocated > 0 ? unallocated : 0,
         createdAt: serverTimestamp(),
       });
       batch.update(doc(db, `${base}/shops/${shopId}`), {
         // CollectScreen caps the amount at what the shop owes; increment keeps
         // two same-moment collections from resurrecting a stale balance.
         outstanding: increment(-amount),
-        collectionFlaggedAt: null, collectionFlaggedBy: null,
+        collectionFlagged: false, collectionFlaggedAt: null, collectionFlaggedBy: null,
       });
       for (const a of allocations) {
         const o = orders.find(oo => oo.id === a.orderId);
@@ -588,7 +656,7 @@ export function FirestoreStoreProvider({
     },
 
     handOver() {
-      setDoc(doc(db, `${base}/days/${user.uid}`), {
+      setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
         date: todayKey(), handedOver: true, staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Handover'));
     },
@@ -608,6 +676,12 @@ export function FirestoreStoreProvider({
       // Exception payments (FR-7.13) never touched the khata when collected —
       // the rules forbid the booker that. Apply them NOW, from the owner's
       // full view: shop balance down, FIFO across the shop's unpaid bills.
+      //
+      // `applied` carries the running total across payments. Without it, two
+      // exception receipts confirmed together each ran FIFO against the SAME
+      // un-refreshed orders array and both settled the oldest bill, paying it
+      // twice.
+      const applied: Record<string, number> = {};
       for (const p of toConfirm.filter(x => x.exception)) {
         ops.push(b => b.update(doc(db, `${base}/shops/${p.shopId}`), {
           outstanding: increment(-p.amount),
@@ -616,19 +690,25 @@ export function FirestoreStoreProvider({
           .filter(o => o.shopId === p.shopId && o.status === 'delivered' && o.paymentStatus !== 'paid')
           .map(o => ({
             orderId: o.id,
-            balance: (o.billedTotals?.grandTotal ?? 0) - o.amountPaid,
+            balance: (o.billedTotals?.grandTotal ?? 0) - o.amountPaid - (applied[o.id] ?? 0),
             billedAt: o.deliveredAt ?? o.bookedAt,
           }))
           .filter(x => x.balance > 0);
-        for (const a of allocateFifo(p.amount, unpaid).allocations) {
+        const allocs = allocateFifo(p.amount, unpaid).allocations;
+        for (const a of allocs) {
           const o = orders.find(oo => oo.id === a.orderId);
           if (!o) continue;
-          const paid = o.amountPaid + a.amount;
+          applied[o.id] = (applied[o.id] ?? 0) + a.amount;
+          const paid = o.amountPaid + applied[o.id];
           ops.push(b => b.update(doc(db, `${base}/orders/${o.id}`), {
             amountPaid: increment(a.amount),
             paymentStatus: paid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' : 'partial',
           }));
         }
+        // Persist the split onto the payment itself: it is the only record
+        // voidPayment can later use to un-apply this money (rules whitelist
+        // 'orderIds' on the admin update for exactly this).
+        ops.push(b => b.update(doc(db, `${base}/payments/${p.id}`), { orderIds: allocs }));
       }
 
       for (let i = 0; i < ops.length; i += 400) {
@@ -637,7 +717,7 @@ export function FirestoreStoreProvider({
         batch.commit().catch(writeRejected('Cash confirmation'));
       }
       // The staff member's own day doc flips, so THEIR screen shows "confirmed".
-      setDoc(doc(db, `${base}/days/${staffId}`), {
+      setDoc(doc(db, `${base}/days/${dayDocId(staffId)}`), {
         date: todayKey(), handoverConfirmed: true, staffId,
       }, { merge: true }).catch(writeRejected('Handover confirmation'));
     },
@@ -660,8 +740,9 @@ export function FirestoreStoreProvider({
         setDoc(doc(db, `${base}/productCosts/${id}`), { costPrice }, { merge: true })
           .catch(writeRejected('Cost price'));
       }
-      if (Object.keys(rest).length > 0) {
-        updateDoc(doc(db, `${base}/products/${id}`), rest as Record<string, unknown>)
+      const cleanRest = stripUndefined(rest);
+      if (Object.keys(cleanRest).length > 0) {
+        updateDoc(doc(db, `${base}/products/${id}`), cleanRest as Record<string, unknown>)
           .catch(writeRejected('Product update'));
       }
     },
@@ -680,7 +761,7 @@ export function FirestoreStoreProvider({
 
     addShop({ openingBalance, ...s }: ShopInput) {
       setDoc(doc(collection(db, `${base}/shops`)), {
-        ...s, standingDiscountPercent: s.standingDiscountPercent ?? 0,
+        ...stripUndefined(s), standingDiscountPercent: s.standingDiscountPercent ?? 0,
         // The paper khata comes with the shop (audit blocker: pre-app debt
         // was invisible to the whole collections flow).
         outstanding: openingBalance && openingBalance > 0 ? openingBalance : 0,
@@ -689,7 +770,7 @@ export function FirestoreStoreProvider({
     },
 
     updateShop(id, patch) {
-      updateDoc(doc(db, `${base}/shops/${id}`), patch as Record<string, unknown>)
+      updateDoc(doc(db, `${base}/shops/${id}`), stripUndefined(patch) as Record<string, unknown>)
         .catch(writeRejected('Shop update'));
     },
 
@@ -705,7 +786,7 @@ export function FirestoreStoreProvider({
     },
 
     updateSettings(patch) {
-      setDoc(doc(db, `${base}/settings/company`), patch, { merge: true })
+      setDoc(doc(db, `${base}/settings/company`), stripUndefined(patch), { merge: true })
         .catch(writeRejected('Settings'));
     },
 

@@ -25,9 +25,17 @@ import type { Role, SessionUser } from './src/app/types';
 function SignedInApp({ user, onSignOut }: { user: SessionUser; onSignOut: () => void }) {
   const store = useStore();
   const [wizardDone, setWizardDone] = React.useState(false);
-  const needsWizard =
-    user.role === 'admin' && store.ready && store.products.length === 0 && !wizardDone;
-  if (needsWizard) return <WizardScreen onDone={() => setWizardDone(true)} />;
+  // Latch the decision the first time the store is ready. Deriving it live
+  // from products.length threw the owner out of setup the instant he added
+  // his FIRST product on step 2 — the wizard unmounted mid-flow and steps 3
+  // and 4 (shops, and inviting the team) were never seen.
+  const [wizardLatched, setWizardLatched] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    if (wizardLatched === null && store.ready) {
+      setWizardLatched(user.role === 'admin' && store.products.length === 0);
+    }
+  }, [wizardLatched, store.ready, store.products.length, user.role]);
+  if (wizardLatched && !wizardDone) return <WizardScreen onDone={() => setWizardDone(true)} />;
   return <AppNavigation role={user.role} onSwitchRole={onSignOut} />;
 }
 

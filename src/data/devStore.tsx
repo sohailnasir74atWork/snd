@@ -192,7 +192,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     },
 
     closeOutStop({ orderId, deliveredQtys, paymentAmount, mode }: CloseOutInput) {
-      const order = state.orders.find(o => o.id === orderId)!;
+      const order = state.orders.find(o => o.id === orderId);
+      // Same guard as the real store, so the demo cannot show a flow the
+      // signed-in app refuses.
+      if (!order || order.status === 'cancelled' || order.status === 'returned'
+          || order.status === 'delivered') {
+        throw new Error('This stop is no longer open. Go back to the route and reopen it.');
+      }
       const items = order.items.map(it => ({ ...it, deliveredQty: deliveredQtys[it.productId] ?? it.qty }));
       const billed = computeTotals(items, order.discountPercent, true);
       const invoiceNo = nextSerial('INV');

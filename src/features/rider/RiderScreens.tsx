@@ -231,6 +231,10 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
               amountInWordsLine: amountInWordsLine(billed.grandTotal),
               received: Math.min(payAmount, billed.grandTotal),
               previousBalance: oldBalance,
+              // Anything over today's bill went to the old khata — the printed
+              // total must credit it, or the shopkeeper is handed a bill
+              // claiming he still owes cash he just paid.
+              paidToPrevious: Math.max(0, payAmount - billed.grandTotal),
             });
             await sharePdf(
               html,
@@ -373,13 +377,22 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
                   text: 'Delivered',
                   onPress: async () => {
                     setBusy(true);
-                    const r = await Promise.resolve(
-                      store.closeOutStop({
-                        orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
-                      }),
-                    );
-                    setBusy(false);
-                    setResult(r);
+                    try {
+                      const r = await Promise.resolve(
+                        store.closeOutStop({
+                          orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
+                        }),
+                      );
+                      setResult(r);
+                    } catch (e) {
+                      // The booker can cancel this order while the rider is at
+                      // the counter — say so and send him back to the route.
+                      Alert.alert('Cannot close this stop', e instanceof Error ? e.message : String(e), [
+                        { text: 'Back to route', onPress: onDone },
+                      ]);
+                    } finally {
+                      setBusy(false);
+                    }
                   },
                 },
               ],

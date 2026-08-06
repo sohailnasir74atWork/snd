@@ -316,6 +316,7 @@ export function NewOrderScreen() {
   const [deliveryDay, setDeliveryDay] = React.useState<'today' | 'tomorrow'>('today');
   const [discount, setDiscount] = React.useState(0);
   const [search, setSearch] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
   const [confirmed, setConfirmed] = React.useState<{ order: Order; shop: Shop } | null>(null);
 
   const pickShop = React.useCallback((s: Shop) => {
@@ -550,14 +551,25 @@ export function NewOrderScreen() {
       <View style={styles.ctaWrap}>
         <PrimaryButton
           icon="check-circle-outline"
-          label={`Confirm — Rs ${totals.grandTotal.toLocaleString()}`}
-          disabled={items.length === 0}
-          disabledReason="Add a quantity first"
+          label={busy ? 'Saving…' : `Confirm — Rs ${totals.grandTotal.toLocaleString()}`}
+          // The serial number needs a server round-trip, so this button sits
+          // enabled for a second or two — long enough for an impatient second
+          // tap to book the whole order twice.
+          disabled={items.length === 0 || busy}
+          disabledReason={busy ? 'Saving…' : 'Add a quantity first'}
           onPress={async () => {
-            const order = await Promise.resolve(
-              store.bookOrder({ shopId: shop.id, items, discountPercent: discount, deliveryDay }),
-            );
-            setConfirmed({ order, shop });
+            if (busy) return;
+            setBusy(true);
+            try {
+              const order = await Promise.resolve(
+                store.bookOrder({ shopId: shop.id, items, discountPercent: discount, deliveryDay }),
+              );
+              setConfirmed({ order, shop });
+            } catch (e) {
+              Alert.alert('Order not saved', e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
           }}
         />
         <PrimaryButton variant="quiet" icon="arrow-left" label="Different shop"

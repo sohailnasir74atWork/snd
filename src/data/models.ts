@@ -101,6 +101,12 @@ export interface Payment {
   voided?: boolean;
   voidedBy?: string;
   voidedAt?: number;
+  /**
+   * Money that moved the shop's khata but matched no bill the collecting
+   * phone could see (a rider only receives his own orders). The owner
+   * reconciles it; it is never silently dropped.
+   */
+  unallocated?: number;
   createdAt: number;
 }
 

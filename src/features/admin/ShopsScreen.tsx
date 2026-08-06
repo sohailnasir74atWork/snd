@@ -35,6 +35,7 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
   const [khataDir, setKhataDir] = React.useState<'down' | 'up'>('down');
   const [payText, setPayText] = React.useState('');
   const [payMode, setPayMode] = React.useState<'cash' | 'transfer'>('transfer');
+  const [busy, setBusy] = React.useState(false);
 
   const khataDelta = toRupees(khataText);
   const payAmount = Math.min(toRupees(payText), shop.outstanding);
@@ -62,7 +63,9 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
         onPress={() => {
           store.updateShop(shop.id, {
             name: name.trim(), phone: phone.trim(), area: area.trim(),
-            ownerName: ownerName.trim() || undefined, standingDiscountPercent: discount,
+            // Empty string, not undefined: undefined is stripped before the
+            // write, so clearing the owner's name silently kept the old one.
+            ownerName: ownerName.trim(), standingDiscountPercent: discount,
           });
           onClose();
         }}
@@ -114,10 +117,22 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
             keyboardType="number-pad" placeholder="0" placeholderTextColor={color.textFaint} />
           {payAmount > 0 && (
             <View style={styles.rowWrap}>
-              <Chip small selected label={`Record Rs ${payAmount.toLocaleString()} received`}
-                onPress={async () => {
-                  await Promise.resolve(store.collect({ shopId: shop.id, amount: payAmount, mode: payMode }));
+              {/* Clear the field FIRST: a second tap while the receipt serial
+                  is still in flight would otherwise take the money twice. */}
+              <Chip small selected
+                label={busy ? 'Recording…' : `Record Rs ${payAmount.toLocaleString()} received`}
+                onPress={busy ? undefined : async () => {
+                  setBusy(true);
+                  const amt = payAmount;
                   setPayText('');
+                  try {
+                    await Promise.resolve(store.collect({ shopId: shop.id, amount: amt, mode: payMode }));
+                  } catch (e) {
+                    Alert.alert('Not recorded', e instanceof Error ? e.message : String(e));
+                    setPayText(String(amt));
+                  } finally {
+                    setBusy(false);
+                  }
                 }} />
             </View>
           )}

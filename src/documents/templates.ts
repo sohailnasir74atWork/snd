@@ -192,6 +192,13 @@ export interface BillArgs {
   received: number;
   /** Shop's outstanding balance BEFORE this bill (the old khata). */
   previousBalance: number;
+  /**
+   * Cash from the same handover that went to the OLD khata rather than this
+   * bill (the "+ old khata" option). Without it the printed TOTAL OUTSTANDING
+   * ignored the money just paid and dunned the shopkeeper for cash still in
+   * the rider's hand.
+   */
+  paidToPrevious?: number;
 }
 
 /**
@@ -204,7 +211,7 @@ export interface BillArgs {
  * TOTAL OUTSTANDING = previousBalance + balance this bill.
  */
 export function billHtml(args: BillArgs): string {
-  const { settings, order, shop, received, previousBalance } = args;
+  const { settings, order, shop, received, previousBalance, paidToPrevious = 0 } = args;
   const symbol = settings.currencySymbol;
   const rows: ItemRow[] = order.items
     .filter((it) => (it.deliveredQty ?? 0) > 0)
@@ -214,7 +221,8 @@ export function billHtml(args: BillArgs): string {
     });
   const totals = order.billedTotals ?? computeTotals(order.items, order.discountPercent, true);
   const balanceThisBill = totals.grandTotal - received;
-  const totalOutstanding = previousBalance + balanceThisBill;
+  const remainingPrevious = Math.max(0, previousBalance - paidToPrevious);
+  const totalOutstanding = remainingPrevious + balanceThisBill;
 
   const body = `${headerBlock(settings)}
 <hr class="rule" />

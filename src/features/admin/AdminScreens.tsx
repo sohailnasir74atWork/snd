@@ -165,7 +165,11 @@ export function AdminDashboardScreen() {
     && (o.deliveredAt ?? o.bookedAt) >= dayStart.getTime());
   const delivered = todayOrders.filter(o => o.status === 'delivered');
   const sales = delivered.reduce((s, o) => s + (o.billedTotals?.grandTotal ?? 0), 0);
-  const confirmed = store.payments.filter(p => p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
+  // Both figures sit under a "TODAY'S SALES" heading, so both are today's.
+  // "cash confirmed" was summing every payment ever taken.
+  const confirmed = store.payments
+    .filter(p => p.confirmed && !p.voided && p.createdAt >= dayStart.getTime())
+    .reduce((s, p) => s + p.amount, 0);
   const withStaff = store.payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
   const outstanding = store.shops.filter(sh => sh.active).reduce((s, sh) => s + sh.outstanding, 0);
 
