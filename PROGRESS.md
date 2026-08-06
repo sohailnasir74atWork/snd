@@ -6,7 +6,7 @@ business in Pakistan (owner, order booker, delivery rider).
 | | |
 |---|---|
 | Package | `com.apptechsolutions.fieldsales` |
-| Current build | **v1.3 (versionCode 4)** — `builds/SnD-Manager-v1.3-build4.aab` |
+| Current build | **v1.5 (versionCode 6)** — `builds/SnD-Manager-v1.5-build6.aab` |
 | Signing | `solanalab.keystore` (the publisher's existing Play upload key, alias `solanalabdev`) |
 | Firebase project | `saleforec-10ce7` (functions in `asia-south1`) |
 | Stack | React Native 0.86 · Hermes · New Architecture · RN Firebase v26 (modular API only) |
@@ -49,6 +49,7 @@ Seven commits, each a complete round of work.
 | `1ee8e70` | 4 | Rewards, push notifications, exception cash, shelf counts, CSV |
 | `96574ee` | 5 | Visibility toggles + first on-device smoke pass |
 | `6d6cea9` | 6 | **Closed all 39 field-audit gaps** |
+| `29c1f27` | — | Fixed the system nav bar covering the app's bottom tabs |
 
 ### Round 3 — production hardening
 Found by a prod-readiness audit; all fixed:
@@ -194,10 +195,43 @@ listener query carries the same filter its rule checks.
 The AAB is built, signed and verified. Remaining steps are all in the Play
 Console and need the publisher account.
 
-1. **Upload** `builds/SnD-Manager-v1.3-build4.aab` to **Internal testing**
+1. **Upload** the latest AAB from `builds/` to **Internal testing**
    (not production — pilot with the real team first).
 2. **Add testers** — the booker's and rider's Gmail addresses. They must be the
    *same* addresses the owner adds inside the app on the Employees screen.
+
+2a. ⚠️ **REGISTER THE PLAY SIGNING CERTIFICATES IN FIREBASE — or Google
+    Sign-In fails with `DEVELOPER_ERROR` for everyone who installs from Play.**
+
+   Play App Signing strips your upload signature and re-signs the app with
+   Google's own key, which Firebase has never seen. Worse, this project uses
+   the **quantum-ready hybrid** setup, so Play issues **three** certificates —
+   and the one that actually signs the delivered APK is *not* the one the
+   console shows most prominently.
+
+   Play Console → App signing → **Download certificates**, then:
+
+   | File | Role | SHA-1 |
+   |---|---|---|
+   | `deployment_cert.der` | **signs what devices install — the one that matters** | `CD:41:93:F5:5D:E1:0C:14:69:E2:4B:FB:F7:6A:B5:9E:6B:A6:DE:9A` |
+   | `hybrid_classical_cert.der` | classical half of the upgrade pair | `D8:B6:6C:BA:E1:AB:31:9F:26:36:48:B4:BF:E3:73:46:9E:0F:29:25` |
+   | `hybrid_pqc_cert.der` | post-quantum half | `1D:43:6F:AA:48:96:5C:9E:6D:9B:5E:2B:B3:32:A9:5F:DF:94:9E:F7` |
+
+   Add **all three SHA-1s** (and their SHA-256s) in Firebase Console →
+   Project settings → Your apps → Android → **Add fingerprint**. Read any
+   certificate's fingerprints with:
+
+   ```bash
+   keytool -printcert -file ~/Downloads/certificates/deployment_cert.der
+   ```
+
+   No rebuild or re-upload is needed — the check is server-side. Allow ~5
+   minutes, then clear **Google Play services** cache on the test device and
+   force-stop the app.
+
+   Registering only the upload key (`D1:95:A1:22…`) and the debug key is what
+   makes sign-in work perfectly on sideloaded builds and fail only on Play —
+   the symptom that cost us an afternoon.
 3. **Data safety form** — the app collects **email address and name** (Google
    sign-in) for app functionality and account management. Data is encrypted in
    transit. Users can request deletion via the owner.

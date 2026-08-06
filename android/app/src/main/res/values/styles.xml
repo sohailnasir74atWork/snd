@@ -4,6 +4,16 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+
+        <!--
+          The app canvas is light (#EDF3FA) and Android 15+ forces edge-to-edge,
+          so the system bars draw straight over it. Ask for DARK icons in both
+          bars, or the clock, battery and gesture pill vanish into the
+          background. Declared here rather than only in JS so it is correct from
+          the very first frame — no flash of white icons at launch.
+        -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
 </resources>

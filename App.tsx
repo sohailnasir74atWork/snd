@@ -7,7 +7,7 @@
  * first (FR-1.7). A small "preview" link keeps the offline demo available.
  */
 import React from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { Icon, IconTile, color, shadow } from './src/components/ui';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppNavigation, WelcomeScreen } from './src/app/navigation';
@@ -163,6 +163,9 @@ function AuthGate() {
 export default function App() {
   return (
     <SafeAreaProvider>
+      {/* Dark clock/battery on the light canvas. The theme sets this too, for
+          the launch frame; this keeps it from being reset at runtime. */}
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
       <AuthGate />
     </SafeAreaProvider>
   );
