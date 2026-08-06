@@ -9,7 +9,7 @@
 import React from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Icon, IconTile, color, shadow } from './src/components/ui';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppNavigation, WelcomeScreen } from './src/app/navigation';
 import { configureGoogleSignIn, restoreSession, signInWithGoogle, signOutEverywhere } from './src/app/auth';
 import { DevStoreProvider } from './src/data/devStore';
@@ -41,6 +41,9 @@ type Stage =
 function AuthGate() {
   const [stage, setStage] = React.useState<Stage>({ kind: 'loading' });
   const [busy, setBusy] = React.useState(false);
+  // These screens live OUTSIDE the navigator, so nothing applies the system
+  // bar insets for them — and Android 15+ forces edge-to-edge (targetSdk 36).
+  const insets = useSafeAreaInsets();
 
   React.useEffect(() => {
     configureGoogleSignIn();
@@ -81,12 +84,14 @@ function AuthGate() {
 
   if (stage.kind === 'welcome') {
     return (
-      <View style={{ flex: 1 }}>
+      <View style={[styles.fill, { paddingTop: insets.top }]}>
         <WelcomeScreen
           onSignIn={() => doSignIn()}
           onCreateBusiness={name => doSignIn(name)}
         />
-        <Pressable style={styles.demoRow} onPress={() => setStage({ kind: 'previewPick' })}>
+        <Pressable
+          style={[styles.demoRow, { marginBottom: 28 + insets.bottom }]}
+          onPress={() => setStage({ kind: 'previewPick' })}>
           <Icon name="play-circle-outline" size={26} color={color.primary} />
           <View style={{ marginLeft: 10 }}>
             <Text style={styles.demoTitle}>See a demo first</Text>
@@ -109,7 +114,7 @@ function AuthGate() {
         title: 'Delivery Rider', desc: 'Load the van, deliver, bill and collect' },
     ];
     return (
-      <View style={styles.pick}>
+      <View style={[styles.pick, { paddingTop: 28 + insets.top, paddingBottom: 28 + insets.bottom }]}>
         <View style={styles.demoBadge}>
           <Icon name="play-circle-outline" size={16} color={color.primary} />
           <Text style={styles.demoBadgeText}>DEMO</Text>
@@ -164,6 +169,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  fill: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: color.bg },
   pick: { flex: 1, justifyContent: 'center', padding: 28, backgroundColor: color.bg },
   pickTitle: { fontSize: 20, fontWeight: '700', color: color.text, textAlign: 'center' },

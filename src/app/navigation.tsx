@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Pressable, TextInput } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { strings } from '../i18n/strings';
 import { Icon, color } from '../components/ui';
 import type { Role } from './types';
@@ -130,6 +131,10 @@ function tabScreen(name: string, title: string, hint: string) {
 
 export function RoleTabs({ role, onSwitchRole }: { role: Role; onSwitchRole?: () => void }) {
   const t = strings.tabs;
+  // Android 15+ forces edge-to-edge for targetSdk 35+, so the system gesture
+  // bar draws OVER the tab bar unless we grow it by the bottom inset. A fixed
+  // height here silently cut the labels in half on real phones.
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
@@ -139,7 +144,13 @@ export function RoleTabs({ role, onSwitchRole }: { role: Role; onSwitchRole?: ()
         headerShadowVisible: false,
         tabBarActiveTintColor: color.primary,
         tabBarInactiveTintColor: color.textFaint,
-        tabBarStyle: { backgroundColor: color.surface, borderTopColor: color.border, height: 60, paddingBottom: 6, paddingTop: 4 },
+        tabBarStyle: {
+          backgroundColor: color.surface,
+          borderTopColor: color.border,
+          height: 60 + insets.bottom,
+          paddingBottom: 6 + insets.bottom,
+          paddingTop: 4,
+        },
         tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
         headerRight: onSwitchRole
           ? () => (
