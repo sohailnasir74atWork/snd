@@ -4,14 +4,136 @@
  * behind "More". Existing-area chips stop "Saddar"/"Sadar" fragmentation.
  */
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
+import type { Shop } from '../../data/models';
 
 const DISCOUNT_CHIPS = [0, 2, 5];
+
+function toRupees(text: string): number {
+  const n = parseInt(text.replace(/[^0-9]/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Everything the owner needs to do to an EXISTING shop (audit: shops could
+ * never be edited): details, standing discount, manual khata correction,
+ * a payment made directly to her, deactivation.
+ */
+function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
+  const store = useStore();
+  const [name, setName] = React.useState(shop.name);
+  const [phone, setPhone] = React.useState(shop.phone);
+  const [area, setArea] = React.useState(shop.area);
+  const [ownerName, setOwnerName] = React.useState(shop.ownerName ?? '');
+  const [discount, setDiscount] = React.useState(shop.standingDiscountPercent);
+  const [khataText, setKhataText] = React.useState('');
+  const [khataDir, setKhataDir] = React.useState<'down' | 'up'>('down');
+  const [payText, setPayText] = React.useState('');
+  const [payMode, setPayMode] = React.useState<'cash' | 'transfer'>('transfer');
+
+  const khataDelta = toRupees(khataText);
+  const payAmount = Math.min(toRupees(payText), shop.outstanding);
+
+  return (
+    <Card style={styles.tightCard}>
+      <View style={styles.formHead}>
+        <IconTile name="storefront-outline" size={34} />
+        <Text style={styles.formTitle}>{shop.name}</Text>
+      </View>
+
+      <Field label="Shop name" value={name} onChange={setName} placeholder={shop.name} />
+      <Field label="Mobile number" value={phone} onChange={setPhone}
+        placeholder="03xx xxxxxxx" keyboardType="phone-pad" />
+      <Field label="Area" value={area} onChange={setArea} placeholder="Area" />
+      <Field label="Owner's name" value={ownerName} onChange={setOwnerName} placeholder="Who runs the shop" />
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Standing discount</Text>
+        <OptionBar options={DISCOUNT_CHIPS} value={discount} render={d => `${d}%`} onChange={setDiscount} />
+      </View>
+      <PrimaryButton
+        label="Save details" icon="check-circle-outline"
+        disabled={name.trim().length === 0 || phone.trim().length === 0}
+        disabledReason="Name and mobile first"
+        onPress={() => {
+          store.updateShop(shop.id, {
+            name: name.trim(), phone: phone.trim(), area: area.trim(),
+            ownerName: ownerName.trim() || undefined, standingDiscountPercent: discount,
+          });
+          onClose();
+        }}
+      />
+
+      <View style={styles.divider} />
+      <Text style={styles.fieldLabel}>
+        Khata correction — owes Rs {shop.outstanding.toLocaleString()} now
+      </Text>
+      <OptionBar
+        options={['down', 'up'] as const}
+        value={khataDir}
+        render={v => (v === 'down' ? 'Reduce (return/waiver)' : 'Increase (old debt)')}
+        onChange={setKhataDir}
+      />
+      <TextInput style={[styles.input, styles.gapTop]} value={khataText}
+        onChangeText={t => setKhataText(t.replace(/[^0-9]/g, ''))}
+        keyboardType="number-pad" placeholder="0" placeholderTextColor={color.textFaint} />
+      {khataDelta > 0 && (
+        <View style={styles.rowWrap}>
+          <Chip small selected label={`Apply ${khataDir === 'down' ? '−' : '+'}Rs ${khataDelta.toLocaleString()}`}
+            onPress={() =>
+              Alert.alert('Adjust the khata?',
+                `${shop.name}: Rs ${shop.outstanding.toLocaleString()} → Rs ${(shop.outstanding + (khataDir === 'down' ? -khataDelta : khataDelta)).toLocaleString()}`,
+                [
+                  { text: 'Back', style: 'cancel' },
+                  { text: 'Apply', onPress: () => {
+                      store.adjustShopBalance(shop.id, khataDir === 'down' ? -khataDelta : khataDelta,
+                        khataDir === 'down' ? 'manual reduction' : 'manual increase');
+                      setKhataText('');
+                    } },
+                ])
+            } />
+        </View>
+      )}
+
+      {shop.outstanding > 0 && (
+        <>
+          <View style={styles.divider} />
+          <Text style={styles.fieldLabel}>Payment made directly to you</Text>
+          <OptionBar
+            options={['transfer', 'cash'] as const}
+            value={payMode}
+            render={v => (v === 'transfer' ? 'Bank transfer' : 'Cash')}
+            onChange={setPayMode}
+          />
+          <TextInput style={[styles.input, styles.gapTop]} value={payText}
+            onChangeText={t => setPayText(t.replace(/[^0-9]/g, ''))}
+            keyboardType="number-pad" placeholder="0" placeholderTextColor={color.textFaint} />
+          {payAmount > 0 && (
+            <View style={styles.rowWrap}>
+              <Chip small selected label={`Record Rs ${payAmount.toLocaleString()} received`}
+                onPress={async () => {
+                  await Promise.resolve(store.collect({ shopId: shop.id, amount: payAmount, mode: payMode }));
+                  setPayText('');
+                }} />
+            </View>
+          )}
+        </>
+      )}
+
+      <View style={styles.divider} />
+      <View style={styles.rowWrap}>
+        <Chip small danger={shop.active}
+          label={shop.active ? 'Deactivate shop' : 'Reactivate shop'}
+          onPress={() => { store.updateShop(shop.id, { active: !shop.active }); onClose(); }} />
+        <Chip small label="Close" onPress={onClose} />
+      </View>
+    </Card>
+  );
+}
 
 function Field({ label, value, onChange, placeholder, keyboardType }: {
   label: string; value: string; onChange: (t: string) => void;
@@ -47,12 +169,14 @@ export function ShopsScreen() {
   const [ownerName, setOwnerName] = React.useState('');
   const [address, setAddress] = React.useState('');
   const [discount, setDiscount] = React.useState(0);
+  const [openingText, setOpeningText] = React.useState('');
+  const [editingId, setEditingId] = React.useState<string | null>(null);
 
   const canSave = name.trim().length > 0 && phone.trim().length > 0;
 
   const reset = () => {
     setName(''); setPhone(''); setArea(''); setOwnerName(''); setAddress('');
-    setDiscount(0); setShowMore(false); setAdding(false);
+    setDiscount(0); setOpeningText(''); setShowMore(false); setAdding(false);
   };
 
   const save = () => {
@@ -63,6 +187,8 @@ export function ShopsScreen() {
       ownerName: ownerName.trim() ? ownerName.trim() : undefined,
       address: address.trim() ? address.trim() : undefined,
       standingDiscountPercent: discount,
+      // The paper khata comes along on day one (audit blocker).
+      openingBalance: toRupees(openingText),
     });
     reset();
   };
@@ -128,6 +254,10 @@ export function ShopsScreen() {
                   onChange={d => setDiscount(d)}
                 />
               </View>
+
+              <Field label="Old khata balance (Rs) — what they already owe from the paper book"
+                value={openingText} onChange={t => setOpeningText(t.replace(/[^0-9]/g, ''))}
+                placeholder="0" keyboardType="phone-pad" />
             </View>
           )}
 
@@ -156,21 +286,28 @@ export function ShopsScreen() {
       {byArea.map(a => (
         <View key={a || 'no-area'}>
           <SectionLabel>{a.trim() ? a : 'No area yet'}</SectionLabel>
-          {shops.filter(s => s.area === a).map(shop => (
-            <Card key={shop.id}>
-              <ListRow
-                icon="storefront-outline"
-                title={shop.name}
-                sub={`${shop.ownerName ? `${shop.ownerName} • ` : ''}${shop.phone}`}
-                right={shop.outstanding > 0
-                  ? <Money amount={shop.outstanding} bold color={color.danger} />
-                  : undefined}
-              />
-              {shop.outstanding > 0 && (
-                <Text style={styles.owes}>owes this much on the books</Text>
-              )}
-            </Card>
-          ))}
+          {shops.filter(s => s.area === a).map(shop =>
+            editingId === shop.id ? (
+              <ShopEditor key={shop.id} shop={shop} onClose={() => setEditingId(null)} />
+            ) : (
+              <Card key={shop.id}>
+                <ListRow
+                  icon="storefront-outline"
+                  title={shop.name}
+                  sub={`${shop.ownerName ? `${shop.ownerName} • ` : ''}${shop.phone}`}
+                  right={shop.outstanding > 0
+                    ? <Money amount={shop.outstanding} bold color={color.danger} />
+                    : undefined}
+                />
+                <View style={styles.rowWrap}>
+                  {!shop.active && <Tag label="INACTIVE" tone="warn" />}
+                  <Chip small label="Edit / khata / payment" onPress={() => setEditingId(shop.id)} />
+                </View>
+                {shop.outstanding > 0 && (
+                  <Text style={styles.owes}>owes this much on the books</Text>
+                )}
+              </Card>
+            ))}
         </View>
       ))}
     </ScrollView>
@@ -203,5 +340,10 @@ const styles = StyleSheet.create({
   moreLinkText: { fontSize: font.body, fontWeight: '700', color: color.primary },
   owes: { fontSize: font.sub, color: color.danger, textAlign: 'right' },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: space.xs, alignItems: 'center' },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center' },
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center', gap: space.xs },
+  divider: {
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
+    marginTop: space.m, marginBottom: space.s,
+  },
+  gapTop: { marginTop: space.s },
 });

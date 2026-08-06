@@ -11,8 +11,10 @@ import {
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { CollectionInput } from '../../data/store';
-import type { Shop } from '../../data/models';
+import type { Payment, Shop } from '../../data/models';
 import { formatAmount } from '../../lib/money';
+import { receiptHtml } from '../../documents/templates';
+import { sharePdf } from '../../documents/share';
 
 type Mode = CollectionInput['mode'];
 
@@ -53,7 +55,10 @@ export function CollectScreen() {
   const [amountText, setAmountText] = React.useState('');
   const [mode, setMode] = React.useState<Mode>('cash');
   const [busy, setBusy] = React.useState(false);
-  const [done, setDone] = React.useState<{ receiptNo: string; amount: number } | null>(null);
+  const [done, setDone] = React.useState<{
+    receiptNo: string; amount: number; shopId: string; shopName: string;
+    mode: Mode; newOutstanding: number;
+  } | null>(null);
 
   const shop = shopId ? store.shops.find(s => s.id === shopId) ?? null : null;
 
@@ -80,6 +85,21 @@ export function CollectScreen() {
 
   // ---------- after a successful collection ----------
   if (done) {
+    const sendReceipt = async () => {
+      const payment: Payment = {
+        id: done.receiptNo, receiptNo: done.receiptNo, shopId: done.shopId,
+        orderIds: [], amount: done.amount, mode: done.mode,
+        collectedBy: 'rider', confirmed: false, createdAt: Date.now(),
+      };
+      const html = receiptHtml({
+        settings: store.settings, payment, shopName: done.shopName,
+        allocations: [], newOutstanding: done.newOutstanding,
+      });
+      await sharePdf(
+        html, done.receiptNo,
+        `Receipt ${done.receiptNo} — Rs ${done.amount.toLocaleString()} received. Balance Rs ${done.newOutstanding.toLocaleString()}.`,
+      ).catch(() => {});
+    };
     return (
       <View style={[styles.screen, styles.centerPad]}>
         <Icon name="check-circle" size={72} color={color.success} />
@@ -88,6 +108,8 @@ export function CollectScreen() {
         <Money amount={done.amount} size={font.h1} bold color={color.success} />
         <Text style={styles.hint}>It is counted as cash with you until the owner confirms the handover.</Text>
         <View style={styles.doneButtons}>
+          <PrimaryButton icon="whatsapp" label={`Send receipt to ${done.shopName}`}
+            onPress={() => { void sendReceipt(); }} />
           <PrimaryButton label="Collect from another shop" variant="quiet" onPress={reset} />
           <PrimaryButton label="Done" variant="quiet" onPress={reset} />
         </View>
@@ -215,7 +237,10 @@ export function CollectScreen() {
               const r = await Promise.resolve(
                 store.collect({ shopId: shop.id, amount, mode: activeMode }),
               );
-              setDone({ receiptNo: r.receiptNo, amount });
+              setDone({
+                receiptNo: r.receiptNo, amount, shopId: shop.id, shopName: shop.name,
+                mode: activeMode, newOutstanding: Math.max(0, outstanding - amount),
+              });
             } finally {
               setBusy(false);
             }

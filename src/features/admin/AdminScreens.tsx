@@ -14,9 +14,11 @@ import { strings } from '../../i18n/strings';
 
 export function AdminActionScreen() {
   const store = useStore();
-  const withStaff = store.payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
-  const oldCredit = store.shops.filter(s => s.outstanding > 0);
-  const problems = store.orders.filter(o => o.status === 'returned' || o.status === 'cancelled');
+  const withStaff = store.payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
+  const oldCredit = store.shops.filter(s => s.active && s.outstanding > 0);
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const problems = store.orders.filter(o =>
+    (o.status === 'returned' || o.status === 'cancelled') && o.bookedAt >= dayStart.getTime() - 6 * 86400_000);
 
   // One card PER PERSON who has handed over: the owner counts one pile of
   // cash and confirms exactly that pile (FR-7.11).
@@ -26,12 +28,12 @@ export function AdminActionScreen() {
       staffId: d.staffId!,
       name: store.staffNames[d.staffId!] || 'Staff member',
       amount: store.payments
-        .filter(p => !p.confirmed && p.collectedBy === d.staffId)
+        .filter(p => !p.confirmed && !p.voided && p.collectedBy === d.staffId)
         .reduce((s, p) => s + p.amount, 0),
     }));
   const pendingTotal = pending.reduce((s, h) => s + h.amount, 0);
   const stillOut = withStaff - pendingTotal; // collected but not yet handed over
-  const exceptions = store.payments.filter(p => p.exception && !p.confirmed);
+  const exceptions = store.payments.filter(p => p.exception && !p.confirmed && !p.voided);
   const claims = store.rewardClaims.filter(c => c.status === 'pending');
   const calm = withStaff === 0 && oldCredit.length === 0 && problems.length === 0
     && exceptions.length === 0 && claims.length === 0;
@@ -117,6 +119,23 @@ export function AdminActionScreen() {
         </Card>
       )}
 
+      {problems.map(o => (
+        <Card key={o.id}>
+          <View style={styles.row}>
+            <IconTile name="close-circle-outline" tint={color.danger} bg={color.dangerSoft} />
+            <View style={styles.rowBody}>
+              <Text style={styles.cardTitle}>
+                {o.shopSnapshot.name} — {o.status === 'cancelled' ? 'cancelled' : 'sent back'}
+              </Text>
+              <Text style={styles.meta}>
+                {o.orderNo}{o.undeliveredReason ? ` • ${o.undeliveredReason}` : ''} • stock released
+              </Text>
+            </View>
+            <Money amount={o.orderedTotals.grandTotal} color={color.textSub} />
+          </View>
+        </Card>
+      ))}
+
       {oldCredit.map(s => (
         <Card key={s.id}>
           <View style={styles.row}>
@@ -139,11 +158,16 @@ export function AdminActionScreen() {
 
 export function AdminDashboardScreen() {
   const store = useStore();
-  const delivered = store.orders.filter(o => o.status === 'delivered');
+  // TODAY means today (audit: the hero card was quietly all-time).
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const todayOrders = store.orders.filter(o =>
+    o.status !== 'cancelled' && o.status !== 'returned'
+    && (o.deliveredAt ?? o.bookedAt) >= dayStart.getTime());
+  const delivered = todayOrders.filter(o => o.status === 'delivered');
   const sales = delivered.reduce((s, o) => s + (o.billedTotals?.grandTotal ?? 0), 0);
-  const confirmed = store.payments.filter(p => p.confirmed).reduce((s, p) => s + p.amount, 0);
-  const withStaff = store.payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
-  const outstanding = store.shops.reduce((s, sh) => s + sh.outstanding, 0);
+  const confirmed = store.payments.filter(p => p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
+  const withStaff = store.payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
+  const outstanding = store.shops.filter(sh => sh.active).reduce((s, sh) => s + sh.outstanding, 0);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -165,13 +189,13 @@ export function AdminDashboardScreen() {
           </View>
           <View style={styles.heroDivider} />
           <View style={styles.heroStat}>
-            <Text style={styles.heroStatValue}>{delivered.length}/{store.orders.length}</Text>
+            <Text style={styles.heroStatValue}>{delivered.length}/{todayOrders.length}</Text>
             <Text style={styles.heroStatLabel}>delivered</Text>
           </View>
         </View>
       </LinearGradient>
       <View style={styles.tiles}>
-        <Tile label="Orders booked" value={`${store.orders.length}`} icon="cart-outline" />
+        <Tile label="Orders today" value={`${todayOrders.length}`} icon="cart-outline" />
         <Tile label="Delivered" value={`${delivered.length}`} icon="check-circle-outline" />
         <Tile label="Credit outstanding" value={`Rs ${outstanding.toLocaleString()}`} icon="alert-circle-outline" accent={outstanding > 0 ? color.danger : undefined} />
         <Tile label="With staff" value={`Rs ${withStaff.toLocaleString()}`} icon="clock-outline" accent={withStaff > 0 ? color.warn : undefined} />

@@ -235,6 +235,17 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     await getAuth().setCustomUserClaims(target.uid, null);
     await getAuth().revokeRefreshTokens(target.uid); // FR-1.9
   }
+  // If HE was the auto-assign rider, clear the slot so the replacement rider
+  // takes over on join — otherwise new orders keep addressing a ghost
+  // (audit blocker: "replacing the delivery rider silently breaks assignment").
+  const sRef = db.doc(`companies/${companyId}/settings/company`);
+  const sSnap = await sRef.get();
+  if (sSnap.exists) {
+    const s = sSnap.data();
+    if ((target.uid && s.autoAssignRiderId === target.uid) || s.autoAssignRiderEmail === email) {
+      await sRef.set({ autoAssignRiderId: null, autoAssignRiderEmail: null }, { merge: true });
+    }
+  }
   return { status: 'removed', email };
 });
 

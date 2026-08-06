@@ -42,6 +42,8 @@ export interface CollectionInput {
 export interface ShopInput {
   name: string; ownerName?: string; phone: string; area: string;
   address?: string; standingDiscountPercent?: number;
+  /** Pre-app paper-khata debt, entered once at creation (owner only). */
+  openingBalance?: number;
 }
 
 export interface RewardStaffInput {
@@ -84,8 +86,21 @@ export interface StoreApi {
 
   // field flows
   bookOrder(input: BookOrderInput): Promise<Order> | Order;
+  /**
+   * Cancel a not-yet-delivered order (FR-5.7: cancel, never delete) and
+   * release its committed stock. Booker: own orders; owner: any.
+   */
+  cancelOrder(orderId: string): void;
+  /** Shop closed today — push the stop to tomorrow (keeps stock committed). */
+  deferOrder(orderId: string): void;
+  /** Shop refused the goods — status 'returned', committed stock released. */
+  returnOrder(orderId: string, reason: string): void;
   flagCollection(shopId: string): void;
   startRoute(): void;
+  /** Tapped too early — allowed until the first close-out of the day. */
+  undoStartRoute(): void;
+  /** Has THE RIDER started his route? (the van freeze — FR-6.2, cross-phone). */
+  riderRouteStarted(): boolean;
   closeOutStop(input: CloseOutInput): Promise<{ invoiceNo: string; receiptNo?: string }> | { invoiceNo: string; receiptNo?: string };
   /** Money collected without a delivery — the khata visit (FR-7.4). */
   collect(input: CollectionInput): Promise<{ receiptNo: string }> | { receiptNo: string };
@@ -99,12 +114,25 @@ export interface StoreApi {
   // admin management
   addProduct(p: ProductInput): void;
   updateProduct(id: string, patch: Partial<Product>): void;
+  /** Supplier delivery or a count correction — atomic increment, logged. */
+  adjustStock(productId: string, delta: number, note: string): void;
   addShop(s: ShopInput): void;
+  updateShop(id: string, patch: Partial<Shop>): void;
+  /** Manual khata correction (returns, bounced cheques, paper-era fixes). */
+  adjustShopBalance(shopId: string, delta: number, note: string): void;
+  /**
+   * Owner crosses out a wrong payment: the row stays (voided), the shop's
+   * khata is restored and the FIFO allocations are un-applied.
+   */
+  voidPayment(paymentId: string): void;
   updateSettings(patch: Partial<CompanySettings>): void;
   addEmployee(email: string, name: string, role: Employee['role']): Promise<void>;
   removeEmployee(email: string): Promise<void>;
   addExpense(e: Omit<Expense, 'id'>): void;
+  removeExpense(id: string): void;
   addFixedCharge(c: Omit<FixedCharge, 'id'>): void;
+  updateFixedCharge(id: string, patch: Partial<FixedCharge>): void;
+  removeFixedCharge(id: string): void;
 
   // rewards (FR-16) + shelf counts
   addRewardStaff(s: RewardStaffInput): void;

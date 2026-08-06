@@ -17,8 +17,8 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import {
-  collection, deleteField, doc, getFirestore, increment, onSnapshot, orderBy,
-  query, where, runTransaction, serverTimestamp, setDoc, updateDoc, writeBatch,
+  collection, deleteDoc, deleteField, doc, getFirestore, increment, onSnapshot,
+  orderBy, query, where, runTransaction, serverTimestamp, setDoc, updateDoc, writeBatch,
 } from '@react-native-firebase/firestore';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
 import { getCrashlytics, recordError } from '@react-native-firebase/crashlytics';
@@ -149,6 +149,11 @@ export function FirestoreStoreProvider({
           return {
             id: d.id, ...(data as unknown as Omit<Shop, 'id'>),
             lastVisitAt: toMillis(data.lastVisitAt),
+            lastShelfCountAt: data.lastShelfCountAt ? toMillis(data.lastShelfCountAt) : undefined,
+            // Production writes a TIMESTAMP; every screen reads this boolean.
+            // Deriving it here is what makes "Tell the rider" real (audit
+            // blocker: the flag was demo-only).
+            collectionFlagged: !!data.collectionFlaggedAt,
           } as Shop;
         })), warn('shops')),
 
@@ -169,6 +174,8 @@ export function FirestoreStoreProvider({
             id: d.id, ...(data as unknown as Omit<Payment, 'id'>),
             createdAt: toMillis(data.createdAt) || Date.now(),
             confirmed: Boolean(data.confirmed),
+            voided: Boolean(data.voided),
+            voidedAt: data.voidedAt ? toMillis(data.voidedAt) : undefined,
           } as Payment;
         })), warn('payments')),
 
@@ -187,6 +194,15 @@ export function FirestoreStoreProvider({
       onSnapshot(doc(db, `${base}/days/${user.uid}`), s => {
         if (s.exists()) setRawDay({ ...EMPTY_DAY(), ...(s.data() as Partial<DayState>) } as DayState);
       }, warn('day')),
+
+      // EVERY role listens to everyone's day docs (2-3 tiny documents): the
+      // booker needs the RIDER's route lock to freeze the van (audit blocker:
+      // the freeze was checked against the booker's own day and never fired),
+      // and the owner needs them for the handover cards.
+      onSnapshot(collection(db, `${base}/days`), s =>
+        setStaffDays(s.docs.map(d => ({
+          ...EMPTY_DAY(), ...(d.data() as Partial<DayState>), staffId: d.id,
+        }) as DayState)), warn('days')),
     ];
 
     // Rewards (FR-16): admin + booker; the rider has no reward screens and
@@ -238,16 +254,14 @@ export function FirestoreStoreProvider({
           });
           setCosts(m);
         }, warn('productCosts')),
-        // Every staff member's day doc — the owner's view of who handed over
-        // and is waiting for their cash to be counted (FR-7.11).
-        onSnapshot(collection(db, `${base}/days`), s =>
-          setStaffDays(s.docs.map(d => ({
-            ...EMPTY_DAY(), ...(d.data() as Partial<DayState>), staffId: d.id,
-          }) as DayState)), warn('days')),
-        // uid → display name, so handover cards can say WHO is waiting.
+        // uid → display name for ACTIVE members only — removed staff drop out,
+        // which is also what flags their stranded orders for reassignment.
         onSnapshot(collection(db, `${base}/users`), s => {
           const m: Record<string, string> = {};
-          s.docs.forEach(d => { m[d.id] = (d.data() as { name?: string }).name || ''; });
+          s.docs.forEach(d => {
+            const data = d.data() as { name?: string; active?: boolean };
+            if (data.active !== false) m[d.id] = data.name || '';
+          });
           setStaffNames(m);
         }, warn('users')),
         onSnapshot(collection(db, `${base}/expenses`), s =>
@@ -310,6 +324,33 @@ export function FirestoreStoreProvider({
     }
   }
 
+  // Orders addressed to nobody (booked before the rider joined) or to a
+  // REMOVED rider would sit invisible forever — the owner's phone quietly
+  // re-addresses them to the current rider (audit blocker).
+  React.useEffect(() => {
+    if (!isAdmin) return;
+    const riderId = settings.autoAssignRiderId;
+    if (!riderId || Object.keys(staffNames).length === 0) return;
+    const orphans = orders.filter(o =>
+      (o.status === 'booked' || o.status === 'assigned') &&
+      o.assignedTo !== riderId &&
+      (!o.assignedTo || staffNames[o.assignedTo] === undefined));
+    if (orphans.length === 0) return;
+    const batch = writeBatch(db);
+    orphans.slice(0, 200).forEach(o =>
+      batch.update(doc(db, `${base}/orders/${o.id}`), { assignedTo: riderId }));
+    batch.commit().catch(e => console.warn('[snd] order reassignment', e));
+  }, [isAdmin, orders, settings.autoAssignRiderId, staffNames]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** The van freeze is the RIDER's lock, read from HIS day doc (FR-6.2). */
+  const riderRouteStartedNow = (): boolean => {
+    if (isRider) return day.routeStarted;
+    const riderId = settings.autoAssignRiderId;
+    if (!riderId) return false;
+    const d = staffDays.find(sd => sd.staffId === riderId);
+    return !!d && d.date === todayKey() && d.routeStarted;
+  };
+
   // Admin sees margins merged back in; staff phones never hold a costPrice.
   const productsView = React.useMemo(
     () => (isAdmin
@@ -327,8 +368,8 @@ export function FirestoreStoreProvider({
       const shop = shops.find(s => s.id === input.shopId)!;
       const { value: orderNo, provisional } = await serial('order');
       const orderRef = doc(collection(db, `${base}/orders`));
-      // The load list is frozen once the rider starts: later orders are tomorrow's.
-      const deliveryDay = day.routeStarted ? 'tomorrow' : input.deliveryDay;
+      // The load list is frozen once THE RIDER starts — his lock, not ours.
+      const deliveryDay = riderRouteStartedNow() ? 'tomorrow' : input.deliveryDay;
       const order: Omit<Order, 'id'> = {
         orderNo,
         provisional,
@@ -366,6 +407,45 @@ export function FirestoreStoreProvider({
       return { id: orderRef.id, ...order };
     },
 
+    /**
+     * A booked/assigned order dies here (FR-5.7: cancel, never delete) and
+     * its committed stock walks free — otherwise a fat-fingered order
+     * inflates the van list and committedQty forever (audit blocker).
+     */
+    cancelOrder(orderId) {
+      const order = orders.find(o => o.id === orderId);
+      if (!order || (order.status !== 'booked' && order.status !== 'assigned')) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, `${base}/orders/${orderId}`), { status: 'cancelled' });
+      for (const it of order.items) {
+        batch.update(doc(db, `${base}/products/${it.productId}`), { committedQty: increment(-it.qty) });
+      }
+      batch.commit().catch(writeRejected(`Cancel ${order.orderNo}`));
+    },
+
+    /** Shop closed — the stop moves to tomorrow, stock stays committed. */
+    deferOrder(orderId) {
+      const order = orders.find(o => o.id === orderId);
+      if (!order) return;
+      updateDoc(doc(db, `${base}/orders/${orderId}`), {
+        deliveryDate: tomorrowKey(), deliveryDay: 'tomorrow',
+      }).catch(writeRejected(`Move ${order.orderNo} to tomorrow`));
+    },
+
+    /** Shop refused the goods at the door — back on the van, stock released. */
+    returnOrder(orderId, reason) {
+      const order = orders.find(o => o.id === orderId);
+      if (!order) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, `${base}/orders/${orderId}`), {
+        status: 'returned', undeliveredReason: reason,
+      });
+      for (const it of order.items) {
+        batch.update(doc(db, `${base}/products/${it.productId}`), { committedQty: increment(-it.qty) });
+      }
+      batch.commit().catch(writeRejected(`Send back ${order.orderNo}`));
+    },
+
     flagCollection(shopId) {
       updateDoc(doc(db, `${base}/shops/${shopId}`), {
         collectionFlaggedAt: serverTimestamp(),
@@ -378,6 +458,14 @@ export function FirestoreStoreProvider({
         ...EMPTY_DAY(), routeStarted: true, staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Start route'));
     },
+
+    undoStartRoute() {
+      setDoc(doc(db, `${base}/days/${user.uid}`), {
+        date: todayKey(), routeStarted: false, staffId: user.uid,
+      }, { merge: true }).catch(writeRejected('Undo start route'));
+    },
+
+    riderRouteStarted: riderRouteStartedNow,
 
     async closeOutStop({ orderId, deliveredQtys, paymentAmount, mode }: CloseOutInput) {
       const order = orders.find(o => o.id === orderId)!;
@@ -466,7 +554,8 @@ export function FirestoreStoreProvider({
       const { allocations } = allocateFifo(amount, unpaid);
 
       const batch = writeBatch(db);
-      batch.set(doc(collection(db, `${base}/payments`)), {
+      const payRef = doc(collection(db, `${base}/payments`));
+      batch.set(payRef, {
         receiptNo: rcp.value, provisional: rcp.provisional,
         shopId, orderIds: allocations, amount, mode,
         collectedBy: user.uid, confirmed: false,
@@ -489,6 +578,12 @@ export function FirestoreStoreProvider({
         });
       }
       batch.commit().catch(writeRejected(`Receipt ${rcp.value}`));
+      // Money the OWNER takes is already in the owner's hand — no handover
+      // to wait for; it confirms itself (rules: create must be unconfirmed,
+      // so this is a second, admin-only write).
+      if (user.role === 'admin') {
+        updateDoc(payRef, { confirmed: true }).catch(writeRejected('Self-confirm'));
+      }
       return { receiptNo: rcp.value };
     },
 
@@ -504,7 +599,7 @@ export function FirestoreStoreProvider({
      * booker's uncounted exception cash as received (audit blocker #4).
      */
     confirmHandover(staffId: string) {
-      const toConfirm = payments.filter(p => !p.confirmed && p.collectedBy === staffId);
+      const toConfirm = payments.filter(p => !p.confirmed && !p.voided && p.collectedBy === staffId);
       // Everything as an op list, committed in chunks under the 500-write cap.
       const ops: ((b: ReturnType<typeof writeBatch>) => void)[] = [];
       toConfirm.forEach(p =>
@@ -571,11 +666,42 @@ export function FirestoreStoreProvider({
       }
     },
 
-    addShop(s: ShopInput) {
+    /** Supplier delivery / count correction — atomic, and logged so a stock
+     *  number can always be explained (stockMovements is append-only). */
+    adjustStock(productId, delta, note) {
+      if (!delta) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, `${base}/products/${productId}`), { stockQty: increment(delta) });
+      batch.set(doc(collection(db, `${base}/stockMovements`)), {
+        productId, delta, note, by: user.uid, createdAt: serverTimestamp(),
+      });
+      batch.commit().catch(writeRejected('Stock adjustment'));
+    },
+
+    addShop({ openingBalance, ...s }: ShopInput) {
       setDoc(doc(collection(db, `${base}/shops`)), {
         ...s, standingDiscountPercent: s.standingDiscountPercent ?? 0,
-        outstanding: 0, active: true, createdAt: serverTimestamp(), createdBy: user.uid,
+        // The paper khata comes with the shop (audit blocker: pre-app debt
+        // was invisible to the whole collections flow).
+        outstanding: openingBalance && openingBalance > 0 ? openingBalance : 0,
+        active: true, createdAt: serverTimestamp(), createdBy: user.uid,
       }).catch(writeRejected('New shop'));
+    },
+
+    updateShop(id, patch) {
+      updateDoc(doc(db, `${base}/shops/${id}`), patch as Record<string, unknown>)
+        .catch(writeRejected('Shop update'));
+    },
+
+    /** Manual khata correction — returns, bounced cheques, paper-era fixes. */
+    adjustShopBalance(shopId, delta, note) {
+      if (!delta) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, `${base}/shops/${shopId}`), { outstanding: increment(delta) });
+      batch.set(doc(collection(db, `${base}/stockMovements`)), {
+        shopId, khataDelta: delta, note, by: user.uid, createdAt: serverTimestamp(),
+      });
+      batch.commit().catch(writeRejected('Khata adjustment'));
     },
 
     updateSettings(patch) {
@@ -604,9 +730,22 @@ export function FirestoreStoreProvider({
         .catch(writeRejected('Expense'));
     },
 
+    removeExpense(id) {
+      deleteDoc(doc(db, `${base}/expenses/${id}`)).catch(writeRejected('Expense delete'));
+    },
+
     addFixedCharge(c) {
       setDoc(doc(collection(db, `${base}/fixedCharges`)), { ...c, createdAt: serverTimestamp() })
         .catch(writeRejected('Fixed charge'));
+    },
+
+    updateFixedCharge(id, patch) {
+      updateDoc(doc(db, `${base}/fixedCharges/${id}`), patch as Record<string, unknown>)
+        .catch(writeRejected('Fixed charge update'));
+    },
+
+    removeFixedCharge(id) {
+      deleteDoc(doc(db, `${base}/fixedCharges/${id}`)).catch(writeRejected('Fixed charge delete'));
     },
 
     // ---- rewards (FR-16) + shelf counts ------------------------------------
@@ -680,11 +819,39 @@ export function FirestoreStoreProvider({
       }).catch(writeRejected('Shelf count'));
     },
 
+    /**
+     * Owner crosses out a wrong payment (rider typo). The khata it moved is
+     * restored, its FIFO allocations un-applied — EXCEPT an unconfirmed
+     * booker exception, which never touched the khata in the first place.
+     */
+    voidPayment(paymentId) {
+      const p = payments.find(pp => pp.id === paymentId);
+      if (!p || p.voided) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, `${base}/payments/${p.id}`), {
+        voided: true, voidedBy: user.uid, voidedAt: serverTimestamp(),
+      });
+      const khataWasMoved = !p.exception || p.confirmed;
+      if (khataWasMoved) {
+        batch.update(doc(db, `${base}/shops/${p.shopId}`), { outstanding: increment(p.amount) });
+        for (const a of p.orderIds ?? []) {
+          const o = orders.find(oo => oo.id === a.orderId);
+          if (!o) continue; // 'old-khata' pseudo-bill has no order doc
+          const newPaid = o.amountPaid - a.amount;
+          batch.update(doc(db, `${base}/orders/${o.id}`), {
+            amountPaid: increment(-a.amount),
+            paymentStatus: newPaid <= 0 ? 'unpaid' : newPaid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' : 'partial',
+          });
+        }
+      }
+      batch.commit().catch(writeRejected(`Void ${p.receiptNo}`));
+    },
+
     cashWithStaff() {
-      return payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
+      return payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
     },
     cashConfirmed() {
-      return payments.filter(p => p.confirmed).reduce((s, p) => s + p.amount, 0);
+      return payments.filter(p => p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
     },
     floatBalance(staffId: string) {
       return floatMovements

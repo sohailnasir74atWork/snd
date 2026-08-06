@@ -133,6 +133,45 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       return order;
     },
 
+    cancelOrder(orderId) {
+      setState(st => {
+        const order = st.orders.find(o => o.id === orderId);
+        if (!order || (order.status !== 'booked' && order.status !== 'assigned')) return st;
+        return {
+          ...st,
+          orders: st.orders.map(o => (o.id === orderId ? { ...o, status: 'cancelled' as const } : o)),
+          products: st.products.map(p => {
+            const it = order.items.find(i => i.productId === p.id);
+            return it ? { ...p, committedQty: Math.max(0, p.committedQty - it.qty) } : p;
+          }),
+        };
+      });
+    },
+
+    deferOrder(orderId) {
+      setState(st => ({
+        ...st,
+        orders: st.orders.map(o =>
+          o.id === orderId ? { ...o, deliveryDate: tomorrowKey(), deliveryDay: 'tomorrow' as const } : o),
+      }));
+    },
+
+    returnOrder(orderId, reason) {
+      setState(st => {
+        const order = st.orders.find(o => o.id === orderId);
+        if (!order) return st;
+        return {
+          ...st,
+          orders: st.orders.map(o =>
+            o.id === orderId ? { ...o, status: 'returned' as const, undeliveredReason: reason } : o),
+          products: st.products.map(p => {
+            const it = order.items.find(i => i.productId === p.id);
+            return it ? { ...p, committedQty: Math.max(0, p.committedQty - it.qty) } : p;
+          }),
+        };
+      });
+    },
+
     flagCollection(shopId) {
       setState(st => ({
         ...st,
@@ -142,6 +181,14 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
     startRoute() {
       setState(st => ({ ...st, day: { ...st.day, routeStarted: true } }));
+    },
+
+    undoStartRoute() {
+      setState(st => ({ ...st, day: { ...st.day, routeStarted: false } }));
+    },
+
+    riderRouteStarted() {
+      return state.day.routeStarted; // one shared day in the demo
     },
 
     closeOutStop({ orderId, deliveredQtys, paymentAmount, mode }: CloseOutInput) {
@@ -259,14 +306,63 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       }));
     },
 
-    addShop(s: ShopInput) {
+    adjustStock(productId, delta) {
+      setState(st => ({
+        ...st,
+        products: st.products.map(p => (p.id === productId ? { ...p, stockQty: p.stockQty + delta } : p)),
+      }));
+    },
+
+    addShop({ openingBalance, ...s }: ShopInput) {
       setState(st => ({
         ...st,
         shops: [...st.shops, {
-          id: `s${Date.now()}`, outstanding: 0, active: true,
-          standingDiscountPercent: s.standingDiscountPercent ?? 0, ...s,
+          id: `s${Date.now()}`, outstanding: openingBalance && openingBalance > 0 ? openingBalance : 0,
+          active: true, standingDiscountPercent: s.standingDiscountPercent ?? 0, ...s,
         }],
       }));
+    },
+
+    updateShop(id, patch) {
+      setState(st => ({
+        ...st,
+        shops: st.shops.map(s => (s.id === id ? { ...s, ...patch } : s)),
+      }));
+    },
+
+    adjustShopBalance(shopId, delta) {
+      setState(st => ({
+        ...st,
+        shops: st.shops.map(s => (s.id === shopId ? { ...s, outstanding: s.outstanding + delta } : s)),
+      }));
+    },
+
+    voidPayment(paymentId) {
+      setState(st => {
+        const p = st.payments.find(pp => pp.id === paymentId);
+        if (!p || p.voided) return st;
+        const khataWasMoved = !p.exception || p.confirmed;
+        return {
+          ...st,
+          payments: st.payments.map(pp =>
+            pp.id === paymentId ? { ...pp, voided: true, voidedBy: 'admin', voidedAt: Date.now() } : pp),
+          shops: khataWasMoved
+            ? st.shops.map(s => (s.id === p.shopId ? { ...s, outstanding: s.outstanding + p.amount } : s))
+            : st.shops,
+          orders: khataWasMoved
+            ? st.orders.map(o => {
+                const a = (p.orderIds ?? []).find(x => x.orderId === o.id);
+                if (!a) return o;
+                const newPaid = o.amountPaid - a.amount;
+                return {
+                  ...o, amountPaid: newPaid,
+                  paymentStatus: newPaid <= 0 ? 'unpaid' as const
+                    : newPaid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' as const : 'partial' as const,
+                };
+              })
+            : st.orders,
+        };
+      });
     },
 
     updateSettings(patch) {
@@ -291,8 +387,23 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       setState(st => ({ ...st, expenses: [...st.expenses, { id: `e${Date.now()}`, ...e }] }));
     },
 
+    removeExpense(id) {
+      setState(st => ({ ...st, expenses: st.expenses.filter(e => e.id !== id) }));
+    },
+
     addFixedCharge(c) {
       setState(st => ({ ...st, fixedCharges: [...st.fixedCharges, { id: `f${Date.now()}`, ...c }] }));
+    },
+
+    updateFixedCharge(id, patch) {
+      setState(st => ({
+        ...st,
+        fixedCharges: st.fixedCharges.map(c => (c.id === id ? { ...c, ...patch } : c)),
+      }));
+    },
+
+    removeFixedCharge(id) {
+      setState(st => ({ ...st, fixedCharges: st.fixedCharges.filter(c => c.id !== id) }));
     },
 
     addRewardStaff(s: RewardStaffInput) {

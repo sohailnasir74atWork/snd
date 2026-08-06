@@ -5,7 +5,7 @@
  * evening handover (FR-7.9/7.11).
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton,
   SectionLabel, Tag, color, font, radius, space,
@@ -22,9 +22,13 @@ import { sharePdf } from '../../documents/share';
 export function RiderRouteScreen() {
   const store = useStore();
   const today = todayKey();
-  const isToday = (o: Order) => (o.deliveryDate ?? today) === today;
-  const stops = store.orders.filter(o => isToday(o) && (o.status === 'assigned' || o.status === 'out_for_delivery'));
-  const done = store.orders.filter(o => isToday(o) && o.status === 'delivered');
+  // Everything still owed to shops rides today: today's stops AND anything
+  // left over from earlier days (audit blocker: overdue orders vanished at
+  // midnight with their stock still committed).
+  const isDueNow = (o: Order) => (o.deliveryDate ?? today) <= today;
+  const isOverdue = (o: Order) => (o.deliveryDate ?? today) < today;
+  const stops = store.orders.filter(o => isDueNow(o) && (o.status === 'assigned' || o.status === 'out_for_delivery'));
+  const done = store.orders.filter(o => (o.deliveryDate ?? today) === today && o.status === 'delivered');
   const [openStop, setOpenStop] = React.useState<Order | null>(null);
 
   if (openStop) return <CloseOutScreen order={openStop} onDone={() => setOpenStop(null)} />;
@@ -73,14 +77,24 @@ export function RiderRouteScreen() {
     );
   }
 
-  const collected = store.payments.reduce((s, p) => s + p.amount, 0);
+  // TODAY's take, not the all-time total (audit) — voided rows don't count.
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const collected = store.payments
+    .filter(p => !p.voided && p.createdAt >= dayStart.getTime())
+    .reduce((s, p) => s + p.amount, 0);
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.subLine}>
-        {done.length} of {done.length + stops.length} done • Rs {collected.toLocaleString()} collected
+        {done.length} of {done.length + stops.length} done • Rs {collected.toLocaleString()} collected today
       </Text>
+      {done.length === 0 && (
+        <View style={styles.undoRow}>
+          <Chip small label="Undo start — back to the load list"
+            onPress={() => store.undoStartRoute()} />
+        </View>
+      )}
       {stops.map(o => {
-        const shop = store.shops.find(s => s.id === o.shopId)!;
+        const shop = store.shops.find(s => s.id === o.shopId);
         return (
           <Card key={o.id} onPress={() => setOpenStop(o)}>
             <View style={styles.rowBetween}>
@@ -91,7 +105,16 @@ export function RiderRouteScreen() {
               <Text style={styles.meta}>
                 {o.shopSnapshot.area} • {o.items.reduce((s, i) => s + i.qty, 0)} pcs
               </Text>
-              {shop.collectionFlagged ? <Tag label="COLLECT KHATA" tone="warn" /> : null}
+              <View style={styles.tagRow}>
+                {isOverdue(o) ? <Tag label="FROM EARLIER" tone="danger" /> : null}
+                {shop?.collectionFlagged ? <Tag label="COLLECT KHATA" tone="warn" /> : null}
+              </View>
+            </View>
+            <View style={styles.rowWrap}>
+              {o.shopSnapshot.phone ? (
+                <Chip small label={strings.common.call}
+                  onPress={() => { void Linking.openURL(`tel:${o.shopSnapshot.phone}`).catch(() => {}); }} />
+              ) : null}
             </View>
           </Card>
         );
@@ -134,7 +157,17 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   const [payChoice, setPayChoice] = React.useState<PayChoice>('full');
   const [partText, setPartText] = React.useState('');
   const [modeChoice, setModeChoice] = React.useState<PayMode>('cash');
+  // Typed delivered quantities — "took 10 of 12" is normal and the chips
+  // alone could only bill all/half/none (audit blocker).
+  const [qtyTexts, setQtyTexts] = React.useState<Record<string, string>>({});
+  const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<{ invoiceNo: string; receiptNo?: string } | null>(null);
+
+  const setQty = (productId: string, ordered: number, q: number) => {
+    const v = Math.max(0, Math.min(q, ordered));
+    setQtys(prev => ({ ...prev, [productId]: v }));
+    setQtyTexts(prev => ({ ...prev, [productId]: String(v) }));
+  };
 
   const items = order.items.map(i => ({ ...i, deliveredQty: qtys[i.productId] }));
   const billed = computeTotals(items, order.discountPercent, true);
@@ -222,11 +255,28 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
             <Text style={styles.big}>{i.name}</Text>
             <Text style={styles.meta}>ordered {i.qty}</Text>
           </View>
-          <View style={styles.rowWrap}>
-            {[i.qty, Math.floor(i.qty / 2), 0].filter((v, idx, a) => a.indexOf(v) === idx).map(q => (
-              <Chip key={q} small label={q === i.qty ? `all ${q}` : `${q}`} selected={qtys[i.productId] === q}
-                onPress={() => setQtys({ ...qtys, [i.productId]: q })} />
-            ))}
+          <View style={styles.qtyRow}>
+            <TextInput
+              style={styles.qtyInput}
+              value={qtyTexts[i.productId] ?? String(qtys[i.productId] ?? i.qty)}
+              onChangeText={t => {
+                const digits = t.replace(/[^0-9]/g, '');
+                setQtyTexts(prev => ({ ...prev, [i.productId]: digits }));
+                setQtys(prev => ({
+                  ...prev,
+                  [i.productId]: digits ? Math.min(parseInt(digits, 10), i.qty) : 0,
+                }));
+              }}
+              keyboardType="number-pad"
+              placeholder={String(i.qty)}
+              placeholderTextColor={color.textFaint}
+            />
+            <View style={styles.qtyChips}>
+              {[i.qty, Math.floor(i.qty / 2), 0].filter((v, idx, a) => a.indexOf(v) === idx).map(q => (
+                <Chip key={q} small label={q === i.qty ? `all ${q}` : `${q}`} selected={qtys[i.productId] === q}
+                  onPress={() => setQty(i.productId, i.qty, q)} />
+              ))}
+            </View>
           </View>
         </Card>
       ))}
@@ -308,17 +358,52 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
         <PrimaryButton
           label={payAmount > 0 ? `Delivered — take Rs ${payAmount.toLocaleString()}` : 'Delivered — on credit'}
           icon="check-circle-outline"
-          disabled={payChoice === 'part' && partAmount === 0}
-          disabledReason="Type how much he is paying"
-          onPress={async () => {
-            const r = await Promise.resolve(
-              store.closeOutStop({
-                orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
-              }),
+          disabled={(payChoice === 'part' && partAmount === 0) || busy}
+          disabledReason={busy ? 'Saving…' : 'Type how much he is paying'}
+          onPress={() => {
+            // One confirm between the thumb and an irreversible bill (audit).
+            const pieces = items.reduce((s, i) => s + (i.deliveredQty ?? 0), 0);
+            Alert.alert(
+              'Close this stop?',
+              `${order.shopSnapshot.name}\n${pieces} pcs delivered • bill Rs ${billed.grandTotal.toLocaleString()}` +
+                (payAmount > 0 ? `\nTaking Rs ${payAmount.toLocaleString()} (${mode})` : '\nNothing taken — on credit'),
+              [
+                { text: 'Not yet', style: 'cancel' },
+                {
+                  text: 'Delivered',
+                  onPress: async () => {
+                    setBusy(true);
+                    const r = await Promise.resolve(
+                      store.closeOutStop({
+                        orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
+                      }),
+                    );
+                    setBusy(false);
+                    setResult(r);
+                  },
+                },
+              ],
             );
-            setResult(r);
           }}
         />
+        {/* The two honest ways OUT of a stop that cannot be delivered (audit
+            blocker: the only button used to be 'Delivered'). */}
+        <View style={styles.failRow}>
+          <Chip small label={`Shop closed — ${strings.delivery.tryTomorrow.toLowerCase()}`}
+            onPress={() =>
+              Alert.alert('Move to tomorrow?', `${order.orderNo} stays on the van and returns on tomorrow's route.`, [
+                { text: 'Back', style: 'cancel' },
+                { text: 'Move it', onPress: () => { store.deferOrder(order.id); onDone(); } },
+              ])
+            } />
+          <Chip small danger label={strings.delivery.sendBack}
+            onPress={() =>
+              Alert.alert('Send the goods back?', `${order.orderNo} is closed WITHOUT a bill and the stock returns to the godown count.`, [
+                { text: 'Back', style: 'cancel' },
+                { text: 'Send back', style: 'destructive', onPress: () => { store.returnOrder(order.id, 'refused at door'); onDone(); } },
+              ])
+            } />
+        </View>
       </View>
     </ScrollView>
   );
@@ -326,7 +411,28 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
 
 export function RiderHistoryScreen() {
   const store = useStore();
-  const done = store.orders.filter(o => o.status === 'delivered');
+  const done = store.orders
+    .filter(o => o.status === 'delivered')
+    .sort((a, b) => (b.deliveredAt ?? b.bookedAt) - (a.deliveredAt ?? a.bookedAt));
+
+  // "Send it again" — the shopkeeper lost the PDF or asked later (audit).
+  const resendBill = async (o: Order) => {
+    const shop = store.shops.find(s => s.id === o.shopId);
+    if (!shop || !o.billedTotals || !o.invoiceNo) return;
+    const html = billHtml({
+      settings: store.settings,
+      order: o,
+      shop,
+      amountInWordsLine: amountInWordsLine(o.billedTotals.grandTotal),
+      received: o.amountPaid,
+      previousBalance: 0, // history re-send: today's balance is not that day's
+    });
+    await sharePdf(
+      html, o.invoiceNo,
+      `Bill ${o.invoiceNo} — Rs ${o.billedTotals.grandTotal.toLocaleString()}.`,
+    ).catch(e => Alert.alert('Could not share', e instanceof Error ? e.message : String(e)));
+  };
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       {done.map(o => (
@@ -339,6 +445,9 @@ export function RiderHistoryScreen() {
             sub={`${o.invoiceNo} • paid Rs ${o.amountPaid.toLocaleString()}`}
             right={<Money amount={o.billedTotals?.grandTotal ?? 0} bold />}
           />
+          <View style={styles.rowWrap}>
+            <Chip small label="Bill PDF" onPress={() => { void resendBill(o); }} />
+          </View>
         </Card>
       ))}
       {done.length === 0 && (
@@ -354,21 +463,43 @@ export function RiderHistoryScreen() {
 
 export function RiderHandoverScreen() {
   const store = useStore();
-  const expected = store.payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
+  const pending = store.payments.filter(p => !p.confirmed && !p.voided);
+  // Physical cash and bank transfers are different piles: the owner counts
+  // notes for one and checks the bank app for the other (audit).
+  const cashPile = pending.filter(p => p.mode === 'cash' || p.mode === 'cheque');
+  const transferPile = pending.filter(p => p.mode === 'transfer');
+  const cashTotal = cashPile.reduce((s, p) => s + p.amount, 0);
+  const transferTotal = transferPile.reduce((s, p) => s + p.amount, 0);
+  const expected = cashTotal + transferTotal;
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Card>
         <ListRow
           icon="cash-multiple"
-          title="Expected cash"
-          right={<Money amount={expected} size={font.stat} bold />}
+          title="Cash in hand"
+          right={<Money amount={cashTotal} size={font.stat} bold />}
         />
-        {store.payments.filter(p => !p.confirmed).map(p => (
+        {cashPile.map(p => (
           <View key={p.id} style={styles.rowBetween}>
-            <Text style={styles.meta}>{p.receiptNo}</Text>
+            <Text style={styles.meta}>{p.receiptNo}{p.mode === 'cheque' ? ' • cheque' : ''}</Text>
             <Money amount={p.amount} />
           </View>
         ))}
+        {transferPile.length > 0 && (
+          <>
+            <ListRow
+              icon="bank-outline"
+              title="Bank transfers (already with the owner)"
+              right={<Money amount={transferTotal} bold />}
+            />
+            {transferPile.map(p => (
+              <View key={p.id} style={styles.rowBetween}>
+                <Text style={styles.meta}>{p.receiptNo}</Text>
+                <Money amount={p.amount} />
+              </View>
+            ))}
+          </>
+        )}
       </Card>
       {!store.day.handedOver ? (
         <View style={styles.ctaWrap}>
@@ -433,4 +564,19 @@ const styles = StyleSheet.create({
   },
   oweText: { fontSize: font.sub, fontWeight: '700', color: color.danger, marginTop: space.xs },
   clearText: { fontSize: font.sub, fontWeight: '700', color: color.success, marginTop: space.xs },
+
+  undoRow: { flexDirection: 'row', paddingHorizontal: space.l, marginBottom: space.xs },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  qtyRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
+  qtyInput: {
+    backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
+    borderWidth: 1, borderColor: color.border,
+    paddingHorizontal: space.m, height: 44, width: 78,
+    fontSize: font.h2, fontWeight: '700', color: color.text, textAlign: 'center',
+  },
+  qtyChips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginLeft: space.s },
+  failRow: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+    justifyContent: 'center', marginTop: space.m, gap: space.s,
+  },
 });

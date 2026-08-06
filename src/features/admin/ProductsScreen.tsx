@@ -57,6 +57,16 @@ export function ProductsScreen() {
   const [costEditId, setCostEditId] = React.useState<string | null>(null);
   const [costEditText, setCostEditText] = React.useState('');
 
+  // ---- inline price editor (audit: prices could never change) ----
+  const [priceEditId, setPriceEditId] = React.useState<string | null>(null);
+  const [tradeEditText, setTradeEditText] = React.useState('');
+  const [mrpEditText, setMrpEditText] = React.useState('');
+
+  // ---- inline stock adjustment (audit: no restock path) ----
+  const [stockEditId, setStockEditId] = React.useState<string | null>(null);
+  const [stockDeltaText, setStockDeltaText] = React.useState('');
+  const [stockDir, setStockDir] = React.useState<'in' | 'out'>('in');
+
   const tradePrice = toRupees(tradeText);
   const canSave = name.trim().length > 0 && tradePrice > 0;
   const missingCost = store.products.filter(p => p.costPrice === undefined).length;
@@ -221,6 +231,61 @@ export function ProductsScreen() {
             </View>
           )}
 
+          {priceEditId === p.id && (
+            <View style={styles.costEditor}>
+              <Text style={styles.fieldLabel}>Price to shop (Rs)</Text>
+              <TextInput style={styles.input} value={tradeEditText}
+                onChangeText={t => setTradeEditText(t.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad" placeholder={String(p.tradePrice)}
+                placeholderTextColor={color.textFaint} />
+              <Text style={styles.fieldLabel}>Retail price (Rs)</Text>
+              <TextInput style={styles.input} value={mrpEditText}
+                onChangeText={t => setMrpEditText(t.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad" placeholder={String(p.mrp)}
+                placeholderTextColor={color.textFaint} />
+              <View style={styles.rowWrap}>
+                {toRupees(tradeEditText) > 0 && (
+                  <Chip small selected label="Save prices" onPress={() => {
+                    const trade = toRupees(tradeEditText);
+                    store.updateProduct(p.id, { tradePrice: trade, mrp: toRupees(mrpEditText) || trade });
+                    setPriceEditId(null);
+                  }} />
+                )}
+                <Chip small label="Cancel" onPress={() => setPriceEditId(null)} />
+              </View>
+            </View>
+          )}
+
+          {stockEditId === p.id && (
+            <View style={styles.costEditor}>
+              <Text style={styles.fieldLabel}>
+                {stockDir === 'in' ? 'Pieces arrived from the supplier' : 'Pieces removed (damage / correction)'}
+              </Text>
+              <OptionBar
+                options={['in', 'out'] as const}
+                value={stockDir}
+                render={v => (v === 'in' ? 'Stock IN' : 'Stock OUT')}
+                onChange={setStockDir}
+              />
+              <TextInput style={[styles.input, styles.stockInput]} value={stockDeltaText}
+                onChangeText={t => setStockDeltaText(t.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad" placeholder="0"
+                placeholderTextColor={color.textFaint} />
+              <View style={styles.rowWrap}>
+                {toRupees(stockDeltaText) > 0 && (
+                  <Chip small selected label={`Save — ${stockDir === 'in' ? '+' : '−'}${toRupees(stockDeltaText)} pcs`}
+                    onPress={() => {
+                      const n = toRupees(stockDeltaText);
+                      store.adjustStock(p.id, stockDir === 'in' ? n : -n,
+                        stockDir === 'in' ? 'restock' : 'correction');
+                      setStockEditId(null); setStockDeltaText('');
+                    }} />
+                )}
+                <Chip small label="Cancel" onPress={() => { setStockEditId(null); setStockDeltaText(''); }} />
+              </View>
+            </View>
+          )}
+
           <View style={styles.rowWrap}>
             {costEditId !== p.id && (
               <Chip
@@ -228,6 +293,16 @@ export function ProductsScreen() {
                 label={p.costPrice === undefined ? 'Set cost' : 'Change cost'}
                 onPress={() => openCostEditor(p)}
               />
+            )}
+            {priceEditId !== p.id && (
+              <Chip small label="Change prices" onPress={() => {
+                setPriceEditId(p.id); setTradeEditText(String(p.tradePrice)); setMrpEditText(String(p.mrp));
+              }} />
+            )}
+            {stockEditId !== p.id && (
+              <Chip small label="Add / correct stock" onPress={() => {
+                setStockEditId(p.id); setStockDeltaText(''); setStockDir('in');
+              }} />
             )}
             <Chip
               small
@@ -289,6 +364,7 @@ const styles = StyleSheet.create({
     marginTop: space.m, paddingTop: space.m,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
   },
+  stockInput: { marginTop: space.s },
   costHint: { fontSize: font.sub, color: color.textSub, marginRight: space.s },
   noteRow: {
     flexDirection: 'row', alignItems: 'center',

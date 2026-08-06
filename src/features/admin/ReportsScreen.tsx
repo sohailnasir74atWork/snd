@@ -5,6 +5,7 @@
 import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
+// (Alert imported above with react-native)
 import { useStore } from '../../data/store';
 import { profitFor } from '../../lib/profit';
 import { shareCsv } from '../../documents/share';
@@ -12,7 +13,7 @@ import type { Order, Payment, Shop } from '../../data/models';
 
 // ---------- pure helpers (unit-testable) ----------
 
-export type RangePreset = 'today' | 'week' | 'month';
+export type RangePreset = 'today' | 'week' | 'month' | 'lastMonth';
 
 export interface DateRange {
   start: number; // inclusive, ms epoch
@@ -33,6 +34,13 @@ export function rangeFor(preset: RangePreset, now: number): DateRange {
     const sinceMonday = (d.getDay() + 6) % 7; // Sun=0 … Sat=6 → days since Monday
     const start = dayStart - sinceMonday * DAY_MS;
     return { start, end: start + 7 * DAY_MS };
+  }
+  if (preset === 'lastMonth') {
+    // "How much did I make last month?" asked on the 3rd (audit).
+    return {
+      start: new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime(),
+      end: new Date(d.getFullYear(), d.getMonth(), 1).getTime(),
+    };
   }
   return {
     start: new Date(d.getFullYear(), d.getMonth(), 1).getTime(),
@@ -116,9 +124,10 @@ export interface CollectionSummary {
   withStaff: number; // collected but not yet confirmed
 }
 
-/** Payments whose createdAt falls in the range, split by confirmation. */
+/** Payments whose createdAt falls in the range, split by confirmation.
+ *  Voided rows are crossed out of every total. */
 export function collectionsIn(payments: Payment[], r: DateRange): CollectionSummary {
-  const hits = payments.filter(p => inRange(p.createdAt, r));
+  const hits = payments.filter(p => !p.voided && inRange(p.createdAt, r));
   const confirmed = hits.filter(p => p.confirmed).reduce((s, p) => s + p.amount, 0);
   const withStaff = hits.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
   return { count: hits.length, total: confirmed + withStaff, confirmed, withStaff };
@@ -137,6 +146,7 @@ const PRESET_LABELS: Record<RangePreset, string> = {
   today: 'Today',
   week: 'This week',
   month: 'This month',
+  lastMonth: 'Last month',
 };
 
 export function ReportsScreen() {
@@ -158,7 +168,7 @@ export function ReportsScreen() {
 
       <View style={styles.presetWrap}>
         <OptionBar
-          options={['today', 'week', 'month'] as const}
+          options={['today', 'week', 'month', 'lastMonth'] as const}
           value={preset}
           render={v => PRESET_LABELS[v]}
           onChange={setPreset}
@@ -261,6 +271,43 @@ export function ReportsScreen() {
             <Text style={styles.lineName}>Still with staff</Text>
             <Money amount={collections.withStaff} bold color={collections.withStaff > 0 ? color.warn : undefined} />
           </View>
+
+          {/* Every receipt in the range — with the owner's one correction
+              tool: VOID a wrong entry (the row stays, crossed out; the khata
+              and bill allocations are restored). */}
+          <Text style={styles.subHead}>Every receipt</Text>
+          {store.payments
+            .filter(p => inRange(p.createdAt, range))
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .map(p => (
+              <View key={p.id} style={styles.line}>
+                <View style={styles.lineLeft}>
+                  <Text style={[styles.lineName, p.voided && styles.voidedText]}>
+                    {p.receiptNo} • {store.shops.find(s => s.id === p.shopId)?.name ?? ''}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {store.staffNames[p.collectedBy] || 'staff'} • {p.mode}
+                    {p.exception ? ' • EXCEPTION' : ''}{p.voided ? ' • VOIDED' : ''}
+                  </Text>
+                </View>
+                <View style={styles.receiptRight}>
+                  <Money amount={p.amount} bold color={p.voided ? color.textFaint : undefined} />
+                  {!p.voided && (
+                    <Chip small danger label="Void"
+                      onPress={() =>
+                        Alert.alert(
+                          'Void this receipt?',
+                          `${p.receiptNo} — Rs ${p.amount.toLocaleString()}. The shop's khata gets the amount back; the row stays, crossed out.`,
+                          [
+                            { text: 'Keep it', style: 'cancel' },
+                            { text: 'Void', style: 'destructive', onPress: () => store.voidPayment(p.id) },
+                          ],
+                        )
+                      } />
+                  )}
+                </View>
+              </View>
+            ))}
         </Card>
       )}
 
@@ -367,6 +414,8 @@ const styles = StyleSheet.create({
   presetWrap: { marginHorizontal: space.l, marginTop: space.s },
   tightCard: { paddingVertical: space.xs },
   exportRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', paddingTop: space.s },
+  voidedText: { textDecorationLine: 'line-through', color: color.textFaint },
+  receiptRight: { alignItems: 'flex-end', gap: 6 },
 
   cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
   subHead: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.m },

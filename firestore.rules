@@ -127,8 +127,8 @@ service cloud.firestore {
                                .affectedKeys().hasOnly(['items', 'billedTotals', 'invoiceNo', 'invoiceProvisional',
                                                         'invoicedAt', 'status', 'paymentStatus', 'amountPaid',
                                                         'balance', 'deliveredAt', 'proofPhotoUrl',
-                                                        'undeliveredReason', 'deliveryDate', 'seenAt',
-                                                        'updatedAt']));
+                                                        'undeliveredReason', 'deliveryDate', 'deliveryDay',
+                                                        'seenAt', 'updatedAt']));
         allow delete: if false; // cancel, never delete (FR-5.7)
       }
 
@@ -147,10 +147,13 @@ service cloud.firestore {
                       && (isAdmin(companyId)
                           || isRider(companyId)
                           || (isBooker(companyId) && request.resource.data.exception == true));
-        // Append-only (FR-7.6) with one exception: the Owner's confirmation
-        // flips exactly the `confirmed` flag and nothing else (FR-7.11).
+        // Append-only (FR-7.6) with two owner-only exceptions: confirming the
+        // handover (FR-7.11) and VOIDING a wrong entry — the row stays visible
+        // forever, only the flag flips (a rider typo must be correctable
+        // without ever deleting money history).
         allow update: if isAdmin(companyId)
-                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['confirmed']);
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['confirmed', 'voided', 'voidedBy', 'voidedAt']);
         allow delete: if false;
       }
 

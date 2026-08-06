@@ -3,7 +3,7 @@
  * One-off expenses with a petrol double-count guard, plus fixed monthly charges.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
 import {
   Card, Chip, EmptyState, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton,
   SectionLabel, Tag, Tile,
@@ -214,6 +214,16 @@ export function ExpensesScreen() {
               sub={e.note ? `${e.note} — ${dayLabel(e.date)}` : dayLabel(e.date)}
               right={<Money amount={e.amount} size={font.h2} bold />}
             />
+            <View style={styles.chipRow}>
+              <Chip small danger label="Delete"
+                onPress={() =>
+                  Alert.alert('Delete this expense?',
+                    `${categoryLabel(e.category)} — Rs ${e.amount.toLocaleString()} (${dayLabel(e.date)})`, [
+                      { text: 'Keep it', style: 'cancel' },
+                      { text: 'Delete', style: 'destructive', onPress: () => store.removeExpense(e.id) },
+                    ])
+                } />
+            </View>
           </Card>
         ))
       )}
@@ -246,6 +256,17 @@ export function ExpensesScreen() {
                 </View>
               }
             />
+            <View style={styles.chipRow}>
+              <Chip small label={c.active ? 'Pause' : 'Resume'}
+                onPress={() => store.updateFixedCharge(c.id, { active: !c.active })} />
+              <Chip small danger label="Delete"
+                onPress={() =>
+                  Alert.alert('Delete this charge?', `${c.label} — Rs ${c.amount.toLocaleString()}/month`, [
+                    { text: 'Keep it', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: () => store.removeFixedCharge(c.id) },
+                  ])
+                } />
+            </View>
           </Card>
         ))
       )}

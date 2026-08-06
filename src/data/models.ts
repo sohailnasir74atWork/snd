@@ -65,6 +65,8 @@ export interface Order {
   paymentStatus: 'unpaid' | 'partial' | 'paid';
   amountPaid: number;
   deliveryDay: 'today' | 'tomorrow';
+  /** Why it came back without delivering ('Send back' at the door). */
+  undeliveredReason?: string;
   bookedAt: number;
   deliveredAt?: number;
 }
@@ -91,6 +93,14 @@ export interface Payment {
    * confirmation, never at collection.
    */
   exception?: boolean;
+  /**
+   * Owner-only correction (rider typo etc.): the row stays forever, every
+   * total simply skips it. Voiding restores the shop's khata and un-applies
+   * the FIFO allocations — money history is never deleted, only crossed out.
+   */
+  voided?: boolean;
+  voidedBy?: string;
+  voidedAt?: number;
   createdAt: number;
 }
 
