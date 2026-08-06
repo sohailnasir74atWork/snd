@@ -27,6 +27,16 @@ export interface CloseOutInput {
 export interface ProductInput {
   name: string; code: string; unit: Product['unit']; packSize: string;
   tradePrice: number; mrp: number; stockQty: number;
+  /** What the business pays for it — owner-only, drives real profit (FR-15.1). */
+  costPrice?: number;
+}
+
+export interface CollectionInput {
+  shopId: string;
+  amount: number;
+  mode: 'cash' | 'transfer' | 'cheque';
+  /** True only for the booker's conspicuous forced-cash exception (FR-7.13). */
+  exception?: boolean;
 }
 
 export interface ShopInput {
@@ -41,6 +51,13 @@ export interface StoreApi {
   orders: Order[];
   payments: Payment[];
   day: DayState;
+  /**
+   * Every staff member's day doc — admin only (others get []). This is how
+   * the owner sees "X handed over, waiting for confirmation" (FR-7.11).
+   */
+  staffDays: DayState[];
+  /** uid → display name for handover cards — admin only (others get {}). */
+  staffNames: Record<string, string>;
   settings: CompanySettings;
   employees: Employee[];
   expenses: Expense[];
@@ -52,8 +69,14 @@ export interface StoreApi {
   flagCollection(shopId: string): void;
   startRoute(): void;
   closeOutStop(input: CloseOutInput): Promise<{ invoiceNo: string; receiptNo?: string }> | { invoiceNo: string; receiptNo?: string };
+  /** Money collected without a delivery — the khata visit (FR-7.4). */
+  collect(input: CollectionInput): Promise<{ receiptNo: string }> | { receiptNo: string };
   handOver(): void;
-  confirmHandover(): void;
+  /**
+   * Owner counts ONE person's cash and confirms it (FR-7.11) — only that
+   * person's unconfirmed payments flip, never the whole company's.
+   */
+  confirmHandover(staffId: string): void;
 
   // admin management
   addProduct(p: ProductInput): void;

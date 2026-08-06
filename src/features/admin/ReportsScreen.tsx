@@ -4,8 +4,9 @@
  */
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Card, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
+import { Card, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
 import { useStore } from '../../data/store';
+import { profitFor } from '../../lib/profit';
 import type { Order, Payment, Shop } from '../../data/models';
 
 // ---------- pure helpers (unit-testable) ----------
@@ -95,6 +96,11 @@ export function productTotals(delivered: Order[]): ProductLine[] {
   return Array.from(byProduct.values()).sort((a, b) => b.rupees - a.rupees);
 }
 
+// Profit maths live in src/lib/profit.ts so the tests exercise the same code
+// this screen renders.
+export { profitFor };
+export type { ProfitLine, ProfitSummary } from '../../lib/profit';
+
 export interface CollectionSummary {
   count: number;
   total: number;
@@ -134,6 +140,7 @@ export function ReportsScreen() {
   const toDeliver = stillToDeliverIn(store.orders, range);
   const sales = salesTotal(delivered);
   const perProduct = productTotals(delivered);
+  const profit = profitFor(delivered, store.products);
   const collections = collectionsIn(store.payments, range);
   const owed = shopsThatOwe(store.shops);
 
@@ -173,6 +180,56 @@ export function ReportsScreen() {
               <Money amount={line.rupees} bold />
             </View>
           ))}
+        </Card>
+      )}
+
+      <SectionLabel>Profit</SectionLabel>
+      {delivered.length === 0 ? (
+        <Card>
+          <Text style={styles.emptyTitle}>No profit to show yet</Text>
+          <Text style={styles.meta}>Profit appears once orders are delivered.</Text>
+        </Card>
+      ) : (
+        <Card>
+          <View style={styles.rowBetween}>
+            <Text style={styles.cardTitle}>What you made</Text>
+            <Money
+              amount={profit.gross}
+              size={font.stat}
+              bold
+              color={profit.gross > 0 ? color.success : undefined}
+            />
+          </View>
+          <Text style={styles.meta}>
+            on {profit.orders} delivered {profit.orders === 1 ? 'order' : 'orders'}
+          </Text>
+
+          {profit.skippedProducts > 0 && (
+            <View style={styles.warnRow}>
+              <Icon name="alert-outline" size={15} color={color.warn} />
+              <Text style={styles.warnText}>
+                {profit.skippedProducts} {profit.skippedProducts === 1 ? 'product has' : 'products have'} no
+                cost price — profit is understated.
+              </Text>
+            </View>
+          )}
+
+          {profit.lines.length > 0 && (
+            <>
+              <Text style={styles.subHead}>By product</Text>
+              {profit.lines.map(line => (
+                <View key={line.productId} style={styles.line}>
+                  <View style={styles.lineLeft}>
+                    <Text style={styles.lineName}>{line.name}</Text>
+                    <Text style={styles.meta}>
+                      {line.pieces} {line.pieces === 1 ? 'piece' : 'pieces'} sold
+                    </Text>
+                  </View>
+                  <Money amount={line.profit} bold color={line.profit > 0 ? color.success : undefined} />
+                </View>
+              ))}
+            </>
+          )}
         </Card>
       )}
 
@@ -272,6 +329,8 @@ const styles = StyleSheet.create({
   },
   lineLeft: { flexShrink: 1, paddingRight: space.s },
   lineName: { fontSize: font.body, fontWeight: '600', color: color.text },
+  warnRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: space.s },
+  warnText: { fontSize: font.sub, color: color.warn, marginLeft: 6, flexShrink: 1 },
 
   rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
   statRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.m },

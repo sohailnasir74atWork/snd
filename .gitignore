@@ -10,3 +10,7 @@ ios/Pods/
 android/app/*.keystore
 android/app/google-services.json
 android/keystore.properties
+# native build intermediates — regenerated on every build
+android/app/.cxx/
+.DS_Store
+android/.kotlin/

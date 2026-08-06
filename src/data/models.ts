@@ -9,6 +9,8 @@ export interface Product {
   packSize: string;
   tradePrice: number; // integer money — price to shop
   mrp: number;
+  /** Buying cost — owner-only; sales minus cost = real profit (FR-15.1). */
+  costPrice?: number;
   stockQty: number;
   committedQty: number;
   active: boolean;
@@ -77,7 +79,8 @@ export interface Payment {
   orderIds: { orderId: string; amount: number }[];
   amount: number;
   mode: 'cash' | 'transfer' | 'cheque';
-  collectedBy: Role;
+  /** uid of the person who took the money ('rider'/'booker' in preview mode). */
+  collectedBy: string;
   confirmed: boolean; // true once the owner confirms the handover (FR-7.11)
   createdAt: number;
 }
@@ -89,6 +92,8 @@ export interface Payment {
  */
 export interface DayState {
   date: string;
+  /** uid of the person this day belongs to — set on every write. */
+  staffId?: string;
   routeStarted: boolean; // FR-6.2 — [Start route] freezes the load
   handedOver: boolean;
   handoverConfirmed: boolean;

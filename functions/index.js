@@ -152,7 +152,6 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
  * One email belongs to one business at a time.
  */
 exports.addEmployee = onCall({ region: 'asia-south1' }, async (request) => {
-  const callerRole = request.auth?.token?.companyId && request.auth?.token?.role;
   if (!request.auth || request.auth.token.role !== 'admin') {
     throw new HttpsError('permission-denied', 'Only the owner adds employees.');
   }
@@ -238,48 +237,10 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
   return { status: 'removed', email };
 });
 
-/**
- * uploadUrl — signed, short-lived permission to upload ONE photo (audit finding).
- *
- * The storage key never leaves the server. The phone asks for a slot, gets a
- * single-file URL back, and can do nothing else with it: no listing, no
- * deleting, no touching the publisher's other apps' assets. Rotating the key
- * now means changing one secret here, not shipping a new APK.
- *
- * Set the key once with:
- *   npx firebase-tools functions:secrets:set BUNNY_KEY
- */
-const { defineSecret } = require('firebase-functions/params');
-const BUNNY_KEY = defineSecret('BUNNY_KEY');
-
-const BUNNY = {
-  storageHost: 'storage.bunnycdn.com',
-  storageZone: 'post-gag',
-  cdnBase: 'https://pull-gag.b-cdn.net',
-  prefix: 'snd',
-};
-
-const ALLOWED_KINDS = ['logo', 'product', 'shop', 'proof', 'reward', 'expense'];
-
-exports.uploadUrl = onCall({ region: 'asia-south1', secrets: [BUNNY_KEY] }, async (request) => {
-  const companyId = request.auth?.token?.companyId;
-  if (!companyId) throw new HttpsError('permission-denied', 'Sign in first.');
-
-  const kind = request.data?.kind;
-  if (!ALLOWED_KINDS.includes(kind)) {
-    throw new HttpsError('invalid-argument', 'Unknown photo kind.');
-  }
-
-  // The path is chosen by the SERVER, so a phone can never write outside its
-  // own company's folder or overwrite another business's file.
-  const now = new Date();
-  const yyyymm = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  const file = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`;
-  const path = `${BUNNY.prefix}/${companyId}/${kind}/${yyyymm}/${file}`;
-
-  return {
-    uploadUrl: `https://${BUNNY.storageHost}/${BUNNY.storageZone}/${path}`,
-    accessKey: BUNNY_KEY.value(), // scoped to this one call, never bundled
-    publicUrl: `${BUNNY.cdnBase}/${path}`,
-  };
-});
+// NOTE: the former `uploadUrl` callable was removed (audit blocker #5): it
+// returned the Bunny storage-zone password — full read/write/delete over the
+// zone shared with the publisher's other apps — to ANY signed-in employee.
+// No shipped screen captures photos yet; when proof photos land, uploads must
+// go through a server-side proxy that keeps the key on the server.
+// After deploying, remove the old function when the CLI asks, and rotate the
+// key: the Bunny zone password + `firebase functions:secrets:destroy BUNNY_KEY`.

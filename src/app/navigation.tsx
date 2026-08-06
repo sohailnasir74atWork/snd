@@ -12,6 +12,7 @@ import { Icon, color } from '../components/ui';
 import type { Role } from './types';
 import { BookerRouteScreen, MyDayScreen, NewOrderScreen } from '../features/booker/BookerScreens';
 import { RiderHandoverScreen, RiderHistoryScreen, RiderRouteScreen } from '../features/rider/RiderScreens';
+import { CollectScreen } from '../features/rider/CollectScreen';
 import { AdminActionScreen, AdminDashboardScreen, AdminMoreMenu } from '../features/admin/AdminScreens';
 import { ProductsScreen } from '../features/admin/ProductsScreen';
 import { ShopsScreen } from '../features/admin/ShopsScreen';
@@ -21,6 +22,34 @@ import { ReportsScreen } from '../features/admin/ReportsScreen';
 import { ExpensesScreen } from '../features/admin/ExpensesScreen';
 
 const MoreStack = createNativeStackNavigator();
+const RiderStack = createNativeStackNavigator();
+
+/**
+ * The rider's third tab: today's handover, with his past days one tap behind
+ * it. Keeps the three-fixed-tabs rule (§5.4) without orphaning History.
+ */
+function RiderHandoverStack() {
+  return (
+    <RiderStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: color.surface },
+        headerTintColor: color.text,
+        headerTitleStyle: { fontWeight: '700', fontSize: 18 },
+        headerShadowVisible: false,
+      }}>
+      <RiderStack.Screen name="HandoverHome" component={RiderHandoverScreen}
+        options={({ navigation }) => ({
+          title: 'Handover',
+          headerRight: () => (
+            <Pressable onPress={() => navigation.navigate('History')} style={{ paddingHorizontal: 12 }}>
+              <Icon name="history" size={22} color={color.primary} />
+            </Pressable>
+          ),
+        })} />
+      <RiderStack.Screen name="History" component={RiderHistoryScreen} options={{ title: 'Past days' }} />
+    </RiderStack.Navigator>
+  );
+}
 
 function AdminMoreStack() {
   return (
@@ -41,8 +70,6 @@ function AdminMoreStack() {
     </MoreStack.Navigator>
   );
 }
-
-const ACCENT = color.primary;
 
 /** Guided empty state (§5.4) shown while a feature area is under construction. */
 function Placeholder({ title, hint }: { title: string; hint: string }) {
@@ -65,6 +92,7 @@ const TAB_ICONS: Record<string, string> = {
   NewOrder: 'cart-outline',
   MyDay: 'notebook-outline',
   RouteRider: 'truck-outline',
+  Collect: 'cash-plus',
   History: 'history',
   Handover: 'cash-multiple',
 };
@@ -77,6 +105,7 @@ const SCREENS: Record<string, React.ComponentType> = {
   NewOrder: NewOrderScreen,
   MyDay: MyDayScreen,
   RouteRider: RiderRouteScreen,
+  Collect: CollectScreen,
   History: RiderHistoryScreen,
   Handover: RiderHandoverScreen,
 };
@@ -144,8 +173,20 @@ export function RoleTabs({ role, onSwitchRole }: { role: Role; onSwitchRole?: ()
       ]}
       {role === 'rider' && [
         tabScreen('RouteRider', t.rider.route, 'Load list first — Start route freezes the van. Then area-grouped stops with amounts to collect.'),
-        tabScreen('History', t.rider.history, 'Deliveries done, returns and cash summaries by day.'),
-        tabScreen('Handover', t.rider.handover, 'Expected cash by mode; the owner counts and confirms. Returns re-enter stock here.'),
+        tabScreen('Collect', 'Collect', 'Take money from a shop without a delivery.'),
+        <Tab.Screen
+          key="HandoverTab"
+          name="HandoverTab"
+          component={RiderHandoverStack}
+          options={{
+            title: t.rider.handover,
+            headerShown: false,
+            tabBarIcon: ({ focused }) => (
+              <Icon name={TAB_ICONS.Handover} size={24}
+                color={focused ? color.primary : color.textFaint} />
+            ),
+          }}
+        />,
       ]}
     </Tab.Navigator>
   );

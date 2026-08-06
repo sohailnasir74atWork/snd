@@ -97,7 +97,12 @@ service cloud.firestore {
 
       match /products/{productId} {
         allow read: if inCompany(companyId);
-        allow write: if isAdmin(companyId)
+        // costPrice must NEVER live on a product doc: every staff phone syncs
+        // this collection, and margins are owner-only (FR-15.1). Costs live in
+        // productCosts below. The admin check is on the FINAL doc, so the
+        // client's one-time migration (which deletes the field) still passes.
+        allow write: if (isAdmin(companyId)
+                         && !('costPrice' in request.resource.data))
                      // stock/committed move inside delivery transactions
                      || (isRider(companyId)
                          && request.resource.data.diff(resource.data)
@@ -119,10 +124,11 @@ service cloud.firestore {
                       || (isRider(companyId)
                           && resource.data.assignedTo == request.auth.uid
                           && request.resource.data.diff(resource.data)
-                               .affectedKeys().hasOnly(['items', 'billedTotals', 'invoiceNo', 'invoicedAt',
-                                                        'status', 'paymentStatus', 'amountPaid', 'balance',
-                                                        'deliveredAt', 'proofPhotoUrl', 'undeliveredReason',
-                                                        'deliveryDate', 'seenAt', 'updatedAt']));
+                               .affectedKeys().hasOnly(['items', 'billedTotals', 'invoiceNo', 'invoiceProvisional',
+                                                        'invoicedAt', 'status', 'paymentStatus', 'amountPaid',
+                                                        'balance', 'deliveredAt', 'proofPhotoUrl',
+                                                        'undeliveredReason', 'deliveryDate', 'seenAt',
+                                                        'updatedAt']));
         allow delete: if false; // cancel, never delete (FR-5.7)
       }
 
@@ -185,7 +191,10 @@ service cloud.firestore {
                           || request.resource.data.invoice == resource.data.invoice)
                       && (!('receipt' in request.resource.data) || !('receipt' in resource.data)
                           || request.resource.data.receipt == resource.data.receipt + 1
-                          || request.resource.data.receipt == resource.data.receipt);
+                          || request.resource.data.receipt == resource.data.receipt)
+                      && (!('reward' in request.resource.data) || !('reward' in resource.data)
+                          || request.resource.data.reward == resource.data.reward + 1
+                          || request.resource.data.reward == resource.data.reward);
         allow delete: if false;
       }
 

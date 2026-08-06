@@ -6,7 +6,7 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, Money, OptionBar, PrimaryButton, Tag,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, Tag,
   color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
@@ -50,18 +50,25 @@ export function ProductsScreen() {
   const [unit, setUnit] = React.useState<Product['unit']>('pc');
   const [tradeText, setTradeText] = React.useState('');
   const [mrpText, setMrpText] = React.useState('');
+  const [costText, setCostText] = React.useState('');
   const [stockText, setStockText] = React.useState('');
+
+  // ---- inline "set cost" editor on an existing product ----
+  const [costEditId, setCostEditId] = React.useState<string | null>(null);
+  const [costEditText, setCostEditText] = React.useState('');
 
   const tradePrice = toRupees(tradeText);
   const canSave = name.trim().length > 0 && tradePrice > 0;
+  const missingCost = store.products.filter(p => p.costPrice === undefined).length;
 
   const reset = () => {
     setName(''); setCode(''); setPackSize(''); setUnit('pc');
-    setTradeText(''); setMrpText(''); setStockText('');
+    setTradeText(''); setMrpText(''); setCostText(''); setStockText('');
     setAdding(false);
   };
 
   const save = () => {
+    const costPrice = toRupees(costText);
     store.addProduct({
       name: name.trim(),
       code: code.trim(),
@@ -71,8 +78,21 @@ export function ProductsScreen() {
       // Retail price defaults to the shop price when left blank — every input has a default.
       mrp: toRupees(mrpText) || tradePrice,
       stockQty: toRupees(stockText),
+      // Left out entirely when blank — a product with no cost stays out of profit.
+      ...(costPrice > 0 ? { costPrice } : null),
     });
     reset();
+  };
+
+  const openCostEditor = (p: Product) => {
+    setCostEditId(p.id);
+    setCostEditText(p.costPrice !== undefined ? String(p.costPrice) : '');
+  };
+
+  const saveCost = (id: string) => {
+    store.updateProduct(id, { costPrice: toRupees(costEditText) });
+    setCostEditId(null);
+    setCostEditText('');
   };
 
   return (
@@ -116,6 +136,8 @@ export function ProductsScreen() {
             placeholder="0" keyboardType="number-pad" />
           <Field label="Retail price (Rs) — what the customer pays" value={mrpText} onChange={setMrpText}
             placeholder={tradePrice > 0 ? `${tradePrice}` : '0'} keyboardType="number-pad" />
+          <Field label="Cost price (what you pay)" value={costText} onChange={setCostText}
+            placeholder="0" keyboardType="number-pad" />
           <Field label="Opening stock (how many you have now)" value={stockText} onChange={setStockText}
             placeholder="0" keyboardType="number-pad" />
 
@@ -149,7 +171,10 @@ export function ProductsScreen() {
                 {p.name}{' '}
                 <Text style={styles.cardTitlePack}>{p.packSize}</Text>
               </Text>
-              {!p.active && <Tag label="INACTIVE" tone="warn" />}
+              <View style={styles.tagRow}>
+                {p.costPrice === undefined && <Tag label="NO COST" tone="warn" />}
+                {!p.active && <Tag label="INACTIVE" tone="warn" />}
+              </View>
             </View>
             <Text style={styles.meta}>Product code {p.code || '—'} • sold by {p.unit}</Text>
             <View style={styles.priceRow}>
@@ -161,13 +186,49 @@ export function ProductsScreen() {
                 <Text style={styles.faintLabel}>Retail price</Text>
                 <Money amount={p.mrp} />
               </View>
-              <View style={styles.priceCol}>
-                <Text style={styles.faintLabel}>Stock</Text>
-                <Text style={styles.stock}>{p.stockQty} in stock • {p.committedQty} committed</Text>
-              </View>
+              {p.costPrice !== undefined && (
+                <View style={styles.priceCol}>
+                  <Text style={styles.faintLabel}>Your cost</Text>
+                  <Money amount={p.costPrice} />
+                </View>
+              )}
+            </View>
+            <View style={styles.stockRow}>
+              <Text style={styles.stockLabel}>Stock</Text>
+              <Text style={styles.stock}>{p.stockQty} in stock • {p.committedQty} committed</Text>
             </View>
           </View>
+
+          {costEditId === p.id && (
+            <View style={styles.costEditor}>
+              <Text style={styles.fieldLabel}>Cost price (what you pay)</Text>
+              <TextInput
+                style={styles.input}
+                value={costEditText}
+                onChangeText={setCostEditText}
+                placeholder="0"
+                placeholderTextColor={color.textFaint}
+                keyboardType="number-pad"
+              />
+              <View style={styles.rowWrap}>
+                {toRupees(costEditText) > 0 ? (
+                  <Chip small selected label="Save cost" onPress={() => saveCost(p.id)} />
+                ) : (
+                  <Text style={styles.costHint}>Type what one {p.unit} costs you</Text>
+                )}
+                <Chip small label="Cancel" onPress={() => { setCostEditId(null); setCostEditText(''); }} />
+              </View>
+            </View>
+          )}
+
           <View style={styles.rowWrap}>
+            {costEditId !== p.id && (
+              <Chip
+                small
+                label={p.costPrice === undefined ? 'Set cost' : 'Change cost'}
+                onPress={() => openCostEditor(p)}
+              />
+            )}
             <Chip
               small
               label={p.active ? 'Deactivate — hide from bookers' : 'Activate — show to bookers'}
@@ -177,6 +238,13 @@ export function ProductsScreen() {
           </View>
         </Card>
       ))}
+
+      {missingCost > 0 && (
+        <View style={styles.noteRow}>
+          <Icon name="alert-outline" size={15} color={color.warn} />
+          <Text style={styles.noteText}>Products without a cost price are left out of profit.</Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -209,8 +277,22 @@ const styles = StyleSheet.create({
   priceRow: { flexDirection: 'row', marginTop: space.m },
   priceCol: { flex: 1, paddingRight: space.s },
   faintLabel: { fontSize: font.sub, color: color.textFaint, marginBottom: 2 },
+  stockRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
+  stockLabel: { fontSize: font.sub, color: color.textFaint, marginRight: space.s },
   stock: { fontSize: font.sub, fontWeight: '600', color: color.text },
   dim: { opacity: 0.45 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center' },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+
+  costEditor: {
+    marginTop: space.m, paddingTop: space.m,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
+  },
+  costHint: { fontSize: font.sub, color: color.textSub, marginRight: space.s },
+  noteRow: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: space.l, marginTop: space.s,
+  },
+  noteText: { fontSize: font.sub, color: color.warn, marginLeft: 6, flexShrink: 1 },
 });

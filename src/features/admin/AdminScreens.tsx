@@ -17,34 +17,48 @@ export function AdminActionScreen() {
   const withStaff = store.payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
   const oldCredit = store.shops.filter(s => s.outstanding > 0);
   const problems = store.orders.filter(o => o.status === 'returned' || o.status === 'cancelled');
+
+  // One card PER PERSON who has handed over: the owner counts one pile of
+  // cash and confirms exactly that pile (FR-7.11).
+  const pending = store.staffDays
+    .filter(d => d.staffId && d.handedOver && !d.handoverConfirmed)
+    .map(d => ({
+      staffId: d.staffId!,
+      name: store.staffNames[d.staffId!] || 'Staff member',
+      amount: store.payments
+        .filter(p => !p.confirmed && p.collectedBy === d.staffId)
+        .reduce((s, p) => s + p.amount, 0),
+    }));
+  const pendingTotal = pending.reduce((s, h) => s + h.amount, 0);
+  const stillOut = withStaff - pendingTotal; // collected but not yet handed over
   const calm = withStaff === 0 && oldCredit.length === 0 && problems.length === 0;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      {store.day.handedOver && !store.day.handoverConfirmed && (
-        <Card>
+      {pending.map(h => (
+        <Card key={h.staffId}>
           <View style={styles.row}>
             <IconTile name="cash-multiple" />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>Cash waiting to be confirmed</Text>
-              <Money amount={withStaff} size={font.stat + 4} bold />
+              <Text style={styles.cardTitle}>{h.name} handed over</Text>
+              <Money amount={h.amount} size={font.stat + 4} bold />
             </View>
           </View>
-          <Text style={styles.meta}>Count the rider's cash, then confirm — only you can.</Text>
+          <Text style={styles.meta}>Count {h.name}'s cash, then confirm — only you can.</Text>
           <PrimaryButton
             variant="cta"
             icon="check-circle-outline"
-            label={`${strings.money.confirm} Rs ${withStaff.toLocaleString()}`}
-            onPress={() => store.confirmHandover()}
+            label={`${strings.money.confirm} Rs ${h.amount.toLocaleString()}`}
+            onPress={() => store.confirmHandover(h.staffId)}
           />
         </Card>
-      )}
-      {!store.day.handedOver && withStaff > 0 && (
+      ))}
+      {stillOut > 0 && (
         <Card>
           <View style={styles.row}>
             <IconTile name="clock-outline" tint={color.warn} bg={color.warnSoft} />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>Rs {withStaff.toLocaleString()} with staff</Text>
+              <Text style={styles.cardTitle}>Rs {stillOut.toLocaleString()} with staff</Text>
               <Text style={styles.meta}>Collected at shops today — confirmation happens at the evening handover.</Text>
             </View>
           </View>

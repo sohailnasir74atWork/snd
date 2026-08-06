@@ -1,1 +1,0 @@
-/Users/apple/testing/FieldSales/android/app/build/intermediates/cxx/Debug/6q2l215a/obj/arm64-v8a

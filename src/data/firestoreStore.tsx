@@ -15,18 +15,20 @@
  *    awaits a server round-trip.
  */
 import React from 'react';
+import { Alert } from 'react-native';
 import {
-  collection, doc, getFirestore, onSnapshot, orderBy, query, where,
-  runTransaction, serverTimestamp, setDoc, updateDoc, writeBatch,
+  collection, deleteField, doc, getFirestore, increment, onSnapshot, orderBy,
+  query, where, runTransaction, serverTimestamp, setDoc, updateDoc, writeBatch,
 } from '@react-native-firebase/firestore';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
+import { getCrashlytics, recordError } from '@react-native-firebase/crashlytics';
 import type {
   CompanySettings, DayState, Employee, Expense, FixedCharge,
   Order, Payment, Product, Shop,
 } from './models';
 import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
-  BookOrderInput, CloseOutInput, ProductInput, ShopInput, StoreApi, StoreContext,
+  BookOrderInput, CloseOutInput, CollectionInput, ProductInput, ShopInput, StoreApi, StoreContext,
 } from './store';
 import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
@@ -46,6 +48,27 @@ function toMillis(v: unknown): number {
   return anyV.toMillis ? anyV.toMillis() : 0;
 }
 
+/**
+ * A write the server REFUSED (rules, quota) — not an offline queue. Offline
+ * writes stay pending and never reach here; a rejection means the change was
+ * thrown away, and in a cash app that must be LOUD, never a console line
+ * (audit: silent write failure was the worst failure mode in the codebase).
+ */
+function writeRejected(what: string) {
+  return (e: unknown) => {
+    console.warn(`[snd] ${what} rejected`, e);
+    try {
+      recordError(getCrashlytics(), e instanceof Error ? e : new Error(`${what}: ${String(e)}`));
+    } catch {} // crash reporting must never crash
+    const detail = e instanceof Error ? e.message : String(e);
+    Alert.alert(
+      'Not saved',
+      `${what} was refused by the server and has NOT been recorded.\n\n` +
+        `Show this to the owner if it keeps happening:\n${detail}`,
+    );
+  };
+}
+
 export function FirestoreStoreProvider({
   user, children,
 }: { user: SessionUser; children: React.ReactNode }) {
@@ -56,11 +79,14 @@ export function FirestoreStoreProvider({
   const isRider = user.role === 'rider';
 
   const [products, setProducts] = React.useState<Product[]>([]);
+  const [costs, setCosts] = React.useState<Record<string, number>>({});
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
   const [payments, setPayments] = React.useState<Payment[]>([]);
   const [settings, setSettings] = React.useState<CompanySettings>(DEFAULT_SETTINGS);
   const [employees, setEmployees] = React.useState<Employee[]>([]);
+  const [staffNames, setStaffNames] = React.useState<Record<string, string>>({});
+  const [staffDays, setStaffDays] = React.useState<DayState[]>([]);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [fixedCharges, setFixedCharges] = React.useState<FixedCharge[]>([]);
   const [rawDay, setRawDay] = React.useState<DayState>(EMPTY_DAY());
@@ -86,7 +112,24 @@ export function FirestoreStoreProvider({
 
     const subs: (() => void)[] = [
       onSnapshot(collection(db, `${base}/products`), s => {
-        setProducts(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<Product, 'id'>) })));
+        // costPrice must NEVER ride on the product doc — every role syncs this
+        // collection, and margins are owner-only (FR-15.1). Self-heal any doc
+        // an older build wrote: copy the cost to productCosts, then strip it.
+        if (isAdmin) {
+          s.docs.forEach(d => {
+            const raw = d.data() as { costPrice?: number };
+            if (typeof raw.costPrice === 'number') {
+              setDoc(doc(db, `${base}/productCosts/${d.id}`), { costPrice: raw.costPrice }, { merge: true })
+                .then(() => updateDoc(d.ref, { costPrice: deleteField() }))
+                .catch(warn('cost migration'));
+            }
+          });
+        }
+        setProducts(s.docs.map(d => {
+          const data = { ...(d.data() as Omit<Product, 'id'>) };
+          delete (data as { costPrice?: number }).costPrice;
+          return { id: d.id, ...data };
+        }));
         setReady(true);
       }, e => { warn('products')(e); setReady(true); }),
 
@@ -132,6 +175,28 @@ export function FirestoreStoreProvider({
     // Owner-only collections — non-admins must not even ask (rules deny the list).
     if (isAdmin) {
       subs.push(
+        // Margins live HERE, in an admin-only collection — never on the
+        // product docs every staff phone syncs (FR-15.1).
+        onSnapshot(collection(db, `${base}/productCosts`), s => {
+          const m: Record<string, number> = {};
+          s.docs.forEach(d => {
+            const v = (d.data() as { costPrice?: number }).costPrice;
+            if (typeof v === 'number') m[d.id] = v;
+          });
+          setCosts(m);
+        }, warn('productCosts')),
+        // Every staff member's day doc — the owner's view of who handed over
+        // and is waiting for their cash to be counted (FR-7.11).
+        onSnapshot(collection(db, `${base}/days`), s =>
+          setStaffDays(s.docs.map(d => ({
+            ...EMPTY_DAY(), ...(d.data() as Partial<DayState>), staffId: d.id,
+          }) as DayState)), warn('days')),
+        // uid → display name, so handover cards can say WHO is waiting.
+        onSnapshot(collection(db, `${base}/users`), s => {
+          const m: Record<string, string> = {};
+          s.docs.forEach(d => { m[d.id] = (d.data() as { name?: string }).name || ''; });
+          setStaffNames(m);
+        }, warn('users')),
         onSnapshot(collection(db, `${base}/expenses`), s =>
           setExpenses(s.docs.map(d => {
             const data = d.data() as Record<string, unknown>;
@@ -171,8 +236,17 @@ export function FirestoreStoreProvider({
     }
   }
 
+  // Admin sees margins merged back in; staff phones never hold a costPrice.
+  const productsView = React.useMemo(
+    () => (isAdmin
+      ? products.map(p => (costs[p.id] !== undefined ? { ...p, costPrice: costs[p.id] } : p))
+      : products),
+    [isAdmin, products, costs],
+  );
+
   const api: StoreApi = {
-    products, shops, orders, payments, settings, employees, expenses, fixedCharges, day, ready,
+    products: productsView, shops, orders, payments, settings, employees,
+    staffDays, staffNames, expenses, fixedCharges, day, ready,
 
     async bookOrder(input: BookOrderInput): Promise<Order> {
       const shop = shops.find(s => s.id === input.shopId)!;
@@ -209,23 +283,25 @@ export function FirestoreStoreProvider({
       });
       for (const it of input.items) {
         const p = products.find(pp => pp.id === it.productId);
-        if (p) batch.update(doc(db, `${base}/products/${p.id}`), { committedQty: p.committedQty + it.qty });
+        // increment(), not a read-modify-write: the rider is moving the same
+        // counters from his phone at the same time (audit blocker #2).
+        if (p) batch.update(doc(db, `${base}/products/${p.id}`), { committedQty: increment(it.qty) });
       }
-      batch.commit().catch(e => console.warn('[snd] bookOrder sync', e));
+      batch.commit().catch(writeRejected(`Order ${orderNo}`));
       return { id: orderRef.id, ...order };
     },
 
     flagCollection(shopId) {
-      void updateDoc(doc(db, `${base}/shops/${shopId}`), {
+      updateDoc(doc(db, `${base}/shops/${shopId}`), {
         collectionFlaggedAt: serverTimestamp(),
         collectionFlaggedBy: user.uid,
-      });
+      }).catch(writeRejected('Collection flag'));
     },
 
     startRoute() {
-      void setDoc(doc(db, `${base}/days/${user.uid}`), {
+      setDoc(doc(db, `${base}/days/${user.uid}`), {
         ...EMPTY_DAY(), routeStarted: true, staffId: user.uid,
-      }, { merge: true });
+      }, { merge: true }).catch(writeRejected('Start route'));
     },
 
     async closeOutStop({ orderId, deliveredQtys, paymentAmount, mode }: CloseOutInput) {
@@ -263,60 +339,129 @@ export function FirestoreStoreProvider({
           createdAt: serverTimestamp(),
         });
       }
+      // increment() everywhere a counter moves: the booker's phone is moving
+      // committedQty and outstanding at the same time (audit blocker #2).
       batch.update(doc(db, `${base}/shops/${shop.id}`), {
-        outstanding: shop.outstanding + billed.grandTotal - paymentAmount,
+        outstanding: increment(billed.grandTotal - paymentAmount),
         collectionFlaggedAt: null, collectionFlaggedBy: null,
       });
       for (const it of items) {
         const p = products.find(pp => pp.id === it.productId);
         if (p) {
           batch.update(doc(db, `${base}/products/${p.id}`), {
-            stockQty: p.stockQty - (it.deliveredQty ?? 0),
-            committedQty: Math.max(0, p.committedQty - it.qty),
+            stockQty: increment(-(it.deliveredQty ?? 0)),
+            committedQty: increment(-it.qty),
           });
         }
       }
-      batch.commit().catch(e => console.warn('[snd] closeOut sync', e));
+      batch.commit().catch(writeRejected(`Delivery ${inv.value}`));
       return { invoiceNo: inv.value, receiptNo: rcp?.value };
     },
 
-    handOver() {
-      void setDoc(doc(db, `${base}/days/${user.uid}`), {
-        date: todayKey(), handedOver: true, staffId: user.uid,
-      }, { merge: true });
-    },
+    /**
+     * Money collected on a visit with no delivery (FR-7.4) — the ordinary
+     * khata call. FIFO across the shop's oldest bills; the receipt says what
+     * it cleared. `exception` marks the booker's forced-cash case (FR-7.13).
+     */
+    async collect({ shopId, amount, mode, exception }: CollectionInput) {
+      const rcp = await serial('receipt');
+      const unpaid = orders
+        .filter(o => o.shopId === shopId && o.status === 'delivered' && o.paymentStatus !== 'paid')
+        .map(o => ({
+          orderId: o.id,
+          balance: (o.billedTotals?.grandTotal ?? 0) - o.amountPaid,
+          billedAt: o.deliveredAt ?? o.bookedAt,
+        }))
+        .filter(b => b.balance > 0);
+      const { allocations } = allocateFifo(amount, unpaid);
 
-    confirmHandover() {
-      // Admin-only by rules; marks today's unconfirmed payments (FR-7.11).
       const batch = writeBatch(db);
-      payments.filter(p => !p.confirmed)
-        .forEach(p => batch.update(doc(db, `${base}/payments/${p.id}`), { confirmed: true }));
-      batch.commit().catch(e => console.warn('[snd] confirm sync', e));
-      // Every staff member's day doc for today is marked confirmed.
-      void setDoc(doc(db, `${base}/days/${user.uid}`), {
-        date: todayKey(), handoverConfirmed: true, staffId: user.uid,
-      }, { merge: true });
+      batch.set(doc(collection(db, `${base}/payments`)), {
+        receiptNo: rcp.value, provisional: rcp.provisional,
+        shopId, orderIds: allocations, amount, mode,
+        collectedBy: user.uid, confirmed: false,
+        exception: exception === true,
+        createdAt: serverTimestamp(),
+      });
+      batch.update(doc(db, `${base}/shops/${shopId}`), {
+        // CollectScreen caps the amount at what the shop owes; increment keeps
+        // two same-moment collections from resurrecting a stale balance.
+        outstanding: increment(-amount),
+        collectionFlaggedAt: null, collectionFlaggedBy: null,
+      });
+      for (const a of allocations) {
+        const o = orders.find(oo => oo.id === a.orderId);
+        if (!o) continue;
+        const paid = o.amountPaid + a.amount;
+        batch.update(doc(db, `${base}/orders/${o.id}`), {
+          amountPaid: increment(a.amount),
+          paymentStatus: paid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' : 'partial',
+        });
+      }
+      batch.commit().catch(writeRejected(`Receipt ${rcp.value}`));
+      return { receiptNo: rcp.value };
     },
 
-    addProduct(p: ProductInput) {
-      void setDoc(doc(collection(db, `${base}/products`)), {
+    handOver() {
+      setDoc(doc(db, `${base}/days/${user.uid}`), {
+        date: todayKey(), handedOver: true, staffId: user.uid,
+      }, { merge: true }).catch(writeRejected('Handover'));
+    },
+
+    /**
+     * Owner counts ONE person's cash and confirms exactly that person's
+     * payments (FR-7.11) — confirming the rider must never silently mark the
+     * booker's uncounted exception cash as received (audit blocker #4).
+     */
+    confirmHandover(staffId: string) {
+      const toConfirm = payments.filter(p => !p.confirmed && p.collectedBy === staffId);
+      // Firestore batches cap at 500 writes — chunk, one day-doc write at the end.
+      for (let i = 0; i < toConfirm.length; i += 400) {
+        const batch = writeBatch(db);
+        toConfirm.slice(i, i + 400)
+          .forEach(p => batch.update(doc(db, `${base}/payments/${p.id}`), { confirmed: true }));
+        batch.commit().catch(writeRejected('Cash confirmation'));
+      }
+      // The staff member's own day doc flips, so THEIR screen shows "confirmed".
+      setDoc(doc(db, `${base}/days/${staffId}`), {
+        date: todayKey(), handoverConfirmed: true, staffId,
+      }, { merge: true }).catch(writeRejected('Handover confirmation'));
+    },
+
+    addProduct({ costPrice, ...p }: ProductInput) {
+      const ref = doc(collection(db, `${base}/products`));
+      // The margin goes to the admin-only productCosts, never the product doc.
+      setDoc(ref, {
         ...p, active: true, committedQty: 0, createdAt: serverTimestamp(),
-      });
+      }).catch(writeRejected('New product'));
+      if (costPrice !== undefined && costPrice > 0) {
+        setDoc(doc(db, `${base}/productCosts/${ref.id}`), { costPrice }, { merge: true })
+          .catch(writeRejected('Cost price'));
+      }
     },
 
     updateProduct(id, patch) {
-      void updateDoc(doc(db, `${base}/products/${id}`), patch as Record<string, unknown>);
+      const { costPrice, ...rest } = patch;
+      if (costPrice !== undefined) {
+        setDoc(doc(db, `${base}/productCosts/${id}`), { costPrice }, { merge: true })
+          .catch(writeRejected('Cost price'));
+      }
+      if (Object.keys(rest).length > 0) {
+        updateDoc(doc(db, `${base}/products/${id}`), rest as Record<string, unknown>)
+          .catch(writeRejected('Product update'));
+      }
     },
 
     addShop(s: ShopInput) {
-      void setDoc(doc(collection(db, `${base}/shops`)), {
+      setDoc(doc(collection(db, `${base}/shops`)), {
         ...s, standingDiscountPercent: s.standingDiscountPercent ?? 0,
         outstanding: 0, active: true, createdAt: serverTimestamp(), createdBy: user.uid,
-      });
+      }).catch(writeRejected('New shop'));
     },
 
     updateSettings(patch) {
-      void setDoc(doc(db, `${base}/settings/company`), patch, { merge: true });
+      setDoc(doc(db, `${base}/settings/company`), patch, { merge: true })
+        .catch(writeRejected('Settings'));
     },
 
     async addEmployee(email, name, role) {
@@ -336,11 +481,13 @@ export function FirestoreStoreProvider({
     },
 
     addExpense(e) {
-      void setDoc(doc(collection(db, `${base}/expenses`)), { ...e, createdAt: serverTimestamp() });
+      setDoc(doc(collection(db, `${base}/expenses`)), { ...e, createdAt: serverTimestamp() })
+        .catch(writeRejected('Expense'));
     },
 
     addFixedCharge(c) {
-      void setDoc(doc(collection(db, `${base}/fixedCharges`)), { ...c, createdAt: serverTimestamp() });
+      setDoc(doc(collection(db, `${base}/fixedCharges`)), { ...c, createdAt: serverTimestamp() })
+        .catch(writeRejected('Fixed charge'));
     },
 
     cashWithStaff() {

@@ -10,7 +10,7 @@ import type {
 } from './models';
 import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
-  BookOrderInput, CloseOutInput, ProductInput, ShopInput, StoreApi, StoreContext,
+  BookOrderInput, CloseOutInput, CollectionInput, ProductInput, ShopInput, StoreApi, StoreContext,
 } from './store';
 import { computeTotals, nextSerial } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
@@ -80,6 +80,9 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   const api: StoreApi = {
     ...state,
     ready: true,
+    // Preview stand-ins: the demo's single rider is the only staff member.
+    staffDays: state.day.handedOver ? [{ ...state.day, staffId: 'rider' }] : [],
+    staffNames: { rider: 'Delivery Rider (demo)', booker: 'Order Booker (demo)' },
 
     bookOrder(input: BookOrderInput): Order {
       const shop = state.shops.find(s => s.id === input.shopId)!;
@@ -182,14 +185,47 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       return { invoiceNo, receiptNo };
     },
 
+    collect({ shopId, amount, mode, exception }: CollectionInput) {
+      const receiptNo = nextSerial('RCP');
+      const unpaid = state.orders
+        .filter(o => o.shopId === shopId && o.status === 'delivered' && o.paymentStatus !== 'paid')
+        .map(o => ({
+          orderId: o.id,
+          balance: (o.billedTotals?.grandTotal ?? 0) - o.amountPaid,
+          billedAt: o.deliveredAt ?? o.bookedAt,
+        }))
+        .filter(b => b.balance > 0);
+      const { allocations } = allocateFifo(amount, unpaid);
+      setState(st => ({
+        ...st,
+        payments: [...st.payments, {
+          id: `pay${Date.now()}`, receiptNo, shopId, orderIds: allocations,
+          amount, mode, collectedBy: exception ? 'booker' : 'rider',
+          confirmed: false, createdAt: Date.now(),
+        }],
+        shops: st.shops.map(s =>
+          s.id === shopId
+            ? { ...s, outstanding: Math.max(0, s.outstanding - amount), collectionFlagged: false }
+            : s),
+        orders: st.orders.map(o => {
+          const a = allocations.find(x => x.orderId === o.id);
+          if (!a) return o;
+          const paid = o.amountPaid + a.amount;
+          return { ...o, amountPaid: paid,
+            paymentStatus: paid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' as const : 'partial' as const };
+        }),
+      }));
+      return { receiptNo };
+    },
+
     handOver() {
       setState(st => ({ ...st, day: { ...st.day, handedOver: true } }));
     },
 
-    confirmHandover() {
+    confirmHandover(staffId: string) {
       setState(st => ({
         ...st,
-        payments: st.payments.map(p => ({ ...p, confirmed: true })),
+        payments: st.payments.map(p => (p.collectedBy === staffId ? { ...p, confirmed: true } : p)),
         day: { ...st.day, handoverConfirmed: true },
       }));
     },

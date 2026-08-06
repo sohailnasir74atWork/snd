@@ -1,13 +1,14 @@
 /**
  * Rider screens — load list with [Start route] freeze (FR-14.1/6.2),
- * one-screen close-out with prefilled quantities and payment chips
- * (FR-14.4, FR-5.2), evening handover (FR-7.9/7.11).
+ * one-screen close-out with prefilled quantities and a real payment amount —
+ * full, full + old khata, part or nothing (FR-14.4, FR-5.2, FR-7.x) —
+ * evening handover (FR-7.9/7.11).
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton,
-  SectionLabel, Tag, color, font, space,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton,
+  SectionLabel, Tag, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { Order } from '../../data/models';
@@ -106,6 +107,19 @@ export function RiderRouteScreen() {
   );
 }
 
+/** What the rider taps first — how much of the money is coming in today. */
+type PayChoice = 'full' | 'khata' | 'part' | 'none';
+/** Matches CloseOutInput['mode'] — the shape the store already stores. */
+type PayMode = 'cash' | 'transfer' | 'cheque';
+
+const QUICK_ADDS = [500, 1000, 2000, 5000] as const;
+
+/** Whole rupees only, never negative, never more than the shop actually owes. */
+function clampMoney(value: number, max: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(Math.trunc(value), max));
+}
+
 function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void }) {
   const store = useStore();
   const shop = store.shops.find(s => s.id === order.shopId)!;
@@ -113,12 +127,48 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   const [qtys, setQtys] = React.useState<Record<string, number>>(
     Object.fromEntries(order.items.map(i => [i.productId, i.qty])),
   );
-  const [payChoice, setPayChoice] = React.useState<'full' | 'khata' | 'none'>('full');
+  const [payChoice, setPayChoice] = React.useState<PayChoice>('full');
+  const [partText, setPartText] = React.useState('');
+  const [modeChoice, setModeChoice] = React.useState<PayMode>('cash');
   const [result, setResult] = React.useState<{ invoiceNo: string; receiptNo?: string } | null>(null);
 
   const items = order.items.map(i => ({ ...i, deliveredQty: qtys[i.productId] }));
   const billed = computeTotals(items, order.discountPercent, true);
-  const payAmount = payChoice === 'none' ? 0 : payChoice === 'full' ? billed.grandTotal : billed.grandTotal + shop.outstanding;
+  // The ceiling on any payment: today's bill plus whatever was already owed.
+  const maxPayable = billed.grandTotal + shop.outstanding;
+
+  // Changing a quantity can shrink the ceiling — pull a too-large typed amount down with it.
+  React.useEffect(() => {
+    setPartText(t => {
+      if (!t) return t;
+      const n = Number.parseInt(t, 10);
+      return Number.isFinite(n) && n > maxPayable ? String(maxPayable) : t;
+    });
+  }, [maxPayable]);
+
+  const partAmount = clampMoney(Number.parseInt(partText, 10), maxPayable);
+  const rawPay = payChoice === 'none' ? 0
+    : payChoice === 'full' ? billed.grandTotal
+    : payChoice === 'khata' ? maxPayable
+    : partAmount;
+  const payAmount = clampMoney(rawPay, maxPayable);
+  const stillOwed = maxPayable - payAmount;
+
+  const payOptions: readonly PayChoice[] = shop.outstanding > 0
+    ? ['full', 'khata', 'part', 'none']
+    : ['full', 'part', 'none'];
+  const payLabel = (v: PayChoice) =>
+    v === 'full' ? 'Full' : v === 'khata' ? strings.delivery.oldKhata : v === 'part' ? 'Part' : 'Nothing';
+
+  // Cheque only exists if the owner switched it on in Settings (FR-12.1).
+  const modeOptions: readonly PayMode[] = store.settings.acceptCheques
+    ? ['cash', 'transfer', 'cheque']
+    : ['cash', 'transfer'];
+  const mode: PayMode = modeOptions.includes(modeChoice) ? modeChoice : 'cash';
+  const modeLabel = (v: PayMode) => (v === 'cash' ? 'Cash' : v === 'transfer' ? 'Bank transfer' : 'Cheque');
+
+  const addToPart = (add: number) =>
+    setPartText(String(clampMoney(partAmount + add, maxPayable)));
 
   if (result) {
     return (
@@ -191,24 +241,75 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
       </Card>
 
       <SectionLabel>Payment</SectionLabel>
-      <View style={styles.payRow}>
-        <Chip label={`${strings.delivery.full} Rs ${billed.grandTotal.toLocaleString()}`}
-          selected={payChoice === 'full'} onPress={() => setPayChoice('full')} />
-        {shop.outstanding > 0 && (
-          <Chip label={`${strings.delivery.oldKhata} = Rs ${(billed.grandTotal + shop.outstanding).toLocaleString()}`}
-            selected={payChoice === 'khata'} onPress={() => setPayChoice('khata')} />
+      <Card style={styles.tightCard}>
+        <View style={[styles.payBlock, styles.payDivider]}>
+          <View style={styles.payHead}>
+            <IconTile name="cash-multiple" size={34} />
+            <Text style={styles.payLabel}>How much is he paying?</Text>
+          </View>
+          <OptionBar options={payOptions} value={payChoice} render={payLabel} onChange={setPayChoice} />
+        </View>
+
+        {payChoice === 'part' && (
+          <View style={[styles.payBlock, styles.payDivider]}>
+            <Text style={styles.fieldLabel}>Amount he is handing over now</Text>
+            <TextInput
+              style={styles.input}
+              value={partText}
+              onChangeText={t => {
+                const digits = t.replace(/[^0-9]/g, '');
+                setPartText(digits ? String(clampMoney(Number.parseInt(digits, 10), maxPayable)) : '');
+              }}
+              keyboardType="number-pad"
+              placeholder={String(maxPayable)}
+              placeholderTextColor={color.textFaint}
+            />
+            <Text style={styles.fieldHint}>
+              Everything he owes today is Rs {maxPayable.toLocaleString()}
+            </Text>
+            <View style={styles.rowWrap}>
+              <Chip small label="+ half" onPress={() => addToPart(Math.floor(maxPayable / 2))} />
+              {QUICK_ADDS.map(v => (
+                <Chip key={v} small label={`+ ${v.toLocaleString()}`} onPress={() => addToPart(v)} />
+              ))}
+              {partText ? <Chip small label="Clear" danger onPress={() => setPartText('')} /> : null}
+            </View>
+          </View>
         )}
-        <Chip label="Nothing today" selected={payChoice === 'none'} onPress={() => setPayChoice('none')} />
-      </View>
+
+        <View style={[styles.payBlock, payAmount > 0 && styles.payDivider]}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.big}>Taking now</Text>
+            <Money amount={payAmount} size={font.stat} bold />
+          </View>
+          <Text style={stillOwed > 0 ? styles.oweText : styles.clearText}>
+            {stillOwed > 0
+              ? `Shop will still owe Rs ${stillOwed.toLocaleString()}`
+              : 'Shop clears everything — nothing left on the khata'}
+          </Text>
+        </View>
+
+        {payAmount > 0 && (
+          <View style={styles.payBlock}>
+            <View style={styles.payHead}>
+              <IconTile name="bank-outline" size={34} />
+              <Text style={styles.payLabel}>How did he pay?</Text>
+            </View>
+            <OptionBar options={modeOptions} value={mode} render={modeLabel} onChange={setModeChoice} />
+          </View>
+        )}
+      </Card>
 
       <View style={styles.ctaWrap}>
         <PrimaryButton
           label={payAmount > 0 ? `Delivered — take Rs ${payAmount.toLocaleString()}` : 'Delivered — on credit'}
           icon="check-circle-outline"
+          disabled={payChoice === 'part' && partAmount === 0}
+          disabledReason="Type how much he is paying"
           onPress={async () => {
             const r = await Promise.resolve(
               store.closeOutStop({
-                orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode: 'cash',
+                orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
               }),
             );
             setResult(r);
@@ -311,6 +412,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.xs,
   },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.xs },
-  payRow: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: space.m },
   ctaWrap: { marginHorizontal: space.l, marginVertical: space.m },
+
+  tightCard: { paddingVertical: space.xs },
+  payBlock: { paddingVertical: space.m },
+  payDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  payHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s + 2 },
+  payLabel: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  fieldHint: { fontSize: font.tiny + 1, color: color.textSub, marginTop: 6 },
+  input: {
+    backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
+    borderWidth: 1, borderColor: color.border,
+    paddingHorizontal: space.m, height: 46,
+    fontSize: font.body, color: color.text,
+  },
+  oweText: { fontSize: font.sub, fontWeight: '700', color: color.danger, marginTop: space.xs },
+  clearText: { fontSize: font.sub, fontWeight: '700', color: color.success, marginTop: space.xs },
 });
