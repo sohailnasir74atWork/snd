@@ -4,9 +4,10 @@
  */
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Card, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
+import { Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
 import { useStore } from '../../data/store';
 import { profitFor } from '../../lib/profit';
+import { shareCsv } from '../../documents/share';
 import type { Order, Payment, Shop } from '../../data/models';
 
 // ---------- pure helpers (unit-testable) ----------
@@ -64,6 +65,13 @@ export function deliveredOrdersIn(orders: Order[], r: DateRange): Order[] {
 
 export function stillToDeliverIn(orders: Order[], r: DateRange): Order[] {
   return orders.filter(o => isStillToDeliver(o) && inRange(orderDate(o), r));
+}
+
+/** Every order the range touches, newest first — the CSV export list. */
+export function ordersInRange(orders: Order[], r: DateRange): Order[] {
+  return orders
+    .filter(o => inRange(orderDate(o), r))
+    .sort((a, b) => orderDate(b) - orderDate(a));
 }
 
 /** Sum of billed grand totals across delivered orders. Integer rupees. */
@@ -303,6 +311,46 @@ export function ReportsScreen() {
           </View>
         </Card>
       )}
+
+      <SectionLabel>Export</SectionLabel>
+      <Card style={styles.tightCard}>
+        <View style={styles.exportRow}>
+          <Chip
+            label={`Orders CSV — ${PRESET_LABELS[preset]}`}
+            onPress={() => {
+              const rows: (string | number | undefined)[][] = [
+                ['Order', 'Invoice', 'Date', 'Shop', 'Area', 'Status', 'Subtotal', 'Discount', 'Total', 'Paid', 'Balance'],
+                ...ordersInRange(store.orders, range).map(o => {
+                  const t = o.billedTotals ?? o.orderedTotals;
+                  return [
+                    o.orderNo, o.invoiceNo, new Date(o.bookedAt).toLocaleDateString(),
+                    o.shopSnapshot.name, o.shopSnapshot.area, o.status,
+                    t.subTotal, t.discountTotal, t.grandTotal, o.amountPaid,
+                    t.grandTotal - o.amountPaid,
+                  ];
+                }),
+              ];
+              void shareCsv(`orders-${preset}`, rows).catch(() => {});
+            }}
+          />
+          <Chip
+            label={`Payments CSV — ${PRESET_LABELS[preset]}`}
+            onPress={() => {
+              const rows: (string | number | undefined)[][] = [
+                ['Receipt', 'Date', 'Shop', 'Amount', 'Mode', 'Collected by', 'Confirmed', 'Exception'],
+                ...store.payments.filter(p => inRange(p.createdAt, range)).map(p => [
+                  p.receiptNo, new Date(p.createdAt).toLocaleDateString(),
+                  store.shops.find(s => s.id === p.shopId)?.name ?? p.shopId,
+                  p.amount, p.mode, store.staffNames[p.collectedBy] || p.collectedBy,
+                  p.confirmed ? 'yes' : 'no', p.exception ? 'yes' : '',
+                ]),
+              ];
+              void shareCsv(`payments-${preset}`, rows).catch(() => {});
+            }}
+          />
+        </View>
+        <Text style={styles.meta}>Opens the share sheet — send to WhatsApp, email or Drive.</Text>
+      </Card>
     </ScrollView>
   );
 }
@@ -316,6 +364,7 @@ const styles = StyleSheet.create({
   },
   presetWrap: { marginHorizontal: space.l, marginTop: space.s },
   tightCard: { paddingVertical: space.xs },
+  exportRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', paddingTop: space.s },
 
   cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
   subHead: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.m },

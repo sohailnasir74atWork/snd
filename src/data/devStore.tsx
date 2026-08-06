@@ -5,12 +5,13 @@
  */
 import React from 'react';
 import type {
-  CompanySettings, DayState, Employee, Expense, FixedCharge,
-  Order, Payment, Product, Shop,
+  CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
+  Order, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
 import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
-  BookOrderInput, CloseOutInput, CollectionInput, ProductInput, ShopInput, StoreApi, StoreContext,
+  BookOrderInput, CloseOutInput, CollectionInput, ProductInput,
+  RewardClaimInput, RewardStaffInput, ShopInput, StoreApi, StoreContext,
 } from './store';
 import { computeTotals, nextSerial } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
@@ -46,6 +47,7 @@ const seedSettings: CompanySettings = {
   defaultDeliveryDay: 'today',
   shopsPerDay: 20,
   rewardApprovalLimit: 1000,
+  rewardPerPiece: 40,
   acceptCheques: false,
   sendConfirmations: true,
 };
@@ -60,6 +62,9 @@ interface StoreState {
   employees: Employee[];
   expenses: Expense[];
   fixedCharges: FixedCharge[];
+  rewardStaff: RewardStaff[];
+  rewardClaims: RewardClaim[];
+  floatMovements: FloatMovement[];
 }
 
 export function DevStoreProvider({ children }: { children: React.ReactNode }) {
@@ -75,6 +80,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     ],
     expenses: [],
     fixedCharges: [],
+    rewardStaff: [
+      { id: 'rs1', name: 'Salman (counter)', phone: '923001112233', shopId: 's1', active: true, addedBy: 'booker' },
+    ],
+    rewardClaims: [],
+    floatMovements: [
+      { id: 'f1', staffId: 'booker', amount: 2000, kind: 'issue', createdAt: now - 86400_000 },
+    ],
   });
 
   const api: StoreApi = {
@@ -201,7 +213,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         payments: [...st.payments, {
           id: `pay${Date.now()}`, receiptNo, shopId, orderIds: allocations,
           amount, mode, collectedBy: exception ? 'booker' : 'rider',
-          confirmed: false, createdAt: Date.now(),
+          confirmed: false, exception: exception === true, createdAt: Date.now(),
         }],
         shops: st.shops.map(s =>
           s.id === shopId
@@ -282,11 +294,78 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       setState(st => ({ ...st, fixedCharges: [...st.fixedCharges, { id: `f${Date.now()}`, ...c }] }));
     },
 
+    addRewardStaff(s: RewardStaffInput) {
+      setState(st => ({
+        ...st,
+        rewardStaff: [...st.rewardStaff, { id: `rs${Date.now()}`, ...s, active: true, addedBy: 'booker' }],
+      }));
+    },
+
+    async submitRewardClaim({ staffId, pieces, shelfCount }: RewardClaimInput) {
+      const rStaff = state.rewardStaff.find(r => r.id === staffId)!;
+      const shop = state.shops.find(sh => sh.id === rStaff.shopId);
+      const amount = pieces * state.settings.rewardPerPiece;
+      const claimNo = nextSerial('RWD');
+      setState(st => ({
+        ...st,
+        rewardClaims: [...st.rewardClaims, {
+          id: `rc${Date.now()}`, claimNo, staffId, staffName: rStaff.name,
+          shopId: rStaff.shopId, shopName: shop?.name ?? '', pieces, amount,
+          shelfCount, by: 'booker', status: 'pending',
+          overLimit: amount > st.settings.rewardApprovalLimit, createdAt: Date.now(),
+        }],
+        shops: st.shops.map(sh =>
+          sh.id === rStaff.shopId
+            ? { ...sh, lastShelfCount: shelfCount, lastShelfCountAt: Date.now() }
+            : sh),
+      }));
+      return { claimNo };
+    },
+
+    decideRewardClaim(id, decision) {
+      setState(st => {
+        const claim = st.rewardClaims.find(c => c.id === id);
+        return {
+          ...st,
+          rewardClaims: st.rewardClaims.map(c =>
+            c.id === id ? { ...c, status: decision, decidedAt: Date.now(), decidedBy: 'admin' } : c),
+          floatMovements: decision === 'approved' && claim
+            ? [...st.floatMovements, {
+                id: `f${Date.now()}`, staffId: claim.by, amount: claim.amount,
+                kind: 'payout' as const, refClaimId: id, createdAt: Date.now(),
+              }]
+            : st.floatMovements,
+        };
+      });
+    },
+
+    moveFloat(staffId, amount, kind) {
+      setState(st => ({
+        ...st,
+        floatMovements: [...st.floatMovements, {
+          id: `f${Date.now()}`, staffId, amount, kind, createdAt: Date.now(),
+        }],
+      }));
+    },
+
+    recordShelfCount(shopId, count) {
+      setState(st => ({
+        ...st,
+        shops: st.shops.map(sh =>
+          sh.id === shopId ? { ...sh, lastShelfCount: count, lastShelfCountAt: Date.now() } : sh),
+      }));
+    },
+
     cashWithStaff() {
       return state.payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
     },
     cashConfirmed() {
       return state.payments.filter(p => p.confirmed).reduce((s, p) => s + p.amount, 0);
+    },
+    floatBalance(staffId: string) {
+      return state.floatMovements
+        .filter(f => f.staffId === staffId)
+        .reduce((s, f) => s + (f.kind === 'issue' ? f.amount : -f.amount), 0);
     },
   };
 

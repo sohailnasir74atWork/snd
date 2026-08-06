@@ -22,23 +22,29 @@ import {
 } from '@react-native-firebase/firestore';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
 import { getCrashlytics, recordError } from '@react-native-firebase/crashlytics';
+import {
+  getMessaging, getToken, onTokenRefresh, requestPermission,
+} from '@react-native-firebase/messaging';
 import type {
-  CompanySettings, DayState, Employee, Expense, FixedCharge,
-  Order, Payment, Product, Shop,
+  CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
+  Order, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
 import { EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
-  BookOrderInput, CloseOutInput, CollectionInput, ProductInput, ShopInput, StoreApi, StoreContext,
+  BookOrderInput, CloseOutInput, CollectionInput, ProductInput,
+  RewardClaimInput, RewardStaffInput, ShopInput, StoreApi, StoreContext,
 } from './store';
 import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
 import { formatSerial, nextLocalRef, type SerialKind } from '../lib/serials';
+import { uploadPhotoBase64 } from '../lib/storage';
 import type { SessionUser } from '../app/types';
 
 const DEFAULT_SETTINGS: CompanySettings = {
   brandName: '', currencySymbol: 'Rs', countryCode: '92', taxPercent: 0,
   maxDiscountPercent: 10, defaultDeliveryDay: 'today', shopsPerDay: 20,
-  rewardApprovalLimit: 1000, acceptCheques: false, sendConfirmations: true,
+  rewardApprovalLimit: 1000, rewardPerPiece: 40,
+  acceptCheques: false, sendConfirmations: true,
 };
 
 function toMillis(v: unknown): number {
@@ -89,6 +95,9 @@ export function FirestoreStoreProvider({
   const [staffDays, setStaffDays] = React.useState<DayState[]>([]);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [fixedCharges, setFixedCharges] = React.useState<FixedCharge[]>([]);
+  const [rewardStaff, setRewardStaff] = React.useState<RewardStaff[]>([]);
+  const [rewardClaims, setRewardClaims] = React.useState<RewardClaim[]>([]);
+  const [floatMovements, setFloatMovements] = React.useState<FloatMovement[]>([]);
   const [rawDay, setRawDay] = React.useState<DayState>(EMPTY_DAY());
   const [ready, setReady] = React.useState(false);
 
@@ -172,6 +181,42 @@ export function FirestoreStoreProvider({
       }, warn('day')),
     ];
 
+    // Rewards (FR-16): admin + booker; the rider has no reward screens and
+    // the rules deny him the list.
+    if (!isRider) {
+      subs.push(
+        onSnapshot(collection(db, `${base}/rewardStaff`), s =>
+          setRewardStaff(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<RewardStaff, 'id'>) }))),
+          warn('rewardStaff')),
+        onSnapshot(
+          isAdmin
+            ? collection(db, `${base}/rewardClaims`)
+            : query(collection(db, `${base}/rewardClaims`), where('by', '==', user.uid)),
+          s => setRewardClaims(s.docs.map(d => {
+            const data = d.data() as Record<string, unknown>;
+            return {
+              id: d.id, ...(data as unknown as Omit<RewardClaim, 'id'>),
+              createdAt: toMillis(data.createdAt) || Date.now(),
+              decidedAt: data.decidedAt ? toMillis(data.decidedAt) : undefined,
+            } as RewardClaim;
+          })), warn('rewardClaims')),
+      );
+    }
+    // Float: the owner sees the whole ledger, staff see their own rows.
+    subs.push(
+      onSnapshot(
+        isAdmin
+          ? collection(db, `${base}/floatMovements`)
+          : query(collection(db, `${base}/floatMovements`), where('staffId', '==', user.uid)),
+        s => setFloatMovements(s.docs.map(d => {
+          const data = d.data() as Record<string, unknown>;
+          return {
+            id: d.id, ...(data as unknown as Omit<FloatMovement, 'id'>),
+            createdAt: toMillis(data.createdAt) || Date.now(),
+          } as FloatMovement;
+        })), warn('float')),
+    );
+
     // Owner-only collections — non-admins must not even ask (rules deny the list).
     if (isAdmin) {
       subs.push(
@@ -212,6 +257,27 @@ export function FirestoreStoreProvider({
     return () => subs.forEach(u => u());
   }, [base, isAdmin, isRider, user.uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Push notifications (FR-12.10): ask once, keep users/{uid}.fcmToken fresh
+  // (the rules whitelist exactly that key for self-update). Best-effort — a
+  // refused permission or dead Play Services must never block the field flow.
+  React.useEffect(() => {
+    let stop: (() => void) | undefined;
+    (async () => {
+      try {
+        const m = getMessaging();
+        await requestPermission(m); // Android 13+ system prompt; older = no-op
+        const save = (token: string) =>
+          updateDoc(doc(db, `${base}/users/${user.uid}`), { fcmToken: token })
+            .catch(e => console.warn('[snd] fcm token save', e));
+        await save(await getToken(m));
+        stop = onTokenRefresh(m, t => { void save(t); });
+      } catch (e) {
+        console.warn('[snd] fcm setup', e);
+      }
+    })();
+    return () => stop?.();
+  }, [base, user.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /**
    * Final serial if the server is reachable, provisional local reference if
    * not. Never blocks the field flow (FR-5.8).
@@ -246,7 +312,8 @@ export function FirestoreStoreProvider({
 
   const api: StoreApi = {
     products: productsView, shops, orders, payments, settings, employees,
-    staffDays, staffNames, expenses, fixedCharges, day, ready,
+    staffDays, staffNames, expenses, fixedCharges,
+    rewardStaff, rewardClaims, floatMovements, day, ready,
 
     async bookOrder(input: BookOrderInput): Promise<Order> {
       const shop = shops.find(s => s.id === input.shopId)!;
@@ -365,6 +432,21 @@ export function FirestoreStoreProvider({
      */
     async collect({ shopId, amount, mode, exception }: CollectionInput) {
       const rcp = await serial('receipt');
+
+      // Booker forced-cash exception (FR-7.13): the rules stop a booker from
+      // moving balances (FR-7.10), so ONLY the flagged payment is written.
+      // The khata moves when the owner confirms it at the handover.
+      if (user.role === 'booker') {
+        setDoc(doc(collection(db, `${base}/payments`)), {
+          receiptNo: rcp.value, provisional: rcp.provisional,
+          shopId, orderIds: [], amount, mode,
+          collectedBy: user.uid, confirmed: false,
+          exception: true,
+          createdAt: serverTimestamp(),
+        }).catch(writeRejected(`Receipt ${rcp.value}`));
+        return { receiptNo: rcp.value };
+      }
+
       const unpaid = orders
         .filter(o => o.shopId === shopId && o.status === 'delivered' && o.paymentStatus !== 'paid')
         .map(o => ({
@@ -415,11 +497,40 @@ export function FirestoreStoreProvider({
      */
     confirmHandover(staffId: string) {
       const toConfirm = payments.filter(p => !p.confirmed && p.collectedBy === staffId);
-      // Firestore batches cap at 500 writes — chunk, one day-doc write at the end.
-      for (let i = 0; i < toConfirm.length; i += 400) {
+      // Everything as an op list, committed in chunks under the 500-write cap.
+      const ops: ((b: ReturnType<typeof writeBatch>) => void)[] = [];
+      toConfirm.forEach(p =>
+        ops.push(b => b.update(doc(db, `${base}/payments/${p.id}`), { confirmed: true })));
+
+      // Exception payments (FR-7.13) never touched the khata when collected —
+      // the rules forbid the booker that. Apply them NOW, from the owner's
+      // full view: shop balance down, FIFO across the shop's unpaid bills.
+      for (const p of toConfirm.filter(x => x.exception)) {
+        ops.push(b => b.update(doc(db, `${base}/shops/${p.shopId}`), {
+          outstanding: increment(-p.amount),
+        }));
+        const unpaid = orders
+          .filter(o => o.shopId === p.shopId && o.status === 'delivered' && o.paymentStatus !== 'paid')
+          .map(o => ({
+            orderId: o.id,
+            balance: (o.billedTotals?.grandTotal ?? 0) - o.amountPaid,
+            billedAt: o.deliveredAt ?? o.bookedAt,
+          }))
+          .filter(x => x.balance > 0);
+        for (const a of allocateFifo(p.amount, unpaid).allocations) {
+          const o = orders.find(oo => oo.id === a.orderId);
+          if (!o) continue;
+          const paid = o.amountPaid + a.amount;
+          ops.push(b => b.update(doc(db, `${base}/orders/${o.id}`), {
+            amountPaid: increment(a.amount),
+            paymentStatus: paid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' : 'partial',
+          }));
+        }
+      }
+
+      for (let i = 0; i < ops.length; i += 400) {
         const batch = writeBatch(db);
-        toConfirm.slice(i, i + 400)
-          .forEach(p => batch.update(doc(db, `${base}/payments/${p.id}`), { confirmed: true }));
+        ops.slice(i, i + 400).forEach(f => f(batch));
         batch.commit().catch(writeRejected('Cash confirmation'));
       }
       // The staff member's own day doc flips, so THEIR screen shows "confirmed".
@@ -490,11 +601,87 @@ export function FirestoreStoreProvider({
         .catch(writeRejected('Fixed charge'));
     },
 
+    // ---- rewards (FR-16) + shelf counts ------------------------------------
+
+    addRewardStaff(s: RewardStaffInput) {
+      setDoc(doc(collection(db, `${base}/rewardStaff`)), {
+        ...s, active: true, addedBy: user.uid, createdAt: serverTimestamp(),
+      }).catch(writeRejected('Counter-staff registration'));
+    },
+
+    /**
+     * Photo first, claim second: the upload needs signal, and a claim without
+     * its receipt proof must never exist (FR-16). Throws so the screen can
+     * say "try again with signal" honestly.
+     */
+    async submitRewardClaim({ staffId, pieces, shelfCount, photoBase64 }: RewardClaimInput) {
+      const rStaff = rewardStaff.find(r => r.id === staffId)!;
+      const shop = shops.find(sh => sh.id === rStaff.shopId);
+      if (!photoBase64) throw new Error('The receipt photo is required.');
+      const photoUrl = await uploadPhotoBase64(photoBase64, 'reward');
+
+      const amount = pieces * settings.rewardPerPiece;
+      const claim = await serial('reward');
+      const batch = writeBatch(db);
+      batch.set(doc(collection(db, `${base}/rewardClaims`)), {
+        claimNo: claim.value, provisional: claim.provisional,
+        staffId, staffName: rStaff.name,
+        shopId: rStaff.shopId, shopName: shop?.name ?? '',
+        pieces, amount, photoUrl, shelfCount,
+        by: user.uid, status: 'pending',
+        overLimit: amount > settings.rewardApprovalLimit,
+        createdAt: serverTimestamp(),
+      });
+      // The mandatory shelf count also lands on the shop (same visit).
+      if (shop) {
+        batch.update(doc(db, `${base}/shops/${shop.id}`), {
+          lastShelfCount: shelfCount, lastShelfCountAt: serverTimestamp(),
+        });
+      }
+      batch.commit().catch(writeRejected(`Claim ${claim.value}`));
+      return { claimNo: claim.value };
+    },
+
+    decideRewardClaim(id, decision) {
+      // Admin-only by rules (FR-16.5 — the booker can never approve himself).
+      const claim = rewardClaims.find(c => c.id === id);
+      const batch = writeBatch(db);
+      batch.update(doc(db, `${base}/rewardClaims/${id}`), {
+        status: decision, decidedAt: serverTimestamp(), decidedBy: user.uid,
+      });
+      // Approval = the booker pays it from his float — record the payout row.
+      if (decision === 'approved' && claim) {
+        batch.set(doc(collection(db, `${base}/floatMovements`)), {
+          staffId: claim.by, amount: claim.amount, kind: 'payout',
+          refClaimId: id, note: `${claim.claimNo} — ${claim.staffName}`,
+          createdAt: serverTimestamp(),
+        });
+      }
+      batch.commit().catch(writeRejected('Claim decision'));
+    },
+
+    moveFloat(staffId, amount, kind) {
+      setDoc(doc(collection(db, `${base}/floatMovements`)), {
+        staffId, amount, kind, createdAt: serverTimestamp(),
+      }).catch(writeRejected(kind === 'issue' ? 'Float issue' : 'Float return'));
+    },
+
+    recordShelfCount(shopId, count) {
+      updateDoc(doc(db, `${base}/shops/${shopId}`), {
+        lastShelfCount: count, lastShelfCountAt: serverTimestamp(),
+      }).catch(writeRejected('Shelf count'));
+    },
+
     cashWithStaff() {
       return payments.filter(p => !p.confirmed).reduce((s, p) => s + p.amount, 0);
     },
     cashConfirmed() {
       return payments.filter(p => p.confirmed).reduce((s, p) => s + p.amount, 0);
+    },
+    floatBalance(staffId: string) {
+      return floatMovements
+        .filter(f => f.staffId === staffId)
+        .reduce((s, f) => s + (f.kind === 'issue' ? f.amount : -f.amount), 0);
     },
   };
 

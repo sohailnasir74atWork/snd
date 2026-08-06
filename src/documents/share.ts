@@ -8,6 +8,8 @@
  */
 import RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
+import { toCsv } from '../lib/csv';
+import { utf8ToBase64 } from '../lib/base64';
 
 export async function sharePdf(html: string, fileName: string, message: string): Promise<void> {
   const { filePath } = await RNHTMLtoPDF.convert({ html, fileName, base64: false });
@@ -16,6 +18,16 @@ export async function sharePdf(html: string, fileName: string, message: string):
     url: `file://${filePath}`,
     type: 'application/pdf',
     message,
+    failOnCancel: false,
+  });
+}
+
+/** CSV export (FR-9) — data: URL through the share sheet, no filesystem needed. */
+export async function shareCsv(filename: string, rows: (string | number | undefined)[][]): Promise<void> {
+  await Share.open({
+    url: `data:text/csv;base64,${utf8ToBase64(toCsv(rows))}`,
+    filename: filename.replace(/\.csv$/, ''), // Android appends the extension from type
+    type: 'text/csv',
     failOnCancel: false,
   });
 }

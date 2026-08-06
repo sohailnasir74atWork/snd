@@ -112,12 +112,20 @@ export function SettingsScreen() {
             onChange={v => store.updateSettings({ maxDiscountPercent: v })}
           />
         </RuleRow>
-        <RuleRow icon="gift-outline" label="Reward approval limit" last>
+        <RuleRow icon="gift-outline" label="Reward approval limit">
           <OptionBar
             options={[500, 1000, 2000]}
             value={s.rewardApprovalLimit}
             render={v => `Rs ${v.toLocaleString()}`}
             onChange={v => store.updateSettings({ rewardApprovalLimit: v })}
+          />
+        </RuleRow>
+        <RuleRow icon="hand-coin-outline" label="Reward per piece" last>
+          <OptionBar
+            options={[20, 40, 60]}
+            value={s.rewardPerPiece}
+            render={v => `Rs ${v}`}
+            onChange={v => store.updateSettings({ rewardPerPiece: v })}
           />
         </RuleRow>
       </Card>

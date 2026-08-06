@@ -3,26 +3,155 @@
  * My Day. Zero typing: everything is chips and tiles.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, PrimaryButton, SectionLabel, Tag,
-  color, font, space,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
+  color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
+import type { CollectionInput } from '../../data/store';
 import type { Order, OrderItem, Shop } from '../../data/models';
 import { computeTotals } from '../../lib/order';
 import { strings } from '../../i18n/strings';
 import { orderConfirmationHtml } from '../../documents/templates';
 import { sharePdf } from '../../documents/share';
+import { RewardsSection } from './RewardsSection';
 
 const QTY_CHIPS = [1, 6, 12];
+
+/** Digits only — money and counts are always whole numbers. */
+function toInt(text: string): number {
+  const n = Number.parseInt(text.replace(/[^0-9]/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * FR-7.13 — the booker's ONE way to accept cash, deliberately loud. The
+ * payment lands flagged, the owner is pushed immediately, and the khata
+ * only moves when the owner confirms at the handover.
+ */
+function ExceptionCashScreen({ shop, onDone }: { shop: Shop; onDone: () => void }) {
+  const store = useStore();
+  const [amountText, setAmountText] = React.useState('');
+  const [mode, setMode] = React.useState<CollectionInput['mode']>('cash');
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState<{ receiptNo: string; amount: number } | null>(null);
+
+  const amount = Math.min(toInt(amountText), shop.outstanding);
+  const modes: readonly CollectionInput['mode'][] = store.settings.acceptCheques
+    ? ['cash', 'transfer', 'cheque']
+    : ['cash', 'transfer'];
+
+  if (done) {
+    return (
+      <View style={[styles.screen, styles.center]}>
+        <Icon name="alert-decagram" size={64} color={color.warn} />
+        <Text style={styles.orderNo}>Receipt {done.receiptNo}</Text>
+        <Money amount={done.amount} size={font.stat + 8} bold />
+        <Text style={styles.centerSub}>
+          Recorded as an EXCEPTION — the owner has been told. Hand this cash
+          over tonight; the shop's khata moves when the owner confirms it.
+        </Text>
+        <View style={styles.ctaWrapWide}>
+          <PrimaryButton variant="quiet" label="Back to route" onPress={onDone} />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
+      <Card style={styles.warnCard}>
+        <View style={styles.rowCenter}>
+          <IconTile name="alert-decagram" tint={color.warn} bg={color.warnSoft} size={40} />
+          <View style={styles.rowText}>
+            <Text style={styles.shopName}>Exception — you are taking cash</Text>
+            <Text style={styles.shopMeta}>
+              Normally only the rider takes money. Use this ONLY when the shop
+              insists on paying you right now.
+            </Text>
+          </View>
+        </View>
+      </Card>
+
+      <Card>
+        <View style={styles.rowBetween}>
+          <Text style={styles.shopName}>{shop.name}</Text>
+          <View style={styles.owedCol}>
+            <Money amount={shop.outstanding} bold color={color.danger} />
+            <Text style={styles.owedLabel}>owed</Text>
+          </View>
+        </View>
+        <Text style={styles.fieldLabel}>How much is he handing you?</Text>
+        <TextInput
+          style={styles.input}
+          value={amountText}
+          onChangeText={t => setAmountText(t.replace(/[^0-9]/g, ''))}
+          keyboardType="number-pad"
+          placeholder="0"
+          placeholderTextColor={color.textFaint}
+        />
+        <View style={styles.rowWrap}>
+          <Chip small label={`All Rs ${shop.outstanding.toLocaleString()}`}
+            onPress={() => setAmountText(String(shop.outstanding))} />
+        </View>
+        <Text style={styles.fieldLabel}>How did the money come in?</Text>
+        <OptionBar
+          options={modes}
+          value={modes.includes(mode) ? mode : 'cash'}
+          render={m => (m === 'cash' ? 'Cash' : m === 'transfer' ? 'Bank transfer' : 'Cheque')}
+          onChange={setMode}
+        />
+      </Card>
+
+      <View style={styles.ctaWrap}>
+        <PrimaryButton
+          variant="cta"
+          icon="alert-decagram"
+          label={strings.money.cashExceptionButton}
+          disabled={amount <= 0 || busy}
+          disabledReason={busy ? 'Saving…' : 'Enter an amount'}
+          onPress={async () => {
+            setBusy(true);
+            try {
+              const r = await Promise.resolve(
+                store.collect({ shopId: shop.id, amount, mode, exception: true }),
+              );
+              setDone({ receiptNo: r.receiptNo, amount });
+            } catch (e) {
+              Alert.alert('Not recorded', e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+        <PrimaryButton variant="quiet" icon="arrow-left" label="Back — the rider collects" onPress={onDone} />
+      </View>
+    </ScrollView>
+  );
+}
 
 export function BookerRouteScreen() {
   const store = useStore();
   const due = store.shops.filter(s => s.active);
   const byArea = [...new Set(due.map(s => s.area))];
+  const [exceptionShopId, setExceptionShopId] = React.useState<string | null>(null);
+  const [shelfShopId, setShelfShopId] = React.useState<string | null>(null);
+  const [shelfText, setShelfText] = React.useState('');
+
+  const exceptionShop = exceptionShopId ? store.shops.find(s => s.id === exceptionShopId) : null;
+  if (exceptionShop) {
+    return <ExceptionCashScreen shop={exceptionShop} onDone={() => setExceptionShopId(null)} />;
+  }
+
+  const saveShelf = (shopId: string) => {
+    store.recordShelfCount(shopId, toInt(shelfText));
+    setShelfShopId(null);
+    setShelfText('');
+  };
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
       <Text style={styles.sub}>{due.length} shops due — grouped by area</Text>
       {byArea.map(area => (
         <View key={area}>
@@ -40,10 +169,35 @@ export function BookerRouteScreen() {
               </View>
               <Text style={styles.shopMeta}>
                 {shop.ownerName} • last visit {Math.round((Date.now() - (shop.lastVisitAt ?? 0)) / 86400_000)} days ago
+                {shop.lastShelfCount !== undefined ? ` • shelf ${shop.lastShelfCount}` : ''}
               </Text>
-              {shop.outstanding > 0 && !shop.collectionFlagged && (
-                <View style={styles.rowWrap}>
+              <View style={styles.rowWrap}>
+                {shop.outstanding > 0 && !shop.collectionFlagged && (
                   <Chip small danger label={strings.order.tellTheRider} onPress={() => store.flagCollection(shop.id)} />
+                )}
+                <Chip small label="Shelf count"
+                  onPress={() => { setShelfShopId(shelfShopId === shop.id ? null : shop.id); setShelfText(''); }} />
+                {shop.outstanding > 0 && (
+                  <Chip small label="Shop insists on paying me" onPress={() => setExceptionShopId(shop.id)} />
+                )}
+              </View>
+              {shelfShopId === shop.id && (
+                <View style={styles.shelfEditor}>
+                  <Text style={styles.fieldLabel}>Pieces on the shelf right now</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={shelfText}
+                    onChangeText={t => setShelfText(t.replace(/[^0-9]/g, ''))}
+                    keyboardType="number-pad"
+                    placeholder="0"
+                    placeholderTextColor={color.textFaint}
+                  />
+                  <View style={styles.rowWrap}>
+                    {shelfText !== '' && (
+                      <Chip small selected label="Save count" onPress={() => saveShelf(shop.id)} />
+                    )}
+                    <Chip small label="Cancel" onPress={() => { setShelfShopId(null); setShelfText(''); }} />
+                  </View>
                 </View>
               )}
               {shop.collectionFlagged && (
@@ -250,7 +404,7 @@ export function MyDayScreen() {
   const store = useStore();
   const mine = store.orders;
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent}>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
       <Text style={styles.sub}>{mine.length} orders booked</Text>
       {mine.map(o => (
         <Card key={o.id}>
@@ -274,6 +428,8 @@ export function MyDayScreen() {
           hint="Book your first order from the New Order tab."
         />
       )}
+
+      <RewardsSection />
     </ScrollView>
   );
 }
@@ -317,4 +473,17 @@ const styles = StyleSheet.create({
   centerSub: { fontSize: font.sub, color: color.textSub, textAlign: 'center', marginTop: space.s, marginBottom: space.m },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.s },
+
+  warnCard: { borderWidth: 1, borderColor: color.warn },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.m, marginBottom: 6 },
+  input: {
+    backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
+    borderWidth: 1, borderColor: color.border,
+    paddingHorizontal: space.m, height: 46,
+    fontSize: font.body, color: color.text,
+  },
+  shelfEditor: {
+    marginTop: space.m, paddingTop: space.xs,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
+  },
 });

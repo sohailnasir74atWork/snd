@@ -6,8 +6,8 @@
  */
 import React from 'react';
 import type {
-  CompanySettings, DayState, Employee, Expense, FixedCharge,
-  Order, OrderItem, Payment, Product, Shop,
+  CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
+  Order, OrderItem, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
 
 export interface BookOrderInput {
@@ -44,6 +44,19 @@ export interface ShopInput {
   address?: string; standingDiscountPercent?: number;
 }
 
+export interface RewardStaffInput {
+  name: string; phone: string; shopId: string;
+}
+
+export interface RewardClaimInput {
+  staffId: string;
+  pieces: number;
+  /** Mandatory shelf count taken on the same visit (FR-16). */
+  shelfCount: number;
+  /** Receipt-proof photo, base64 JPEG — uploaded before the claim lands. */
+  photoBase64?: string;
+}
+
 export interface StoreApi {
   // live data
   products: Product[];
@@ -62,6 +75,11 @@ export interface StoreApi {
   employees: Employee[];
   expenses: Expense[];
   fixedCharges: FixedCharge[];
+  /** Rewards (FR-16): admin + booker see these; rider gets []. */
+  rewardStaff: RewardStaff[];
+  rewardClaims: RewardClaim[];
+  /** Admin sees all float rows; staff see their own. */
+  floatMovements: FloatMovement[];
   ready: boolean;
 
   // field flows
@@ -88,9 +106,21 @@ export interface StoreApi {
   addExpense(e: Omit<Expense, 'id'>): void;
   addFixedCharge(c: Omit<FixedCharge, 'id'>): void;
 
+  // rewards (FR-16) + shelf counts
+  addRewardStaff(s: RewardStaffInput): void;
+  /** Uploads the proof photo first — throws if that fails, so no photo-less claims. */
+  submitRewardClaim(c: RewardClaimInput): Promise<{ claimNo: string }>;
+  /** Admin only (FR-16.5); approval also writes the float payout row. */
+  decideRewardClaim(id: string, decision: 'approved' | 'rejected'): void;
+  /** Admin hands cash float to staff / takes it back. */
+  moveFloat(staffId: string, amount: number, kind: 'issue' | 'return'): void;
+  recordShelfCount(shopId: string, count: number): void;
+
   // derived
   cashWithStaff(): number;
   cashConfirmed(): number;
+  /** issues − payouts − returns for one staff member's float. */
+  floatBalance(staffId: string): number;
 }
 
 export const StoreContext = React.createContext<StoreApi | null>(null);

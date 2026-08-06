@@ -65,6 +65,11 @@ export const strings = {
     done: 'Done',
     problem: 'Problem',
   },
+  rewards: {
+    section: 'Counter-staff rewards',
+    approve: 'Approve',
+    reject: 'Reject',
+  },
 } as const;
 
 export type Strings = typeof strings;

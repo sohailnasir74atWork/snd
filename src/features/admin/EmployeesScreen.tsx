@@ -6,11 +6,55 @@
 import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, ListRow, OptionBar, PrimaryButton, SectionLabel, Tag,
+  Card, Chip, EmptyState, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { Employee } from '../../data/models';
+
+const FLOAT_STEPS = [1000, 2000, 5000] as const;
+
+/**
+ * Reward float (FR-16): the owner hands staff cash to pay approved counter
+ * rewards from. Issue adds, "Take back" zeroes; approved claims subtract on
+ * their own as payout rows.
+ */
+function FloatSection() {
+  const store = useStore();
+  const staff = Object.entries(store.staffNames);
+  if (staff.length === 0) return null;
+  return (
+    <>
+      <SectionLabel>Cash float — rewards</SectionLabel>
+      <Card style={styles.tightCard}>
+        {staff.map(([uid, name], i) => {
+          const balance = store.floatBalance(uid);
+          return (
+            <View key={uid} style={[styles.empRow, i < staff.length - 1 && styles.rowDivider]}>
+              <ListRow
+                icon="wallet-outline"
+                title={name || 'Staff member'}
+                sub="holds this much of your cash"
+                right={<Money amount={balance} bold color={balance > 0 ? color.warn : undefined} />}
+              />
+              <View style={styles.actionRow}>
+                <View style={styles.spring} />
+                {FLOAT_STEPS.map(v => (
+                  <Chip key={v} small label={`+${v.toLocaleString()}`}
+                    onPress={() => store.moveFloat(uid, v, 'issue')} />
+                ))}
+                {balance > 0 && (
+                  <Chip small danger label="Take back"
+                    onPress={() => store.moveFloat(uid, balance, 'return')} />
+                )}
+              </View>
+            </View>
+          );
+        })}
+      </Card>
+    </>
+  );
+}
 
 const ROLE_LABELS: Record<Employee['role'], string> = {
   admin: 'Owner',
@@ -161,6 +205,8 @@ export function EmployeesScreen() {
           </Card>
         </>
       )}
+
+      <FloatSection />
 
       <Text style={styles.note}>
         They sign in with this exact Google address — nothing to set up.

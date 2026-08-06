@@ -12,6 +12,7 @@ const settings: CompanySettings = {
   defaultDeliveryDay: 'tomorrow',
   shopsPerDay: 30,
   rewardApprovalLimit: 5000,
+  rewardPerPiece: 40,
   acceptCheques: true,
   sendConfirmations: true,
   receiptFooter: 'Thank you for your business',

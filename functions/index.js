@@ -8,8 +8,9 @@
  *   - admission writes {companyId, role} into custom claims, so Firestore
  *     rules check the token, never a lookup (§4.3)
  *
- * Later weeks add here: exception pushes (§11), order profit on delivery
- * (FR-15.2), token revocation on removal (FR-1.9).
+ * Also here: uploadUrl (photo slots), push triggers (§11 — order assigned,
+ * cash exception, handover confirmed, reward claim). Still pending:
+ * server-side order profit (FR-15.2) — the app computes it client-side today.
  */
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { initializeApp } = require('firebase-admin/app');
@@ -237,10 +238,134 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
   return { status: 'removed', email };
 });
 
-// NOTE: the former `uploadUrl` callable was removed (audit blocker #5): it
-// returned the Bunny storage-zone password — full read/write/delete over the
-// zone shared with the publisher's other apps — to ANY signed-in employee.
-// No shipped screen captures photos yet; when proof photos land, uploads must
-// go through a server-side proxy that keeps the key on the server.
-// After deploying, remove the old function when the CLI asks, and rotate the
-// key: the Bunny zone password + `firebase functions:secrets:destroy BUNNY_KEY`.
+/**
+ * uploadUrl — permission to upload ONE photo (reward proof, logo, …).
+ *
+ * The path is chosen by the SERVER, so a phone can never write outside its
+ * own company's folder. The zone key travels only inside the one response.
+ * (Owner reviewed the exposure trade-off on 2026-08-06 and accepted it.)
+ *
+ * Key lives in Secret Manager: npx firebase-tools functions:secrets:set BUNNY_KEY
+ */
+const { defineSecret } = require('firebase-functions/params');
+const BUNNY_KEY = defineSecret('BUNNY_KEY');
+
+const BUNNY = {
+  storageHost: 'storage.bunnycdn.com',
+  storageZone: 'post-gag',
+  cdnBase: 'https://pull-gag.b-cdn.net',
+  prefix: 'snd',
+};
+
+const ALLOWED_KINDS = ['logo', 'product', 'shop', 'proof', 'reward', 'expense'];
+
+exports.uploadUrl = onCall({ region: 'asia-south1', secrets: [BUNNY_KEY] }, async (request) => {
+  const companyId = request.auth?.token?.companyId;
+  if (!companyId) throw new HttpsError('permission-denied', 'Sign in first.');
+
+  const kind = request.data?.kind;
+  if (!ALLOWED_KINDS.includes(kind)) {
+    throw new HttpsError('invalid-argument', 'Unknown photo kind.');
+  }
+
+  const now = new Date();
+  const yyyymm = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const file = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+  const path = `${BUNNY.prefix}/${companyId}/${kind}/${yyyymm}/${file}`;
+
+  return {
+    uploadUrl: `https://${BUNNY.storageHost}/${BUNNY.storageZone}/${path}`,
+    accessKey: BUNNY_KEY.value(),
+    publicUrl: `${BUNNY.cdnBase}/${path}`,
+  };
+});
+
+// ---------------------------------------------------------------------------
+// Push notifications (§11, FR-12.10) — the four moments that matter in the
+// field. Tokens live on users/{uid}.fcmToken (each phone writes its own; the
+// rules whitelist exactly that key). Every send is best-effort: a dead token
+// must never fail the write that triggered it.
+// ---------------------------------------------------------------------------
+const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
+const { getMessaging } = require('firebase-admin/messaging');
+
+async function tokenOf(companyId, uid) {
+  if (!uid) return null;
+  const snap = await db.doc(`companies/${companyId}/users/${uid}`).get();
+  return (snap.exists && snap.data().fcmToken) || null;
+}
+
+async function adminTokens(companyId) {
+  const snap = await db
+    .collection(`companies/${companyId}/users`)
+    .where('role', '==', 'admin')
+    .get();
+  return snap.docs.map((d) => d.data().fcmToken).filter(Boolean);
+}
+
+async function push(tokens, title, body) {
+  const list = (Array.isArray(tokens) ? tokens : [tokens]).filter(Boolean);
+  if (!list.length) return;
+  await getMessaging()
+    .sendEachForMulticast({ tokens: list, notification: { title, body } })
+    .catch((e) => console.warn('push failed', e.message));
+}
+
+const rs = (n) => `Rs ${Number(n || 0).toLocaleString('en-IN')}`;
+
+// New order → the rider it was assigned to (FR-6.1).
+exports.pushOrderAssigned = onDocumentCreated(
+  { document: 'companies/{c}/orders/{o}', region: 'asia-south1' },
+  async (event) => {
+    const o = event.data?.data();
+    if (!o || !o.assignedTo) return;
+    await push(
+      await tokenOf(event.params.c, o.assignedTo),
+      `New order — ${o.shopSnapshot?.name || 'shop'}`,
+      `${rs(o.orderedTotals?.grandTotal)} • deliver ${o.deliveryDay || 'today'}`,
+    );
+  },
+);
+
+// Booker forced-cash exception (FR-7.13) → every admin, immediately.
+exports.pushExceptionCash = onDocumentCreated(
+  { document: 'companies/{c}/payments/{p}', region: 'asia-south1' },
+  async (event) => {
+    const p = event.data?.data();
+    if (!p || p.exception !== true) return;
+    await push(
+      await adminTokens(event.params.c),
+      'Cash exception — needs your eye',
+      `Booker accepted ${rs(p.amount)} at a shop. Confirm it at the handover.`,
+    );
+  },
+);
+
+// Owner confirmed the handover → tell the staff member their day is closed.
+exports.pushHandoverConfirmed = onDocumentUpdated(
+  { document: 'companies/{c}/days/{staffId}', region: 'asia-south1' },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!after || before?.handoverConfirmed === true || after.handoverConfirmed !== true) return;
+    await push(
+      await tokenOf(event.params.c, event.params.staffId),
+      'Cash confirmed',
+      'The owner counted and confirmed your handover. All clear.',
+    );
+  },
+);
+
+// New reward claim → every admin (FR-16.5: only they can approve).
+exports.pushClaimPending = onDocumentCreated(
+  { document: 'companies/{c}/rewardClaims/{id}', region: 'asia-south1' },
+  async (event) => {
+    const cl = event.data?.data();
+    if (!cl || cl.status !== 'pending') return;
+    await push(
+      await adminTokens(event.params.c),
+      'Reward claim waiting',
+      `${cl.staffName || 'Counter staff'} — ${cl.pieces} pcs, ${rs(cl.amount)}${cl.overLimit ? ' (over limit)' : ''}`,
+    );
+  },
+);

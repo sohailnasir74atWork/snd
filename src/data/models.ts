@@ -29,6 +29,9 @@ export interface Shop {
   lastVisitAt?: number;
   lastOrderSummary?: { productId: string; qty: number }[];
   collectionFlagged?: boolean;
+  /** Shelf-count collection (FR-16 / §v1 scope) — recorded on booker visits. */
+  lastShelfCount?: number;
+  lastShelfCountAt?: number;
   active: boolean;
 }
 
@@ -82,6 +85,58 @@ export interface Payment {
   /** uid of the person who took the money ('rider'/'booker' in preview mode). */
   collectedBy: string;
   confirmed: boolean; // true once the owner confirms the handover (FR-7.11)
+  /**
+   * The booker's conspicuous forced-cash case (FR-7.13). Rules only let a
+   * booker create a payment with this flag; the khata moves at the owner's
+   * confirmation, never at collection.
+   */
+  exception?: boolean;
+  createdAt: number;
+}
+
+// ---- Rewards (FR-16): counter-staff program -------------------------------
+
+/** A shop's counter person registered for the per-piece reward. */
+export interface RewardStaff {
+  id: string;
+  name: string;
+  phone: string;
+  shopId: string;
+  active: boolean;
+  addedBy: string; // uid
+}
+
+export type RewardClaimStatus = 'pending' | 'approved' | 'rejected';
+
+/** One reward claim: pieces sold at the counter, backed by a receipt photo. */
+export interface RewardClaim {
+  id: string;
+  claimNo: string; // RWD-YYYY-NNNN (LOCAL-RWD-n until sync, FR-5.8)
+  provisional?: boolean;
+  staffId: string; // rewardStaff id
+  staffName: string; // snapshot for cards
+  shopId: string;
+  shopName: string;
+  pieces: number;
+  amount: number; // pieces × settings.rewardPerPiece at claim time
+  photoUrl?: string; // receipt-proof photo (mandatory at submission)
+  shelfCount: number; // mandatory shelf count on the claim visit
+  by: string; // booker uid — rules key his read on this
+  status: RewardClaimStatus;
+  overLimit: boolean; // amount > settings.rewardApprovalLimit at claim time
+  createdAt: number;
+  decidedAt?: number;
+  decidedBy?: string;
+}
+
+/** Owner-issued cash float and its spending (FR-16 float). Append-only. */
+export interface FloatMovement {
+  id: string;
+  staffId: string; // whose float
+  amount: number; // positive rupees
+  kind: 'issue' | 'return' | 'payout'; // payout = approved reward paid out
+  refClaimId?: string;
+  note?: string;
   createdAt: number;
 }
 
@@ -132,6 +187,8 @@ export interface CompanySettings {
   defaultDeliveryDay: 'today' | 'tomorrow';
   shopsPerDay: number;
   rewardApprovalLimit: number;
+  /** Rs paid to counter-staff per piece sold (FR-16) — Rs 40 by default. */
+  rewardPerPiece: number;
   acceptCheques: boolean;
   sendConfirmations: boolean;
   /** The only rider — orders assign themselves to him (FR-6.1). */

@@ -4,10 +4,10 @@
  */
 import React from 'react';
 import LinearGradient from 'react-native-linear-gradient';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
-  Card, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tile,
-  color, font, space,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Tile,
+  color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import { strings } from '../../i18n/strings';
@@ -31,10 +31,62 @@ export function AdminActionScreen() {
     }));
   const pendingTotal = pending.reduce((s, h) => s + h.amount, 0);
   const stillOut = withStaff - pendingTotal; // collected but not yet handed over
-  const calm = withStaff === 0 && oldCredit.length === 0 && problems.length === 0;
+  const exceptions = store.payments.filter(p => p.exception && !p.confirmed);
+  const claims = store.rewardClaims.filter(c => c.status === 'pending');
+  const calm = withStaff === 0 && oldCredit.length === 0 && problems.length === 0
+    && exceptions.length === 0 && claims.length === 0;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      {/* FR-7.13: the booker took cash — deliberately the loudest card here. */}
+      {exceptions.map(p => (
+        <Card key={p.id} style={styles.exceptionCard}>
+          <View style={styles.row}>
+            <IconTile name="alert-decagram" tint={color.danger} bg={color.dangerSoft} />
+            <View style={styles.rowBody}>
+              <Text style={styles.cardTitle}>Booker took cash — exception</Text>
+              <Text style={styles.meta}>
+                {store.staffNames[p.collectedBy] || 'Booker'} • {store.shops.find(s => s.id === p.shopId)?.name ?? 'shop'} • {p.receiptNo}
+              </Text>
+            </View>
+            <Money amount={p.amount} bold color={color.danger} />
+          </View>
+          <Text style={styles.meta}>
+            The shop's khata moves only when you confirm this at the handover.
+          </Text>
+        </Card>
+      ))}
+
+      {/* FR-16.5: reward claims — only you can approve. */}
+      {claims.map(c => (
+        <Card key={c.id}>
+          <View style={styles.row}>
+            <IconTile name="gift-outline" tint={color.warn} bg={color.warnSoft} />
+            <View style={styles.rowBody}>
+              <Text style={styles.cardTitle}>Reward claim — {c.staffName}</Text>
+              <Text style={styles.meta}>
+                {c.shopName} • {c.pieces} pcs • shelf {c.shelfCount} • {c.claimNo}
+              </Text>
+            </View>
+            <Money amount={c.amount} bold />
+          </View>
+          {c.overLimit && (
+            <View style={styles.tagRow}>
+              <Tag label="OVER LIMIT" tone="danger" />
+            </View>
+          )}
+          {c.photoUrl ? (
+            <Image source={{ uri: c.photoUrl }} style={styles.proofPhoto} resizeMode="cover" />
+          ) : null}
+          <View style={styles.chipRow}>
+            <Chip small selected label={strings.rewards.approve}
+              onPress={() => store.decideRewardClaim(c.id, 'approved')} />
+            <Chip small danger label={strings.rewards.reject}
+              onPress={() => store.decideRewardClaim(c.id, 'rejected')} />
+          </View>
+        </Card>
+      ))}
+
       {pending.map(h => (
         <Card key={h.staffId}>
           <View style={styles.row}>
@@ -186,4 +238,12 @@ const styles = StyleSheet.create({
   rowBody: { flex: 1, marginLeft: space.m },
   cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
   meta: { fontSize: font.sub, color: color.textSub, marginTop: space.xs },
+
+  exceptionCard: { borderWidth: 1, borderColor: color.danger },
+  tagRow: { flexDirection: 'row', marginTop: space.s },
+  proofPhoto: {
+    height: 160, borderRadius: radius.tile, marginTop: space.m,
+    backgroundColor: color.surfaceAlt,
+  },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: space.m },
 });
