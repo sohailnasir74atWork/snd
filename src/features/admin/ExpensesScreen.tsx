@@ -3,12 +3,13 @@
  * One-off expenses with a petrol double-count guard, plus fixed monthly charges.
  */
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
+import { Alert, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
 import {
   Card, Chip, EmptyState, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton,
   SectionLabel, Tag, Tile,
   color, font, radius, space,
 } from '../../components/ui';
+import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Expense } from '../../data/models';
 
@@ -48,6 +49,7 @@ function dayLabel(ts: number): string {
 
 export function ExpensesScreen() {
   const store = useStore();
+  const { isBusy, run } = useWriteGuard();
 
   // ---- one-off expense form ----
   const [amountText, setAmountText] = React.useState('');
@@ -85,16 +87,20 @@ export function ExpensesScreen() {
       setPetrolArmed(true); // first tap only arms — second tap saves
       return;
     }
-    store.addExpense({
-      amount,
-      category,
-      note: note.trim() ? note.trim() : undefined,
-      date: Date.now(),
+    // Guarded only around the write, so the arm/confirm pair above still needs
+    // its two taps; what this stops is the same expense being logged twice.
+    run('expense', () => {
+      store.addExpense({
+        amount,
+        category,
+        note: note.trim() ? note.trim() : undefined,
+        date: Date.now(),
+      });
+      setAmountText('');
+      setNote('');
+      setShowNote(false);
+      setPetrolArmed(false);
     });
-    setAmountText('');
-    setNote('');
-    setShowNote(false);
-    setPetrolArmed(false);
   };
 
   const pickCategory = (key: Expense['category']) => {
@@ -104,15 +110,18 @@ export function ExpensesScreen() {
 
   const saveFixedCharge = () => {
     if (!chargeLabel.trim() || chargeAmount <= 0) return;
-    store.addFixedCharge({ label: chargeLabel.trim(), amount: chargeAmount, active: true });
-    setChargeLabel('');
-    setChargeAmountText('');
+    // A duplicate here bills the same rent or salary every month, twice.
+    run('charge', () => {
+      store.addFixedCharge({ label: chargeLabel.trim(), amount: chargeAmount, active: true });
+      setChargeLabel('');
+      setChargeAmountText('');
+    });
   };
 
   const salaryPeople = store.employees.filter(e => e.role !== 'admin');
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <KeyboardScreen style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.subLine}>Log spending as it happens — fixed charges count themselves every month</Text>
 
       <View style={styles.tiles}>
@@ -133,7 +142,7 @@ export function ExpensesScreen() {
       <Card>
         <View style={styles.cardHead}>
           <IconTile name="receipt" size={34} />
-          <Text style={styles.cardHeadLabel}>Add an expense</Text>
+          <Text style={styles.cardHeadLabel} numberOfLines={2}>Add an expense</Text>
         </View>
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>How much did you spend?</Text>
@@ -183,7 +192,7 @@ export function ExpensesScreen() {
         {petrolWarning && (
           <Card style={styles.warnCard}>
             <View style={styles.warnRow}>
-              <Icon name="alert-outline" size={20} color={color.warn} />
+              <Icon name="alert-outline" size={18} color={color.warn} />
               <Text style={styles.warnText}>
                 Petrol is already a monthly fixed charge — add this as well?
               </Text>
@@ -196,6 +205,7 @@ export function ExpensesScreen() {
           onPress={saveExpense}
           disabled={amount <= 0}
           disabledReason="Amount first"
+          busy={isBusy('expense')}
         />
       </Card>
 
@@ -214,13 +224,15 @@ export function ExpensesScreen() {
               sub={e.note ? `${e.note} — ${dayLabel(e.date)}` : dayLabel(e.date)}
               right={<Money amount={e.amount} size={font.h2} bold />}
             />
+            {/* The row stays until the delete comes back down the listener,
+                so the chip goes dead rather than inviting a second confirm. */}
             <View style={styles.chipRow}>
               <Chip small danger label="Delete"
-                onPress={() =>
+                onPress={isBusy(`expense:${e.id}`) ? undefined : () =>
                   Alert.alert('Delete this expense?',
                     `${categoryLabel(e.category)} — Rs ${e.amount.toLocaleString()} (${dayLabel(e.date)})`, [
                       { text: 'Keep it', style: 'cancel' },
-                      { text: 'Delete', style: 'destructive', onPress: () => store.removeExpense(e.id) },
+                      { text: 'Delete', style: 'destructive', onPress: () => run(`expense:${e.id}`, () => store.removeExpense(e.id)) },
                     ])
                 } />
             </View>
@@ -257,13 +269,16 @@ export function ExpensesScreen() {
               }
             />
             <View style={styles.chipRow}>
+              {/* Pause/Resume is a flip: a second tap put the charge straight
+                  back the way it was. */}
               <Chip small label={c.active ? 'Pause' : 'Resume'}
-                onPress={() => store.updateFixedCharge(c.id, { active: !c.active })} />
+                onPress={isBusy(`charge:${c.id}`) ? undefined
+                  : () => run(`charge:${c.id}`, () => store.updateFixedCharge(c.id, { active: !c.active }))} />
               <Chip small danger label="Delete"
-                onPress={() =>
+                onPress={isBusy(`charge:${c.id}`) ? undefined : () =>
                   Alert.alert('Delete this charge?', `${c.label} — Rs ${c.amount.toLocaleString()}/month`, [
                     { text: 'Keep it', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: () => store.removeFixedCharge(c.id) },
+                    { text: 'Delete', style: 'destructive', onPress: () => run(`charge:${c.id}`, () => store.removeFixedCharge(c.id)) },
                   ])
                 } />
             </View>
@@ -274,7 +289,7 @@ export function ExpensesScreen() {
       <Card>
         <View style={styles.cardHead}>
           <IconTile name="calendar-refresh" size={34} />
-          <Text style={styles.cardHeadLabel}>Add a fixed charge</Text>
+          <Text style={styles.cardHeadLabel} numberOfLines={2}>Add a fixed charge</Text>
         </View>
         {salaryPeople.length > 0 && (
           <View style={styles.chipRow}>
@@ -317,9 +332,10 @@ export function ExpensesScreen() {
           onPress={saveFixedCharge}
           disabled={!chargeLabel.trim() || chargeAmount <= 0}
           disabledReason={!chargeLabel.trim() ? 'Name it first' : 'Amount first'}
+          busy={isBusy('charge')}
         />
       </Card>
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
@@ -336,21 +352,28 @@ const styles = StyleSheet.create({
     marginHorizontal: space.l, marginTop: 2, marginBottom: space.xs,
   },
 
-  cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s + 2 },
-  cardHeadLabel: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },
+  cardHeadLabel: {
+    flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '600',
+    color: color.text, marginLeft: space.m,
+  },
 
-  field: { marginBottom: space.s + 2 },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  field: { marginBottom: space.s },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
   optionStack: { gap: space.s },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: space.xs, marginHorizontal: -space.xs },
-  noteLink: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.s + 2 },
+  // Tighter than before, but minHeight holds the tap target at 40.
+  noteLink: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: space.s, minHeight: 40,
+  },
   noteLinkText: { fontSize: font.body, fontWeight: '600', color: color.primary, marginLeft: space.xs },
 
   warnCard: {
@@ -359,8 +382,9 @@ const styles = StyleSheet.create({
   },
   warnRow: { flexDirection: 'row', alignItems: 'center' },
   warnText: {
-    flex: 1, fontSize: font.sub + 1, fontWeight: '600',
+    flex: 1, minWidth: 0, fontSize: font.sub, fontWeight: '600',
     color: color.warn, marginLeft: space.s,
   },
-  rowRight: { alignItems: 'flex-end', gap: space.xs, marginLeft: space.s },
+  // The amount + tag column must not shrink when a charge label is long.
+  rowRight: { flexShrink: 0, alignItems: 'flex-end', gap: space.xs, marginLeft: space.s },
 });

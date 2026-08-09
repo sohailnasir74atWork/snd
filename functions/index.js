@@ -45,10 +45,20 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
     // flips from "Invited — not joined yet").
     if (!dir.uid) {
       await dirRef.update({ uid, joinedAt: FieldValue.serverTimestamp() });
-      // Keep the owner-facing mirror honest: "Invited" -> "joined".
+      // Keep the owner-facing mirror honest: "Invited" -> "joined". Write the
+      // WHOLE row, not just the flag: addEmployee's mirror write is a separate
+      // client call that can fail, and a bare {joined:true} merge CREATES a
+      // role-less document that the Employees screen cannot render. The
+      // directory is authoritative for name and role, so re-assert both.
       await db.doc(`companies/${dir.companyId}/employeeList/${email}`)
-        .set({ joined: true }, { merge: true })
-        .catch(() => {});
+        .set({
+          email,
+          name: dir.name || '',
+          role: dir.role,
+          joined: true,
+          removed: false,
+        }, { merge: true })
+        .catch((e) => console.warn('employeeList mirror', e.message));
       // Now that the rider has a uid, orders can be addressed to him (FR-6.1).
       if (dir.role === 'rider') {
         const sRef = db.doc(`companies/${dir.companyId}/settings/company`);
@@ -88,6 +98,24 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
       );
     }
     await getAuth().setCustomUserClaims(uid, { companyId: dir.companyId, role: dir.role });
+
+    // Came through "Create a new business" while already on a list.
+    // The directory is keyed by email, so one address belongs to one business
+    // and the typed name has nowhere to go. Admitting is right — this IS an
+    // employee — but the name used to be dropped in SILENCE: a rider who typed
+    // "Ali Traders" and pressed Create landed on the employer's rider screen
+    // with no hint of why the workspace they thought they had just made was
+    // not there. Same answer, said out loud.
+    if ((request.data?.createBusinessName || '').trim()) {
+      const cSnap = await db.doc(`companies/${dir.companyId}`).get();
+      return {
+        status: 'already_in_business',
+        companyId: dir.companyId,
+        role: dir.role,
+        name: dir.name || '',
+        businessName: (cSnap.exists && cSnap.data().businessName) || '',
+      };
+    }
     return { status: 'admitted', companyId: dir.companyId, role: dir.role, name: dir.name || '' };
   }
 
@@ -247,6 +275,24 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
   });
   if (target.uid) {
     await db.doc(`companies/${companyId}/users/${target.uid}`).set({ active: false }, { merge: true });
+    // Close his open day on the way out. He can no longer write his own day
+    // doc, and the owner's confirm card only renders for handedOver days — so
+    // cash he collected this morning would otherwise be unconfirmable by
+    // anyone, forever. The Admin SDK bypasses the rules that stop him.
+    //
+    // Only days that already EXIST are touched, so this never invents a card;
+    // yesterday is included because this clock is UTC and the business runs at
+    // UTC+5, where "today" starts five hours earlier.
+    const dayKey = (back) => new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+    const daySnaps = await db.getAll(
+      ...[dayKey(0), dayKey(1)].map((d) => db.doc(`companies/${companyId}/days/${target.uid}_${d}`)),
+    );
+    const openDays = daySnaps.filter((s) => s.exists && s.data().handoverConfirmed !== true);
+    if (openDays.length) {
+      const batch = db.batch();
+      openDays.forEach((s) => batch.set(s.ref, { handedOver: true }, { merge: true }));
+      await batch.commit().catch((e) => console.warn('close day on removal', e.message));
+    }
     await getAuth().setCustomUserClaims(target.uid, null);
     await getAuth().revokeRefreshTokens(target.uid); // FR-1.9
   }

@@ -3,11 +3,12 @@
  * writes through updateSettings immediately; there is no save button.
  */
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import {
   Card, IconTile, OptionBar, SectionLabel,
   color, font, radius, space,
 } from '../../components/ui';
+import { KeyboardScreen } from './AdminScreens';
 import { useStore } from '../../data/store';
 
 function RuleRow({ icon, label, children, last }: {
@@ -17,7 +18,7 @@ function RuleRow({ icon, label, children, last }: {
     <View style={[styles.ruleRow, !last && styles.ruleDivider]}>
       <View style={styles.ruleHead}>
         <IconTile name={icon} size={34} />
-        <Text style={styles.ruleLabel}>{label}</Text>
+        <Text style={styles.ruleLabel} numberOfLines={2}>{label}</Text>
       </View>
       {children}
     </View>
@@ -50,9 +51,11 @@ function SwitchRow({ icon, tint, bg, title, sub, value, onToggle, last }: {
   return (
     <Pressable onPress={onToggle} style={[styles.switchRow, !last && styles.ruleDivider]}>
       <IconTile name={icon} tint={tint} bg={bg} size={38} />
+      {/* The Switch is a fixed width, so the label column takes the slack and
+          wraps — long titles used to be squeezed against it. */}
       <View style={styles.switchText}>
-        <Text style={styles.switchTitle}>{title}</Text>
-        <Text style={styles.switchSub}>{sub}</Text>
+        <Text style={styles.switchTitle} numberOfLines={2}>{title}</Text>
+        <Text style={styles.switchSub} numberOfLines={2}>{sub}</Text>
       </View>
       <Switch
         value={value}
@@ -73,8 +76,11 @@ export function SettingsScreen() {
   const [address, setAddress] = React.useState(s.address ?? '');
   const [phone, setPhone] = React.useState(s.phone ?? '');
 
+  // Nothing on this screen needs a busy guard: there is no save button, and
+  // every control writes the whole value it shows, so a repeated tap writes
+  // the same settings doc again rather than a second one.
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <KeyboardScreen style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.subLine}>Changes save on their own — nothing else to press</Text>
 
       <SectionLabel>Company</SectionLabel>
@@ -189,7 +195,7 @@ export function SettingsScreen() {
           last
         />
       </Card>
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
@@ -203,22 +209,25 @@ const styles = StyleSheet.create({
   tightCard: { paddingVertical: space.xs },
 
   field: { paddingVertical: space.s },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
 
-  ruleRow: { paddingVertical: space.m },
+  ruleRow: { paddingVertical: space.s },
   ruleDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  ruleHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s + 2 },
-  ruleLabel: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
+  ruleHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },
+  ruleLabel: {
+    flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '600',
+    color: color.text, marginLeft: space.m,
+  },
 
-
-  switchRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.m },
-  switchText: { flex: 1, marginHorizontal: 12 },
+  // 38pt icon tile + 6pt top and bottom keeps the row a 50pt tap target.
+  switchRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.s },
+  switchText: { flex: 1, minWidth: 0, marginHorizontal: space.m },
   switchTitle: { fontSize: font.body, fontWeight: '700', color: color.text },
-  switchSub: { fontSize: font.tiny + 1, color: color.textSub, marginTop: 2 },
+  switchSub: { fontSize: font.tiny + 1, color: color.textSub, marginTop: 1 },
 });

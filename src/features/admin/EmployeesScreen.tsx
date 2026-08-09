@@ -4,11 +4,12 @@
  * never be removed (the button says why instead of erroring).
  */
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Card, Chip, EmptyState, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
+import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Employee } from '../../data/models';
 
@@ -21,6 +22,9 @@ const FLOAT_STEPS = [1000, 2000, 5000] as const;
  */
 function FloatSection() {
   const store = useStore();
+  // Float chips hand out real cash and the row stays put after the write, so
+  // this is the screen's worst double-tap: +1,000 twice issued Rs 2,000.
+  const { isBusy, run } = useWriteGuard();
   const staff = Object.entries(store.staffNames);
   if (staff.length === 0) return null;
   return (
@@ -41,11 +45,15 @@ function FloatSection() {
                 <View style={styles.spring} />
                 {FLOAT_STEPS.map(v => (
                   <Chip key={v} small label={`+${v.toLocaleString()}`}
-                    onPress={() => store.moveFloat(uid, v, 'issue')} />
+                    onPress={isBusy(`issue:${uid}:${v}`) ? undefined
+                      : () => run(`issue:${uid}:${v}`, () => store.moveFloat(uid, v, 'issue'))} />
                 ))}
                 {balance > 0 && (
+                  // Keyed on the balance too: taking back the same figure twice
+                  // drove the float negative.
                   <Chip small danger label="Take back"
-                    onPress={() => store.moveFloat(uid, balance, 'return')} />
+                    onPress={isBusy(`return:${uid}:${balance}`) ? undefined
+                      : () => run(`return:${uid}:${balance}`, () => store.moveFloat(uid, balance, 'return'))} />
                 )}
               </View>
             </View>
@@ -70,6 +78,10 @@ export function EmployeesScreen() {
   const [email, setEmail] = React.useState('');
   const [name, setName] = React.useState('');
   const [role, setRole] = React.useState<Employee['role']>('booker');
+  // Both of these call a cloud function, so there is a real round-trip to
+  // wait on — and a real window in which a second tap called it again.
+  const [saving, setSaving] = React.useState(false);
+  const [removing, setRemoving] = React.useState<string | null>(null);
 
   const adminCount = store.employees.filter(e => e.role === 'admin').length;
   const canSave = EMAIL_RE.test(email) && name.trim().length > 0;
@@ -82,22 +94,32 @@ export function EmployeesScreen() {
   };
 
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
       await store.addEmployee(email, name.trim(), role);
       resetForm();
     } catch (e) {
       Alert.alert('Could not add', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false); // always restore, including on the error path
     }
   };
 
-  const remove = (emp: Employee) => {
-    store.removeEmployee(emp.email).catch(e => {
+  const remove = async (emp: Employee) => {
+    if (removing) return;
+    setRemoving(emp.email);
+    try {
+      await store.removeEmployee(emp.email);
+    } catch (e) {
       Alert.alert('Could not remove', e instanceof Error ? e.message : String(e));
-    });
+    } finally {
+      setRemoving(null); // always restore, including on the error path
+    }
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <KeyboardScreen style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.subLine}>They sign in with Google — invite by email</Text>
 
       {store.employees.length === 0 && (
@@ -119,11 +141,13 @@ export function EmployeesScreen() {
                 <View key={emp.email} style={[styles.empRow, !last && styles.rowDivider]}>
                   <ListRow
                     icon="account-outline"
-                    title={emp.name}
+                    title={emp.name || emp.email}
                     sub={emp.email}
                     right={
                       <View style={styles.tagCol}>
-                        <Tag label={ROLE_LABELS[emp.role].toUpperCase()} tone="primary" />
+                        {/* A mirror doc can arrive without a role (see the
+                            employeeList listener) — never throw on render. */}
+                        <Tag label={(ROLE_LABELS[emp.role] || 'Staff').toUpperCase()} tone="primary" />
                         {emp.joined
                           ? <Tag label="JOINED" tone="success" />
                           : <Tag label="INVITED" tone="warn" />}
@@ -134,7 +158,9 @@ export function EmployeesScreen() {
                     <View style={styles.spring} />
                     {isOnlyAdmin
                       ? <Chip small label="Add another admin first" />
-                      : <Chip small label="Remove" danger onPress={() => remove(emp)} />}
+                      : <Chip small danger
+                          label={removing === emp.email ? 'Removing…' : 'Remove'}
+                          onPress={removing ? undefined : () => remove(emp)} />}
                   </View>
                 </View>
               );
@@ -197,6 +223,8 @@ export function EmployeesScreen() {
               icon="check"
               disabled={!canSave}
               disabledReason="Email and name first"
+              busy={saving}
+              busyLabel="Adding…"
               onPress={() => { void save(); }}
             />
             <View style={styles.chipRow}>
@@ -211,7 +239,7 @@ export function EmployeesScreen() {
       <Text style={styles.note}>
         They sign in with this exact Google address — nothing to set up.
       </Text>
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
@@ -226,16 +254,18 @@ const styles = StyleSheet.create({
 
   empRow: { paddingVertical: space.xs },
   rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  tagCol: { alignItems: 'flex-end', gap: space.xs },
+  // The role/status tags sit beside a long Gmail address, so they hold their
+  // width and the address wraps in the ListRow body instead.
+  tagCol: { flexShrink: 0, alignItems: 'flex-end', gap: space.xs },
   actionRow: { flexDirection: 'row', alignItems: 'center' },
-  spring: { flex: 1 },
+  spring: { flex: 1, minWidth: 0 },
 
   field: { paddingVertical: space.s },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
 
@@ -243,6 +273,6 @@ const styles = StyleSheet.create({
   ctaWrap: { paddingHorizontal: space.l },
   note: {
     fontSize: font.sub, color: color.textSub, textAlign: 'center',
-    marginTop: space.l, marginHorizontal: space.xl,
+    marginTop: space.m, marginHorizontal: space.xl,
   },
 });

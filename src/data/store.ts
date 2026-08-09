@@ -6,8 +6,8 @@
  */
 import React from 'react';
 import type {
-  CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
-  Order, OrderItem, Payment, Product, RewardClaim, RewardStaff, Shop,
+  Area, CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
+  Order, OrderItem, Payment, Product, RewardClaim, RewardStaff, Shop, ShopLocation,
 } from './models';
 
 export interface BookOrderInput {
@@ -44,6 +44,15 @@ export interface ShopInput {
   address?: string; standingDiscountPercent?: number;
   /** Pre-app paper-khata debt, entered once at creation (owner only). */
   openingBalance?: number;
+  /**
+   * Both optional: a shop registered at the counter with no signal still gets
+   * created, and the pin and the photo are added on the next visit.
+   *
+   * The raw fix only — who saved it and when are stamped by the store, which
+   * is the layer that knows whose phone this is.
+   */
+  location?: Omit<ShopLocation, 'savedAt' | 'savedBy'>;
+  photoUrl?: string;
 }
 
 export interface RewardStaffInput {
@@ -63,6 +72,8 @@ export interface StoreApi {
   // live data
   products: Product[];
   shops: Shop[];
+  /** Every round the owner has defined. Pickers show the active ones. */
+  areas: Area[];
   orders: Order[];
   payments: Payment[];
   day: DayState;
@@ -83,6 +94,14 @@ export interface StoreApi {
   /** Admin sees all float rows; staff see their own. */
   floatMovements: FloatMovement[];
   ready: boolean;
+  /**
+   * Orders and payments written on this phone that have not reached the
+   * server yet. Signing out destroys them, so the sign-out flow refuses
+   * while this is above zero.
+   */
+  pendingWrites: number;
+  /** Wait for the offline queue to drain. Resolves false if it did not in time. */
+  flushPendingWrites(timeoutMs?: number): Promise<boolean>;
 
   // field flows
   bookOrder(input: BookOrderInput): Promise<Order> | Order;
@@ -118,6 +137,19 @@ export interface StoreApi {
   adjustStock(productId: string, delta: number, note: string): void;
   addShop(s: ShopInput): void;
   updateShop(id: string, patch: Partial<Shop>): void;
+  /**
+   * Pin an existing shop. Separate from updateShop because the store is what
+   * knows who is standing there — and because the rules let a RIDER write
+   * exactly these two keys and nothing else, so the call sites must not be
+   * able to smuggle another field along.
+   */
+  setShopLocation(shopId: string, fix: { lat: number; lng: number; accuracyM: number }): void;
+  setShopPhoto(shopId: string, photoUrl: string): void;
+  /** Owner-only: the area list is what every shop form is allowed to pick from. */
+  addArea(name: string): void;
+  /** Renames the area AND every shop still filed under the old name. */
+  renameArea(id: string, name: string): void;
+  setAreaActive(id: string, active: boolean): void;
   /** Manual khata correction (returns, bounced cheques, paper-era fixes). */
   adjustShopBalance(shopId: string, delta: number, note: string): void;
   /**
@@ -136,6 +168,13 @@ export interface StoreApi {
 
   // rewards (FR-16) + shelf counts
   addRewardStaff(s: RewardStaffInput): void;
+  /**
+   * Someone left the counter, or was added by mistake.
+   *
+   * Deactivated, never deleted: their past claims name them, and a claim
+   * pointing at a staff id that no longer exists is an unreadable payout.
+   */
+  setRewardStaffActive(id: string, active: boolean): void;
   /** Uploads the proof photo first — throws if that fails, so no photo-less claims. */
   submitRewardClaim(c: RewardClaimInput): Promise<{ claimNo: string }>;
   /** Admin only (FR-16.5); approval also writes the float payout row. */

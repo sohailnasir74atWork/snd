@@ -86,6 +86,14 @@ service cloud.firestore {
         allow read, write: if isAdmin(companyId);
       }
 
+      // The round list. Everyone reads it — it is what every shop form picks
+      // from — and only the owner writes it, which is the whole point of
+      // taking area creation out of the shop form.
+      match /areas/{areaId} {
+        allow read: if inCompany(companyId);
+        allow write: if isAdmin(companyId);
+      }
+
       match /shops/{shopId} {
         allow read: if inCompany(companyId);
         allow create: if isAdmin(companyId) || isBooker(companyId);
@@ -101,7 +109,16 @@ service cloud.firestore {
                                        .affectedKeys().hasOnly(['collectionFlagged', 'collectionFlaggedAt',
                                                                 'collectionFlaggedBy',
                                                                 'outstanding', 'oldestUnpaidAt', 'oldestUnpaidAmount',
-                                                                'lastShelfCount', 'lastShelfCountAt']));
+                                                                'lastShelfCount', 'lastShelfCountAt']))
+                              // The rider is at more shop doors in a day than
+                              // anyone, so the rider is how the map gets filled
+                              // in. A SEPARATE hasOnly rather than two more
+                              // names on the list above: keeping the clauses
+                              // apart is what stops a pin write from also
+                              // carrying a balance key.
+                              || (isRider(companyId)
+                                  && request.resource.data.diff(resource.data)
+                                       .affectedKeys().hasOnly(['location', 'photoUrl']));
         allow delete: if false; // deactivate, never delete
       }
 

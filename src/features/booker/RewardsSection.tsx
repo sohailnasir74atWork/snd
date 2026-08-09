@@ -38,6 +38,11 @@ export function RewardsSection() {
   const [shelfText, setShelfText] = React.useState('');
   const [photo, setPhoto] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [photoBusy, setPhotoBusy] = React.useState(false);
+  // addRewardStaff writes a NEW document every call and returns void — there is
+  // nothing to await, so the second tap is stopped here. Reset when the form
+  // reopens so the next person can still be registered.
+  const savingStaffRef = React.useRef(false);
 
   // A booker's float listener only carries his own rows, so the sum IS his balance.
   const float = store.floatMovements
@@ -54,7 +59,9 @@ export function RewardsSection() {
   };
 
   const submit = async () => {
-    if (!claimStaff || !photo) return;
+    // The photo upload plus the claim write take seconds on market signal — a
+    // second tap here sent the same reward money twice.
+    if (!claimStaff || !photo || busy) return;
     setBusy(true);
     try {
       const r = await store.submitRewardClaim({
@@ -67,8 +74,30 @@ export function RewardsSection() {
         'Claim not sent',
         `The receipt photo could not be uploaded — you need signal for a claim.\n\n${e instanceof Error ? e.message : String(e)}`,
       );
+    } finally {
       setBusy(false);
     }
+  };
+
+  const takePhoto = async () => {
+    // The camera takes a moment to open; a second tap launched it twice.
+    if (photoBusy) return;
+    setPhotoBusy(true);
+    try {
+      const b64 = await capturePhotoBase64();
+      if (b64) setPhoto(b64);
+    } catch (e) {
+      Alert.alert('Camera', e instanceof Error ? e.message : String(e));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const registerStaff = () => {
+    if (savingStaffRef.current) return;
+    savingStaffRef.current = true;
+    store.addRewardStaff({ name: name.trim(), phone: phone.trim(), shopId: shopId! });
+    setName(''); setPhone(''); setShopId(null); setRegistering(false);
   };
 
   return (
@@ -89,7 +118,8 @@ export function RewardsSection() {
         <Card style={styles.tightCard}>
           <View style={styles.formHead}>
             <IconTile name="gift-outline" size={34} />
-            <Text style={styles.formTitle}>{claimStaff.name} — {store.shops.find(s => s.id === claimStaff.shopId)?.name ?? ''}</Text>
+            {/* Two names joined by a dash — the longest string on the card. */}
+            <Text style={styles.formTitle} numberOfLines={2}>{claimStaff.name} — {store.shops.find(s => s.id === claimStaff.shopId)?.name ?? ''}</Text>
           </View>
 
           <Text style={styles.fieldLabel}>Pieces he sold (check the receipts)</Text>
@@ -109,8 +139,10 @@ export function RewardsSection() {
           </View>
           {pieces > 0 && (
             <View style={styles.amountRow}>
-              <Text style={styles.meta}>{pieces} × Rs {perPiece}</Text>
-              <Money amount={amount} bold color={amount > store.settings.rewardApprovalLimit ? color.warn : undefined} />
+              <Text style={[styles.meta, styles.flexLabel]} numberOfLines={2}>{pieces} × Rs {perPiece}</Text>
+              <View style={styles.valueRight}>
+                <Money amount={amount} bold color={amount > store.settings.rewardApprovalLimit ? color.warn : undefined} />
+              </View>
             </View>
           )}
           {amount > store.settings.rewardApprovalLimit && (
@@ -139,14 +171,7 @@ export function RewardsSection() {
                 small
                 selected
                 label="Take the photo"
-                onPress={async () => {
-                  try {
-                    const b64 = await capturePhotoBase64();
-                    if (b64) setPhoto(b64);
-                  } catch (e) {
-                    Alert.alert('Camera', e instanceof Error ? e.message : String(e));
-                  }
-                }}
+                onPress={photoBusy ? undefined : () => { void takePhoto(); }}
               />
             </View>
           )}
@@ -154,9 +179,11 @@ export function RewardsSection() {
           <PrimaryButton
             variant="cta"
             icon="check-circle-outline"
-            label={busy ? 'Sending…' : `Claim Rs ${amount.toLocaleString()}`}
-            disabled={!canClaim || busy}
-            disabledReason={busy ? 'Sending…' : 'Pieces, shelf count and the photo first'}
+            label={`Claim Rs ${amount.toLocaleString()}`}
+            busy={busy}
+            busyLabel="Sending…"
+            disabled={!canClaim}
+            disabledReason="Pieces, shelf count and the photo first"
             onPress={() => { void submit(); }}
           />
           <View style={styles.rowWrap}>
@@ -189,7 +216,7 @@ export function RewardsSection() {
       {!claimStaff && !registering && (
         <View style={styles.ctaWrap}>
           <PrimaryButton icon="account-plus-outline" variant="quiet" label="Register counter staff"
-            onPress={() => setRegistering(true)} />
+            onPress={() => { savingStaffRef.current = false; setRegistering(true); }} />
         </View>
       )}
       {!claimStaff && registering && (
@@ -216,10 +243,7 @@ export function RewardsSection() {
             label="Register"
             disabled={!canRegister}
             disabledReason="Name, phone and shop first"
-            onPress={() => {
-              store.addRewardStaff({ name: name.trim(), phone: phone.trim(), shopId: shopId! });
-              setName(''); setPhone(''); setShopId(null); setRegistering(false);
-            }}
+            onPress={registerStaff}
           />
           <View style={styles.rowWrap}>
             <Chip small label="Cancel" onPress={() => setRegistering(false)} />
@@ -234,15 +258,19 @@ export function RewardsSection() {
           {[...store.rewardClaims].sort((a, b) => b.createdAt - a.createdAt).map(c => (
             <Card key={c.id}>
               <View style={styles.rowBetween}>
-                <Text style={styles.claimTitle}>{c.staffName} • {c.pieces} pcs</Text>
-                <Money amount={c.amount} bold />
+                <Text style={[styles.claimTitle, styles.flexLabel]} numberOfLines={2}>{c.staffName} • {c.pieces} pcs</Text>
+                <View style={styles.valueRight}>
+                  <Money amount={c.amount} bold />
+                </View>
               </View>
               <View style={styles.metaRow}>
                 <Tag
                   label={c.status.toUpperCase()}
                   tone={c.status === 'approved' ? 'success' : c.status === 'rejected' ? 'danger' : 'warn'}
                 />
-                <Text style={styles.meta}>{c.claimNo} • {c.shopName}</Text>
+                {/* Claim no + shop name sat beside the status Tag and was
+                    running off the card — it takes the slack now. */}
+                <Text style={[styles.meta, styles.flexLabel]} numberOfLines={2}>{c.claimNo} • {c.shopName}</Text>
               </View>
             </Card>
           ))}
@@ -255,13 +283,13 @@ export function RewardsSection() {
 const styles = StyleSheet.create({
   tightCard: { paddingVertical: space.xs },
   formHead: { flexDirection: 'row', alignItems: 'center', paddingTop: space.s, marginBottom: space.xs },
-  formTitle: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10, flexShrink: 1 },
+  formTitle: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: space.m, flex: 1, minWidth: 0 },
 
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.m, marginBottom: 6 },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.s + 2, marginBottom: space.s },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
 
@@ -269,13 +297,18 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.s },
   meta: { fontSize: font.sub, color: color.textSub },
-  claimTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
+  claimTitle: { fontSize: font.body, fontWeight: '700', color: color.text },
+
+  // Flexible label beside a fixed value or Tag: the label wraps, the number
+  // keeps its width so money never breaks mid-figure.
+  flexLabel: { flex: 1, minWidth: 0 },
+  valueRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
 
   amountRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.s },
   overLimit: { fontSize: font.sub, fontWeight: '600', color: color.warn, marginTop: space.xs },
 
-  photoRow: { flexDirection: 'row', alignItems: 'center', gap: space.m, marginTop: space.xs },
-  photoThumb: { width: 84, height: 84, borderRadius: radius.tile, backgroundColor: color.surfaceAlt },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.xs },
+  photoThumb: { width: 72, height: 72, borderRadius: radius.tile, backgroundColor: color.surfaceAlt },
 
   ctaWrap: { paddingHorizontal: space.l, marginTop: space.s },
 });

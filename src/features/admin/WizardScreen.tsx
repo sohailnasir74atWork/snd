@@ -5,12 +5,13 @@
  * safety prompt (a lost account must have a way back in).
  */
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
+import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Employee, Product } from '../../data/models';
 import { digitsOnly } from '../../lib/phone';
@@ -35,7 +36,7 @@ function CardHead({ icon, label }: { icon: string; label: string }) {
   return (
     <View style={styles.cardHead}>
       <IconTile name={icon} size={34} />
-      <Text style={styles.cardHeadLabel}>{label}</Text>
+      <Text style={styles.cardHeadLabel} numberOfLines={2}>{label}</Text>
     </View>
   );
 }
@@ -50,10 +51,14 @@ export function WizardScreen({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <ScrollView
+    // Every step of this wizard is a form, and it sits outside the navigator,
+    // so it carries its own insets as well as the keyboard wrapper.
+    <KeyboardScreen
       style={styles.screen}
-      contentContainerStyle={{ paddingTop: insets.top + space.s, paddingBottom: insets.bottom + space.xl }}
-      keyboardShouldPersistTaps="handled">
+      contentContainerStyle={{
+        paddingTop: insets.top + space.s,
+        paddingBottom: insets.bottom + space.xl + space.l,
+      }}>
       <View style={styles.headerRow}>
         <View style={styles.dots}>
           {STEP_META.map((_, i) => (
@@ -72,7 +77,7 @@ export function WizardScreen({ onDone }: { onDone: () => void }) {
       {step === 1 && <ProductsStep onNext={next} />}
       {step === 2 && <ShopsStep onNext={next} />}
       {step === 3 && <TeamStep onFinish={onDone} />}
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
@@ -80,6 +85,7 @@ export function WizardScreen({ onDone }: { onDone: () => void }) {
 
 function CompanyStep({ onNext }: { onNext: () => void }) {
   const store = useStore();
+  const { isBusy, run } = useWriteGuard();
   const [brandName, setBrandName] = React.useState(store.settings.brandName);
   const [address, setAddress] = React.useState(store.settings.address ?? '');
   const [phone, setPhone] = React.useState(store.settings.phone ?? '');
@@ -126,14 +132,15 @@ function CompanyStep({ onNext }: { onNext: () => void }) {
           icon="arrow-right"
           disabled={brandName.trim() === ''}
           disabledReason="Type your business name first"
-          onPress={() => {
+          busy={isBusy('company')}
+          onPress={() => run('company', () => {
             store.updateSettings({
               brandName: brandName.trim(),
               address: address.trim() || undefined,
               phone: phone.trim() || undefined,
             });
             onNext();
-          }}
+          })}
         />
       </View>
     </View>
@@ -148,6 +155,7 @@ const STOCK_CHIPS = [12, 50, 100];
 
 function ProductsStep({ onNext }: { onNext: () => void }) {
   const store = useStore();
+  const { isBusy, run } = useWriteGuard();
   const [name, setName] = React.useState('');
   const [code, setCode] = React.useState('');
   const [unit, setUnit] = React.useState<Product['unit']>('pc');
@@ -162,18 +170,22 @@ function ProductsStep({ onNext }: { onNext: () => void }) {
     : toInt(tradePrice) <= 0 ? 'Enter the price to shop'
     : undefined;
 
+  // The form only clears on the next render, so without the guard an eager
+  // double tap added the product — and its opening stock — twice.
   const add = () => {
-    store.addProduct({
-      name: name.trim(),
-      code: code.trim(),
-      unit,
-      packSize: packSize.trim() === '' ? '1 pc' : packSize.trim(),
-      tradePrice: toInt(tradePrice),
-      mrp: toInt(mrp) > 0 ? toInt(mrp) : toInt(tradePrice),
-      stockQty: toInt(stockQty),
+    run('product', () => {
+      store.addProduct({
+        name: name.trim(),
+        code: code.trim(),
+        unit,
+        packSize: packSize.trim() === '' ? '1 pc' : packSize.trim(),
+        tradePrice: toInt(tradePrice),
+        mrp: toInt(mrp) > 0 ? toInt(mrp) : toInt(tradePrice),
+        stockQty: toInt(stockQty),
+      });
+      setName(''); setCode(''); setUnit('pc'); setPackSize('1 pc');
+      setTradePrice(''); setMrp(''); setStockQty('0');
     });
-    setName(''); setCode(''); setUnit('pc'); setPackSize('1 pc');
-    setTradePrice(''); setMrp(''); setStockQty('0');
   };
 
   return (
@@ -265,6 +277,8 @@ function ProductsStep({ onNext }: { onNext: () => void }) {
           variant="primary"
           disabled={disabledReason !== undefined}
           disabledReason={disabledReason}
+          busy={isBusy('product')}
+          busyLabel="Adding…"
           onPress={add}
         />
       </Card>
@@ -299,7 +313,11 @@ function ProductsStep({ onNext }: { onNext: () => void }) {
 
 function ShopsStep({ onNext }: { onNext: () => void }) {
   const store = useStore();
-  const existingAreas = [...new Set(store.shops.map(s => s.area))];
+  const { isBusy, run } = useWriteGuard();
+  const existingAreas = [...new Set([
+    ...store.areas.filter(a => a.active).map(a => a.name),
+    ...store.shops.map(s => s.area),
+  ].filter(a => a.trim().length > 0))];
   const [name, setName] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [area, setArea] = React.useState(() => existingAreas[0] ?? 'Main area');
@@ -310,13 +328,20 @@ function ShopsStep({ onNext }: { onNext: () => void }) {
     : digitsOnly(phone).length < 10 ? "Enter the shop's mobile number"
     : undefined;
 
+  // Same as the product step: the guard is what stops a duplicate shop.
+  //
+  // This is the one place an area may still be typed, because it is the one
+  // place there is nothing to pick from: first run, no shops, no areas. The
+  // typed name is registered as a real area on the way past, so the owner
+  // arrives at More → Areas with the rounds already listed rather than a blank
+  // screen and every shop unfileable.
   const add = () => {
-    store.addShop({
-      name: name.trim(),
-      phone: phone.trim(),
-      area: area.trim() === '' ? 'Main area' : area.trim(),
+    run('shop', () => {
+      const areaName = area.trim() === '' ? 'Main area' : area.trim();
+      store.addArea(areaName); // no-ops when it already exists
+      store.addShop({ name: name.trim(), phone: phone.trim(), area: areaName });
+      setName(''); setPhone('');
     });
-    setName(''); setPhone('');
   };
 
   return (
@@ -347,7 +372,8 @@ function ShopsStep({ onNext }: { onNext: () => void }) {
         {!showMore ? (
           <Pressable onPress={() => setShowMore(true)} hitSlop={8}>
             <View style={styles.moreLink}>
-              <Text style={styles.moreLinkText}>More — area: {area}</Text>
+              {/* A typed area name can be long — it wraps, the chevron stays put. */}
+              <Text style={styles.moreLinkText} numberOfLines={2}>More — area: {area}</Text>
               <Icon name="chevron-down" size={18} color={color.primary} />
             </View>
           </Pressable>
@@ -374,6 +400,8 @@ function ShopsStep({ onNext }: { onNext: () => void }) {
           variant="primary"
           disabled={disabledReason !== undefined}
           disabledReason={disabledReason}
+          busy={isBusy('shop')}
+          busyLabel="Adding…"
           onPress={add}
         />
       </Card>
@@ -423,13 +451,16 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
   const adminCount = store.employees.filter(e => e.role === 'admin').length;
   const emailOk = email.includes('@') && email.includes('.');
 
+  // disabledReason is back to explaining what is still missing — "Adding…" is
+  // now the busy label, so the button spins instead of pretending to be
+  // unfinished.
   const disabledReason =
-    busy ? 'Adding…'
-    : !emailOk ? 'Enter their Gmail address first'
+    !emailOk ? 'Enter their Gmail address first'
     : name.trim() === '' ? 'Type their name first'
     : undefined;
 
   const add = async () => {
+    if (busy) return; // addEmployee calls a cloud function — never call it twice
     setBusy(true);
     try {
       await store.addEmployee(email.trim().toLowerCase(), name.trim(), role);
@@ -446,9 +477,9 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
       {adminCount < 2 ? (
         <Card style={styles.promptWarn}>
           <View style={styles.promptRow}>
-            <Icon name="shield-account-outline" size={28} color={color.warn} />
+            <Icon name="shield-account-outline" size={24} color={color.warn} />
             <View style={styles.promptText}>
-              <Text style={styles.promptTitle}>Add a second Admin</Text>
+              <Text style={styles.promptTitle} numberOfLines={2}>Add a second Admin</Text>
               <Text style={styles.promptBody}>
                 A partner or family member. If you ever lose your account, they are the way back in.
               </Text>
@@ -458,9 +489,9 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
       ) : (
         <Card style={styles.promptOk}>
           <View style={styles.promptRow}>
-            <Icon name="check-circle-outline" size={28} color={color.success} />
+            <Icon name="check-circle-outline" size={24} color={color.success} />
             <View style={styles.promptText}>
-              <Text style={[styles.promptTitle, { color: color.success }]}>You have a second Admin</Text>
+              <Text style={[styles.promptTitle, { color: color.success }]} numberOfLines={2}>You have a second Admin</Text>
               <Text style={styles.promptBody}>If you ever lose your account, they are the way back in.</Text>
             </View>
           </View>
@@ -506,6 +537,8 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
           variant="primary"
           disabled={disabledReason !== undefined}
           disabledReason={disabledReason}
+          busy={busy}
+          busyLabel="Adding…"
           onPress={() => { void add(); }}
         />
       </Card>
@@ -561,29 +594,34 @@ const styles = StyleSheet.create({
   h1: { fontSize: font.h1, fontWeight: '800', color: color.text, marginHorizontal: space.l, marginTop: space.xs },
   subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginBottom: space.s, marginTop: 2 },
 
-  cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s + 2 },
-  cardHeadLabel: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },
+  cardHeadLabel: {
+    flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '600',
+    color: color.text, marginLeft: space.m,
+  },
 
-  field: { marginBottom: space.s + 2 },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  field: { marginBottom: space.s },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
-  qtyInput: { minWidth: 80, marginLeft: space.s - 2, textAlign: 'center' },
+  qtyInput: { minWidth: 80, marginLeft: space.xs, textAlign: 'center' },
   twoCol: { flexDirection: 'row' },
-  col: { flex: 1, marginRight: space.s },
+  col: { flex: 1, minWidth: 0, marginRight: space.s },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginBottom: space.xs },
-  emptyHint: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginTop: space.m },
+  emptyHint: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginTop: space.s },
   moreLink: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s, paddingVertical: space.xs },
-  moreLinkText: { fontSize: font.body, fontWeight: '700', color: color.primary, marginRight: 2 },
+  // flex 1 so the wrapped label keeps the chevron on the row rather than
+  // pushing it out of the card.
+  moreLinkText: { flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '700', color: color.primary, marginRight: 2 },
   promptWarn: { backgroundColor: color.warnSoft },
   promptOk: { backgroundColor: color.successSoft },
   promptRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  promptText: { flex: 1, marginLeft: space.m },
+  promptText: { flex: 1, minWidth: 0, marginLeft: space.m },
   promptTitle: { fontSize: font.h2 - 1, fontWeight: '800', color: color.warn },
-  promptBody: { fontSize: font.sub, color: color.textSub, marginTop: space.xs, lineHeight: 19 },
-  footer: { marginHorizontal: space.l, marginTop: space.m - 2, marginBottom: space.xl },
+  promptBody: { fontSize: font.sub, color: color.textSub, marginTop: 2, lineHeight: 17 },
+  footer: { marginHorizontal: space.l, marginTop: space.s, marginBottom: space.l },
 });

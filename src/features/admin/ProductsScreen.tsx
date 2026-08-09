@@ -4,11 +4,12 @@
  * disabled-with-reason instead of error popups).
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, Tag,
   color, font, radius, space,
 } from '../../components/ui';
+import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Product } from '../../data/models';
 
@@ -41,6 +42,7 @@ function Field({ label, value, onChange, placeholder, keyboardType, autoCapitali
 
 export function ProductsScreen() {
   const store = useStore();
+  const { isBusy, run } = useWriteGuard();
 
   // ---- add-product form state ----
   const [adding, setAdding] = React.useState(false);
@@ -77,21 +79,25 @@ export function ProductsScreen() {
     setAdding(false);
   };
 
+  // The guard is what stops a second tap creating a duplicate product with a
+  // duplicate opening stock — the form only disappears on the next render.
   const save = () => {
-    const costPrice = toRupees(costText);
-    store.addProduct({
-      name: name.trim(),
-      code: code.trim(),
-      unit,
-      packSize: packSize.trim(),
-      tradePrice,
-      // Retail price defaults to the shop price when left blank — every input has a default.
-      mrp: toRupees(mrpText) || tradePrice,
-      stockQty: toRupees(stockText),
-      // Left out entirely when blank — a product with no cost stays out of profit.
-      ...(costPrice > 0 ? { costPrice } : null),
+    run('add', () => {
+      const costPrice = toRupees(costText);
+      store.addProduct({
+        name: name.trim(),
+        code: code.trim(),
+        unit,
+        packSize: packSize.trim(),
+        tradePrice,
+        // Retail price defaults to the shop price when left blank — every input has a default.
+        mrp: toRupees(mrpText) || tradePrice,
+        stockQty: toRupees(stockText),
+        // Left out entirely when blank — a product with no cost stays out of profit.
+        ...(costPrice > 0 ? { costPrice } : null),
+      });
+      reset();
     });
-    reset();
   };
 
   const openCostEditor = (p: Product) => {
@@ -100,13 +106,15 @@ export function ProductsScreen() {
   };
 
   const saveCost = (id: string) => {
-    store.updateProduct(id, { costPrice: toRupees(costEditText) });
-    setCostEditId(null);
-    setCostEditText('');
+    run(`cost:${id}`, () => {
+      store.updateProduct(id, { costPrice: toRupees(costEditText) });
+      setCostEditId(null);
+      setCostEditText('');
+    });
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <KeyboardScreen style={styles.screen} contentContainerStyle={styles.content}>
       {store.products.length > 0 && (
         <Text style={styles.subLine}>
           {store.products.length} products — bookers see active ones only
@@ -157,6 +165,7 @@ export function ProductsScreen() {
             icon="check-circle-outline"
             disabled={!canSave}
             disabledReason="Name and price first"
+            busy={isBusy('add')}
             onPress={save}
           />
           <View style={styles.rowWrap}>
@@ -177,7 +186,9 @@ export function ProductsScreen() {
         <Card key={p.id}>
           <View style={p.active ? undefined : styles.dim}>
             <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>
+              {/* Long product names used to run under the tags and get clipped:
+                  the name now wraps to two lines, the tags never shrink. */}
+              <Text style={styles.cardTitle} numberOfLines={2}>
                 {p.name}{' '}
                 <Text style={styles.cardTitlePack}>{p.packSize}</Text>
               </Text>
@@ -186,7 +197,7 @@ export function ProductsScreen() {
                 {!p.active && <Tag label="INACTIVE" tone="warn" />}
               </View>
             </View>
-            <Text style={styles.meta}>Product code {p.code || '—'} • sold by {p.unit}</Text>
+            <Text style={styles.meta} numberOfLines={2}>Product code {p.code || '—'} • sold by {p.unit}</Text>
             <View style={styles.priceRow}>
               <View style={styles.priceCol}>
                 <Text style={styles.faintLabel}>Price to shop</Text>
@@ -205,7 +216,7 @@ export function ProductsScreen() {
             </View>
             <View style={styles.stockRow}>
               <Text style={styles.stockLabel}>Stock</Text>
-              <Text style={styles.stock}>{p.stockQty} in stock • {p.committedQty} committed</Text>
+              <Text style={styles.stock} numberOfLines={2}>{p.stockQty} in stock • {p.committedQty} committed</Text>
             </View>
           </View>
 
@@ -222,7 +233,8 @@ export function ProductsScreen() {
               />
               <View style={styles.rowWrap}>
                 {toRupees(costEditText) > 0 ? (
-                  <Chip small selected label="Save cost" onPress={() => saveCost(p.id)} />
+                  <Chip small selected label="Save cost"
+                    onPress={isBusy(`cost:${p.id}`) ? undefined : () => saveCost(p.id)} />
                 ) : (
                   <Text style={styles.costHint}>Type what one {p.unit} costs you</Text>
                 )}
@@ -245,11 +257,12 @@ export function ProductsScreen() {
                 placeholderTextColor={color.textFaint} />
               <View style={styles.rowWrap}>
                 {toRupees(tradeEditText) > 0 && (
-                  <Chip small selected label="Save prices" onPress={() => {
-                    const trade = toRupees(tradeEditText);
-                    store.updateProduct(p.id, { tradePrice: trade, mrp: toRupees(mrpEditText) || trade });
-                    setPriceEditId(null);
-                  }} />
+                  <Chip small selected label="Save prices"
+                    onPress={isBusy(`price:${p.id}`) ? undefined : () => run(`price:${p.id}`, () => {
+                      const trade = toRupees(tradeEditText);
+                      store.updateProduct(p.id, { tradePrice: trade, mrp: toRupees(mrpEditText) || trade });
+                      setPriceEditId(null);
+                    })} />
                 )}
                 <Chip small label="Cancel" onPress={() => setPriceEditId(null)} />
               </View>
@@ -273,13 +286,15 @@ export function ProductsScreen() {
                 placeholderTextColor={color.textFaint} />
               <View style={styles.rowWrap}>
                 {toRupees(stockDeltaText) > 0 && (
+                  // adjustStock is an atomic increment: a double tap did not
+                  // just log twice, it added the delivery to stock twice.
                   <Chip small selected label={`Save — ${stockDir === 'in' ? '+' : '−'}${toRupees(stockDeltaText)} pcs`}
-                    onPress={() => {
+                    onPress={isBusy(`stock:${p.id}`) ? undefined : () => run(`stock:${p.id}`, () => {
                       const n = toRupees(stockDeltaText);
                       store.adjustStock(p.id, stockDir === 'in' ? n : -n,
                         stockDir === 'in' ? 'restock' : 'correction');
                       setStockEditId(null); setStockDeltaText('');
-                    }} />
+                    })} />
                 )}
                 <Chip small label="Cancel" onPress={() => { setStockEditId(null); setStockDeltaText(''); }} />
               </View>
@@ -304,11 +319,14 @@ export function ProductsScreen() {
                 setStockEditId(p.id); setStockDeltaText(''); setStockDir('in');
               }} />
             )}
+            {/* The chip stays put until the listener brings the new flag back,
+                so a second tap flipped the product straight back again. */}
             <Chip
               small
               label={p.active ? 'Deactivate — hide from bookers' : 'Activate — show to bookers'}
               danger={p.active}
-              onPress={() => store.updateProduct(p.id, { active: !p.active })}
+              onPress={isBusy(`active:${p.id}`) ? undefined
+                : () => run(`active:${p.id}`, () => store.updateProduct(p.id, { active: !p.active }))}
             />
           </View>
         </Card>
@@ -320,13 +338,15 @@ export function ProductsScreen() {
           <Text style={styles.noteText}>Products without a cost price are left out of profit.</Text>
         </View>
       )}
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
-  content: { paddingTop: space.s, paddingBottom: space.xl },
+  // Extra bottom padding so "Save product" never ends up flush against the
+  // top of the keyboard.
+  content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
     marginHorizontal: space.l, marginBottom: space.xs,
@@ -335,33 +355,35 @@ const styles = StyleSheet.create({
 
   tightCard: { paddingVertical: space.xs },
   formHead: { flexDirection: 'row', alignItems: 'center', paddingTop: space.s, marginBottom: space.xs },
-  formTitle: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
+  formTitle: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: space.m },
 
   field: { paddingVertical: space.s },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
 
-  cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
+  // flex + minWidth 0 let the name take the slack and wrap; the tag column
+  // beside it keeps its natural width.
+  cardTitle: { flex: 1, minWidth: 0, fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
   cardTitlePack: { fontSize: font.sub, fontWeight: '700', color: color.textSub },
   meta: { fontSize: font.sub, color: color.textSub, marginTop: 2 },
-  priceRow: { flexDirection: 'row', marginTop: space.m },
-  priceCol: { flex: 1, paddingRight: space.s },
+  priceRow: { flexDirection: 'row', marginTop: space.s },
+  priceCol: { flex: 1, minWidth: 0, paddingRight: space.s },
   faintLabel: { fontSize: font.sub, color: color.textFaint, marginBottom: 2 },
   stockRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
   stockLabel: { fontSize: font.sub, color: color.textFaint, marginRight: space.s },
-  stock: { fontSize: font.sub, fontWeight: '600', color: color.text },
+  stock: { flex: 1, minWidth: 0, fontSize: font.sub, fontWeight: '600', color: color.text },
   dim: { opacity: 0.45 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center' },
-  tagRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  tagRow: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', marginLeft: space.s, gap: space.xs },
 
   costEditor: {
-    marginTop: space.m, paddingTop: space.m,
+    marginTop: space.s, paddingTop: space.s,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
   },
   stockInput: { marginTop: space.s },
@@ -370,5 +392,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center',
     marginHorizontal: space.l, marginTop: space.s,
   },
-  noteText: { fontSize: font.sub, color: color.warn, marginLeft: 6, flexShrink: 1 },
+  noteText: { fontSize: font.sub, color: color.warn, marginLeft: space.s, flexShrink: 1 },
 });

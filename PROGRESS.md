@@ -6,12 +6,15 @@ business in Pakistan (owner, order booker, delivery rider).
 | | |
 |---|---|
 | Package | `com.apptechsolutions.fieldsales` |
-| Current build | **v1.5 (versionCode 6)** — `builds/SnD-Manager-v1.5-build6.aab` |
+| Current build | **v1.6 (versionCode 7)** — bumped in `build.gradle`, AAB not yet rebuilt |
 | Signing | `solanalab.keystore` (the publisher's existing Play upload key, alias `solanalabdev`) |
 | Firebase project | `saleforec-10ce7` (functions in `asia-south1`) |
 | Stack | React Native 0.86 · Hermes · New Architecture · RN Firebase v26 (modular API only) |
-| Status | **Feature-complete for v1, field-audited, ready for Play internal testing** |
-| Last updated | 2026-08-06 |
+| Status | **Feature-complete for v1, field-audited, two crash-scan rounds closed** |
+| Last updated | 2026-08-09 |
+
+> **Uncommitted work in the tree.** Round 8 and a full UX pass are done but not
+> committed — read `HANDOFF.md` first. `OPEN-BUGS.md` is now empty of open items.
 
 ---
 
@@ -50,6 +53,19 @@ Seven commits, each a complete round of work.
 | `96574ee` | 5 | Visibility toggles + first on-device smoke pass |
 | `6d6cea9` | 6 | **Closed all 39 field-audit gaps** |
 | `29c1f27` | — | Fixed the system nav bar covering the app's bottom tabs |
+| `dfd6b38` | 7 | Fixed all 25 findings from the first crash scan |
+| *uncommitted* | 8 | **Closed all 18 findings from the second crash scan + UX pass** |
+
+### Round 8 — the second crash scan, plus a UX pass
+All 18 open bugs closed (see `OPEN-BUGS.md` for the table, `HANDOFF.md` for detail).
+The headline was that **every PDF share had never worked once** — the code imported a
+default export the package does not have, and a hand-written `.d.ts` hid it from the type
+checker. Alongside the fixes: an app-root error boundary, AsyncStorage replaced with
+MMKV, Google Play in-app updates, busy/disabled state on every async action (closing
+several real double-write paths in a cash app), keyboard avoidance on every input screen,
+a one-step-down type scale with cropping fixed app-wide, typed-only quantity entry on the
+booking screen, and a Welcome screen that no longer asks a returning owner to pick
+between "I work for a business" and "Create a new business".
 
 ### Round 3 — production hardening
 Found by a prod-readiness audit; all fixed:

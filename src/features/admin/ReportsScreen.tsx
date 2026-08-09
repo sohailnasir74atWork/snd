@@ -6,6 +6,7 @@ import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
 // (Alert imported above with react-native)
+import { useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import { profitFor } from '../../lib/profit';
 import { shareCsv } from '../../documents/share';
@@ -151,8 +152,24 @@ const PRESET_LABELS: Record<RangePreset, string> = {
 
 export function ReportsScreen() {
   const store = useStore();
+  const { isBusy, run } = useWriteGuard();
+  // The export is genuinely awaitable — it writes a file and opens the share
+  // sheet — so it gets a real busy state rather than the write guard.
+  const [exporting, setExporting] = React.useState<string | null>(null);
   const [preset, setPreset] = React.useState<RangePreset>('today');
   const range = rangeFor(preset, Date.now());
+
+  const exportCsv = async (key: string, name: string, rows: (string | number | undefined)[][]) => {
+    if (exporting) return; // guard: one share sheet, not two
+    setExporting(key);
+    try {
+      await shareCsv(name, rows);
+    } catch (e) {
+      Alert.alert('Export failed', e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(null); // always restore, including on the error path
+    }
+  };
 
   const delivered = deliveredOrdersIn(store.orders, range);
   const toDeliver = stillToDeliverIn(store.orders, range);
@@ -184,7 +201,7 @@ export function ReportsScreen() {
       ) : (
         <Card>
           <View style={styles.rowBetween}>
-            <Text style={styles.cardTitle}>{delivered.length} {delivered.length === 1 ? 'order' : 'orders'} delivered</Text>
+            <Text style={styles.cardTitle} numberOfLines={2}>{delivered.length} {delivered.length === 1 ? 'order' : 'orders'} delivered</Text>
             <Money amount={sales} size={font.stat} bold />
           </View>
           <Text style={styles.meta}>Total billed for this range</Text>
@@ -192,10 +209,12 @@ export function ReportsScreen() {
           {perProduct.map(line => (
             <View key={line.productId} style={styles.line}>
               <View style={styles.lineLeft}>
-                <Text style={styles.lineName}>{line.name}</Text>
-                <Text style={styles.meta}>{line.pieces} {line.pieces === 1 ? 'piece' : 'pieces'} delivered</Text>
+                <Text style={styles.lineName} numberOfLines={2}>{line.name}</Text>
+                <Text style={styles.meta} numberOfLines={2}>{line.pieces} {line.pieces === 1 ? 'piece' : 'pieces'} delivered</Text>
               </View>
-              <Money amount={line.rupees} bold />
+              <View style={styles.lineRight}>
+                <Money amount={line.rupees} bold />
+              </View>
             </View>
           ))}
         </Card>
@@ -210,7 +229,7 @@ export function ReportsScreen() {
       ) : (
         <Card>
           <View style={styles.rowBetween}>
-            <Text style={styles.cardTitle}>What you made</Text>
+            <Text style={styles.cardTitle} numberOfLines={2}>What you made</Text>
             <Money
               amount={profit.gross}
               size={font.stat}
@@ -238,12 +257,14 @@ export function ReportsScreen() {
               {profit.lines.map(line => (
                 <View key={line.productId} style={styles.line}>
                   <View style={styles.lineLeft}>
-                    <Text style={styles.lineName}>{line.name}</Text>
-                    <Text style={styles.meta}>
+                    <Text style={styles.lineName} numberOfLines={2}>{line.name}</Text>
+                    <Text style={styles.meta} numberOfLines={2}>
                       {line.pieces} {line.pieces === 1 ? 'piece' : 'pieces'} sold
                     </Text>
                   </View>
-                  <Money amount={line.profit} bold color={line.profit > 0 ? color.success : undefined} />
+                  <View style={styles.lineRight}>
+                    <Money amount={line.profit} bold color={line.profit > 0 ? color.success : undefined} />
+                  </View>
                 </View>
               ))}
             </>
@@ -260,16 +281,20 @@ export function ReportsScreen() {
       ) : (
         <Card>
           <View style={styles.rowBetween}>
-            <Text style={styles.cardTitle}>Collected</Text>
+            <Text style={styles.cardTitle} numberOfLines={2}>Collected</Text>
             <Money amount={collections.total} size={font.stat} bold />
           </View>
           <View style={styles.line}>
-            <Text style={styles.lineName}>Confirmed by you</Text>
-            <Money amount={collections.confirmed} bold color={color.success} />
+            <Text style={[styles.lineName, styles.grow]} numberOfLines={2}>Confirmed by you</Text>
+            <View style={styles.lineRight}>
+              <Money amount={collections.confirmed} bold color={color.success} />
+            </View>
           </View>
           <View style={styles.line}>
-            <Text style={styles.lineName}>Still with staff</Text>
-            <Money amount={collections.withStaff} bold color={collections.withStaff > 0 ? color.warn : undefined} />
+            <Text style={[styles.lineName, styles.grow]} numberOfLines={2}>Still with staff</Text>
+            <View style={styles.lineRight}>
+              <Money amount={collections.withStaff} bold color={collections.withStaff > 0 ? color.warn : undefined} />
+            </View>
           </View>
 
           {/* Every receipt in the range — with the owner's one correction
@@ -282,10 +307,10 @@ export function ReportsScreen() {
             .map(p => (
               <View key={p.id} style={styles.line}>
                 <View style={styles.lineLeft}>
-                  <Text style={[styles.lineName, p.voided && styles.voidedText]}>
+                  <Text style={[styles.lineName, p.voided && styles.voidedText]} numberOfLines={2}>
                     {p.receiptNo} • {store.shops.find(s => s.id === p.shopId)?.name ?? ''}
                   </Text>
-                  <Text style={styles.meta}>
+                  <Text style={styles.meta} numberOfLines={2}>
                     {store.staffNames[p.collectedBy] || 'staff'} • {p.mode}
                     {p.exception ? ' • EXCEPTION' : ''}{p.voided ? ' • VOIDED' : ''}
                   </Text>
@@ -293,14 +318,18 @@ export function ReportsScreen() {
                 <View style={styles.receiptRight}>
                   <Money amount={p.amount} bold color={p.voided ? color.textFaint : undefined} />
                   {!p.voided && (
+                    // voidPayment's own "already voided?" check reads local
+                    // state, which still says otherwise until the listener
+                    // catches up — so a second confirm put the amount back on
+                    // the shop's khata twice.
                     <Chip small danger label="Void"
-                      onPress={() =>
+                      onPress={isBusy(`void:${p.id}`) ? undefined : () =>
                         Alert.alert(
                           'Void this receipt?',
                           `${p.receiptNo} — Rs ${p.amount.toLocaleString()}. The shop's khata gets the amount back; the row stays, crossed out.`,
                           [
                             { text: 'Keep it', style: 'cancel' },
-                            { text: 'Void', style: 'destructive', onPress: () => store.voidPayment(p.id) },
+                            { text: 'Void', style: 'destructive', onPress: () => run(`void:${p.id}`, () => store.voidPayment(p.id)) },
                           ],
                         )
                       } />
@@ -344,7 +373,7 @@ export function ReportsScreen() {
         <Card style={styles.tightCard}>
           <View style={[styles.statRow, styles.rowDivider]}>
             <IconTile name="check-circle-outline" size={34} tint={color.success} bg={color.successSoft} />
-            <Text style={styles.statLabel}>Delivered</Text>
+            <Text style={styles.statLabel} numberOfLines={2}>Delivered</Text>
             <Text style={styles.statValue}>{delivered.length}</Text>
           </View>
           <View style={styles.statRow}>
@@ -353,7 +382,7 @@ export function ReportsScreen() {
               tint={toDeliver.length > 0 ? color.warn : color.primary}
               bg={toDeliver.length > 0 ? color.warnSoft : color.primarySoft}
             />
-            <Text style={styles.statLabel}>Still to deliver</Text>
+            <Text style={styles.statLabel} numberOfLines={2}>Still to deliver</Text>
             <Text style={styles.statValue}>{toDeliver.length}</Text>
           </View>
         </Card>
@@ -362,9 +391,11 @@ export function ReportsScreen() {
       <SectionLabel>Export</SectionLabel>
       <Card style={styles.tightCard}>
         <View style={styles.exportRow}>
+          {/* Chips cannot carry a spinner, so both export chips go dead while
+              either one is building its file. */}
           <Chip
-            label={`Orders CSV — ${PRESET_LABELS[preset]}`}
-            onPress={() => {
+            label={exporting === 'orders' ? 'Preparing…' : `Orders CSV — ${PRESET_LABELS[preset]}`}
+            onPress={exporting ? undefined : async () => {
               const rows: (string | number | undefined)[][] = [
                 ['Order', 'Invoice', 'Date', 'Shop', 'Area', 'Status', 'Subtotal', 'Discount', 'Total', 'Paid', 'Balance'],
                 ...ordersInRange(store.orders, range).map(o => {
@@ -377,13 +408,12 @@ export function ReportsScreen() {
                   ];
                 }),
               ];
-              void shareCsv(`orders-${preset}`, rows)
-                .catch(e => Alert.alert('Export failed', e instanceof Error ? e.message : String(e)));
+              await exportCsv('orders', `orders-${preset}`, rows);
             }}
           />
           <Chip
-            label={`Payments CSV — ${PRESET_LABELS[preset]}`}
-            onPress={() => {
+            label={exporting === 'payments' ? 'Preparing…' : `Payments CSV — ${PRESET_LABELS[preset]}`}
+            onPress={exporting ? undefined : async () => {
               const rows: (string | number | undefined)[][] = [
                 ['Receipt', 'Date', 'Shop', 'Amount', 'Mode', 'Collected by', 'Confirmed', 'Exception'],
                 ...store.payments.filter(p => inRange(p.createdAt, range)).map(p => [
@@ -393,8 +423,7 @@ export function ReportsScreen() {
                   p.confirmed ? 'yes' : 'no', p.exception ? 'yes' : '',
                 ]),
               ];
-              void shareCsv(`payments-${preset}`, rows)
-                .catch(e => Alert.alert('Export failed', e instanceof Error ? e.message : String(e)));
+              await exportCsv('payments', `payments-${preset}`, rows);
             }}
           />
         </View>
@@ -415,25 +444,34 @@ const styles = StyleSheet.create({
   tightCard: { paddingVertical: space.xs },
   exportRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', paddingTop: space.s },
   voidedText: { textDecorationLine: 'line-through', color: color.textFaint },
-  receiptRight: { alignItems: 'flex-end', gap: 6 },
+  receiptRight: { flexShrink: 0, alignItems: 'flex-end', gap: space.s },
 
-  cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
-  subHead: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.m },
-  meta: { fontSize: font.sub, color: color.textSub, marginTop: 3 },
+  // The heading shares its row with a big Money figure, so it takes the slack
+  // and wraps instead of being squeezed out of view.
+  cardTitle: { flex: 1, minWidth: 0, fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
+  subHead: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginTop: space.s },
+  meta: { fontSize: font.sub, color: color.textSub, marginTop: 2 },
   emptyTitle: { fontSize: font.body, fontWeight: '700', color: color.text },
-  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: space.s },
   line: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginTop: space.m - 2, paddingTop: space.m - 2,
+    marginTop: space.s, paddingTop: space.s,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
   },
-  lineLeft: { flexShrink: 1, paddingRight: space.s },
+  // flex 1 + minWidth 0: product names and "receipt • shop" lines were losing
+  // their tails to the amount pinned on the right.
+  lineLeft: { flex: 1, minWidth: 0, paddingRight: space.s },
+  lineRight: { flexShrink: 0, alignItems: 'flex-end' },
+  grow: { flex: 1, minWidth: 0 },
   lineName: { fontSize: font.body, fontWeight: '600', color: color.text },
   warnRow: { flexDirection: 'row', alignItems: 'flex-start', marginTop: space.s },
-  warnText: { fontSize: font.sub, color: color.warn, marginLeft: 6, flexShrink: 1 },
+  warnText: { fontSize: font.sub, color: color.warn, marginLeft: space.s, flexShrink: 1 },
 
   rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  statRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.m },
-  statLabel: { flex: 1, fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
-  statValue: { fontSize: font.stat, fontWeight: '800', color: color.text },
+  statRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.s },
+  statLabel: {
+    flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '600',
+    color: color.text, marginLeft: space.m,
+  },
+  statValue: { flexShrink: 0, fontSize: font.stat, fontWeight: '800', color: color.text, marginLeft: space.s },
 });

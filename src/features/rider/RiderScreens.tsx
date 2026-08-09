@@ -5,7 +5,9 @@
  * evening handover (FR-7.9/7.11).
  */
 import React from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View,
+} from 'react-native';
 import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton,
   SectionLabel, Tag, color, font, radius, space,
@@ -18,6 +20,8 @@ import { amountInWordsLine } from '../../lib/money';
 import { strings } from '../../i18n/strings';
 import { billHtml } from '../../documents/templates';
 import { sharePdf } from '../../documents/share';
+import { PinShopScreen } from '../shops/PinShopScreen';
+import { ShopPlaceChips } from '../shops/ShopPlace';
 
 export function RiderRouteScreen() {
   const store = useStore();
@@ -28,10 +32,42 @@ export function RiderRouteScreen() {
   const isDueNow = (o: Order) => (o.deliveryDate ?? today) <= today;
   const isOverdue = (o: Order) => (o.deliveryDate ?? today) < today;
   const stops = store.orders.filter(o => isDueNow(o) && (o.status === 'assigned' || o.status === 'out_for_delivery'));
-  const done = store.orders.filter(o => (o.deliveryDate ?? today) === today && o.status === 'delivered');
+  // Counted by WHEN IT WAS DELIVERED, not by the day it was due. An overdue
+  // stop left `stops` the moment it was delivered but never joined a
+  // `=== today` list, so the header counted DOWN as the rider worked:
+  // "0 of 6" became "0 of 4". Orders written before deliveredAt existed fall
+  // back to the old due-date test.
+  //
+  // Anchored to the WORKING day, so a rider still out past midnight does not
+  // watch his own totals reset to zero underneath him.
+  const dayStartMs = new Date(`${store.day.date}T00:00:00`).getTime();
+  const done = store.orders.filter(o => o.status === 'delivered' && (
+    o.deliveredAt !== undefined ? o.deliveredAt >= dayStartMs : (o.deliveryDate ?? today) === today
+  ));
   const [openStop, setOpenStop] = React.useState<Order | null>(null);
+  // The rider is at more shop doors in a day than anyone else, which makes the
+  // rider the fastest way to get the map filled in.
+  const [pinningShopId, setPinningShopId] = React.useState<string | null>(null);
+  // startRoute/undoStartRoute return void: nothing to await, and the day doc
+  // only flips once the write lands. Hold the control down from the first tap
+  // and release it when the day doc actually says what we asked it to say.
+  const [routeSwitching, setRouteSwitching] = React.useState(false);
+  const routeStarted = store.day.routeStarted;
+  React.useEffect(() => { setRouteSwitching(false); }, [routeStarted]);
 
   if (openStop) return <CloseOutScreen order={openStop} onDone={() => setOpenStop(null)} />;
+
+  const pinningShop = pinningShopId ? store.shops.find(s => s.id === pinningShopId) : null;
+  if (pinningShop) {
+    return (
+      <PinShopScreen
+        shopName={pinningShop.name}
+        existing={pinningShop.location ?? null}
+        onSave={fix => { store.setShopLocation(pinningShop.id, fix); setPinningShopId(null); }}
+        onCancel={() => setPinningShopId(null)}
+      />
+    );
+  }
 
   if (!store.day.routeStarted) {
     // Morning load list: every product summed across the day's stops.
@@ -67,9 +103,9 @@ export function RiderRouteScreen() {
           <PrimaryButton
             label={strings.delivery.startRoute}
             icon="truck-fast-outline"
-            disabled={stops.length === 0}
-            disabledReason="Nothing to deliver yet"
-            onPress={() => store.startRoute()}
+            disabled={stops.length === 0 || routeSwitching}
+            disabledReason={stops.length === 0 ? 'Nothing to deliver yet' : undefined}
+            onPress={() => { setRouteSwitching(true); store.startRoute(); }}
           />
           <Text style={styles.hint}>Starting the route freezes today's load — later orders go to tomorrow.</Text>
         </View>
@@ -78,19 +114,18 @@ export function RiderRouteScreen() {
   }
 
   // TODAY's take, not the all-time total (audit) — voided rows don't count.
-  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
   const collected = store.payments
-    .filter(p => !p.voided && p.createdAt >= dayStart.getTime())
+    .filter(p => !p.voided && p.createdAt >= dayStartMs)
     .reduce((s, p) => s + p.amount, 0);
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.subLine}>
         {done.length} of {done.length + stops.length} done • Rs {collected.toLocaleString()} collected today
       </Text>
-      {done.length === 0 && (
+      {done.length === 0 && !routeSwitching && (
         <View style={styles.undoRow}>
           <Chip small label="Undo start — back to the load list"
-            onPress={() => store.undoStartRoute()} />
+            onPress={() => { setRouteSwitching(true); store.undoStartRoute(); }} />
         </View>
       )}
       {stops.map(o => {
@@ -98,11 +133,15 @@ export function RiderRouteScreen() {
         return (
           <Card key={o.id} onPress={() => setOpenStop(o)}>
             <View style={styles.rowBetween}>
-              <Text style={styles.big}>{o.shopSnapshot.name}</Text>
-              <Money amount={o.orderedTotals.grandTotal} bold />
+              <Text style={[styles.big, styles.flexLabel]} numberOfLines={2}>{o.shopSnapshot.name}</Text>
+              <View style={styles.valueRight}>
+                <Money amount={o.orderedTotals.grandTotal} bold />
+              </View>
             </View>
             <View style={styles.rowBetween}>
-              <Text style={styles.meta}>
+              {/* The two Tags below are wide; without the flexible label the
+                  area line used to run straight under "COLLECT KHATA". */}
+              <Text style={[styles.meta, styles.flexLabel]} numberOfLines={2}>
                 {o.shopSnapshot.area} • {o.items.reduce((s, i) => s + i.qty, 0)} pcs
               </Text>
               <View style={styles.tagRow}>
@@ -114,6 +153,15 @@ export function RiderRouteScreen() {
               {o.shopSnapshot.phone ? (
                 <Chip small label={strings.common.call}
                   onPress={() => { void Linking.openURL(`tel:${o.shopSnapshot.phone}`).catch(() => {}); }} />
+              ) : null}
+              {/* Only for a shop this rider can actually resolve — an order
+                  whose shop document is not in view has nothing to write to. */}
+              {shop ? (
+                <ShopPlaceChips
+                  shop={shop}
+                  onPin={() => setPinningShopId(shop.id)}
+                  onPhotoUrl={url => store.setShopPhoto(shop.id, url)}
+                />
               ) : null}
             </View>
           </Card>
@@ -160,8 +208,15 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   // Typed delivered quantities — "took 10 of 12" is normal and the chips
   // alone could only bill all/half/none (audit blocker).
   const [qtyTexts, setQtyTexts] = React.useState<Record<string, string>>({});
+  // One flag for every way OUT of this stop — delivered, deferred, sent back.
+  // Whichever fires first must lock the other two: they all write the order.
   const [busy, setBusy] = React.useState(false);
-  const [result, setResult] = React.useState<{ invoiceNo: string; receiptNo?: string } | null>(null);
+  const [sharing, setSharing] = React.useState(false);
+  // previousBalance is carried IN here, not re-read on the success screen:
+  // see the capture at close-out below.
+  const [result, setResult] = React.useState<
+    { invoiceNo: string; receiptNo?: string; previousBalance: number } | null
+  >(null);
 
   const setQty = (productId: string, ordered: number, q: number) => {
     const v = Math.max(0, Math.min(q, ordered));
@@ -207,6 +262,78 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   const addToPart = (add: number) =>
     setPartText(String(clampMoney(partAmount + add, maxPayable)));
 
+  const closeOut = async () => {
+    // The invoice and receipt numbers need a server round-trip. A second tap
+    // billed the shop twice AND banked the same cash twice.
+    if (busy) return;
+    setBusy(true);
+    try {
+      // Snapshot the khata BEFORE the write. Firestore's local
+      // latency compensation applies the new bill to
+      // shop.outstanding immediately, so reading it again on
+      // the success screen printed a "Previous balance" that
+      // already contained the invoice being printed.
+      const previousBalance = oldBalance;
+      const r = await Promise.resolve(
+        store.closeOutStop({
+          orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
+        }),
+      );
+      setResult({ ...r, previousBalance });
+    } catch (e) {
+      // The booker can cancel this order while the rider is at
+      // the counter — say so and send him back to the route.
+      Alert.alert('Cannot close this stop', e instanceof Error ? e.message : String(e), [
+        { text: 'Back to route', onPress: onDone },
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const leaveStop = (write: () => void) => {
+    // Deferring or sending back writes the order too — never on top of a
+    // close-out that is already in flight, and never twice.
+    if (busy) return;
+    setBusy(true);
+    write();
+    onDone();
+  };
+
+  const shareBill = async (invoiceNo: string, previousBalance: number) => {
+    // PDF generation plus the share sheet take a beat — a second tap stacked
+    // two share sheets on the rider's screen.
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const billedOrder: Order = {
+        ...order, items, billedTotals: billed, invoiceNo,
+        deliveredAt: Date.now(), status: 'delivered',
+      };
+      const html = billHtml({
+        settings: store.settings,
+        order: billedOrder,
+        shop,
+        amountInWordsLine: amountInWordsLine(billed.grandTotal),
+        received: Math.min(payAmount, billed.grandTotal),
+        previousBalance,
+        // Anything over today's bill went to the old khata — the printed
+        // total must credit it, or the shopkeeper is handed a bill
+        // claiming he still owes cash he just paid.
+        paidToPrevious: Math.max(0, payAmount - billed.grandTotal),
+      });
+      await sharePdf(
+        html,
+        invoiceNo,
+        `Bill ${invoiceNo} — Rs ${billed.grandTotal.toLocaleString()}.`,
+      );
+    } catch (e) {
+      Alert.alert('Could not share', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSharing(false);
+    }
+  };
+
   if (result) {
     return (
       <View style={[styles.screen, styles.centerPad]}>
@@ -219,29 +346,9 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
         <PrimaryButton
           label={`Send bill to ${order.shopSnapshot.name}'s WhatsApp`}
           icon="whatsapp"
-          onPress={async () => {
-            const billedOrder: Order = {
-              ...order, items, billedTotals: billed, invoiceNo: result.invoiceNo,
-              deliveredAt: Date.now(), status: 'delivered',
-            };
-            const html = billHtml({
-              settings: store.settings,
-              order: billedOrder,
-              shop,
-              amountInWordsLine: amountInWordsLine(billed.grandTotal),
-              received: Math.min(payAmount, billed.grandTotal),
-              previousBalance: oldBalance,
-              // Anything over today's bill went to the old khata — the printed
-              // total must credit it, or the shopkeeper is handed a bill
-              // claiming he still owes cash he just paid.
-              paidToPrevious: Math.max(0, payAmount - billed.grandTotal),
-            });
-            await sharePdf(
-              html,
-              result.invoiceNo,
-              `Bill ${result.invoiceNo} — Rs ${billed.grandTotal.toLocaleString()}.`,
-            ).catch(() => {});
-          }}
+          busy={sharing}
+          busyLabel="Preparing…"
+          onPress={() => { void shareBill(result.invoiceNo, result.previousBalance); }}
         />
         <PrimaryButton label="Next stop" variant="quiet" onPress={onDone} />
       </View>
@@ -249,176 +356,164 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   }
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.shopTitle}>{order.shopSnapshot.name}</Text>
-      <Text style={styles.subLine}>{order.orderNo} • adjust only what changed</Text>
+    <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView style={styles.screen} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={styles.shopTitle}>{order.shopSnapshot.name}</Text>
+        <Text style={styles.subLine}>{order.orderNo} • adjust only what changed</Text>
 
-      {order.items.map(i => (
-        <Card key={i.productId}>
+        {order.items.map(i => (
+          <Card key={i.productId}>
+            <View style={styles.rowBetween}>
+              <Text style={[styles.big, styles.flexLabel]} numberOfLines={2}>{i.name}</Text>
+              <Text style={[styles.meta, styles.valueRight]}>ordered {i.qty}</Text>
+            </View>
+            <View style={styles.qtyRow}>
+              <TextInput
+                style={styles.qtyInput}
+                value={qtyTexts[i.productId] ?? String(qtys[i.productId] ?? i.qty)}
+                onChangeText={t => {
+                  const digits = t.replace(/[^0-9]/g, '');
+                  setQtyTexts(prev => ({ ...prev, [i.productId]: digits }));
+                  setQtys(prev => ({
+                    ...prev,
+                    [i.productId]: digits ? Math.min(parseInt(digits, 10), i.qty) : 0,
+                  }));
+                }}
+                keyboardType="number-pad"
+                placeholder={String(i.qty)}
+                placeholderTextColor={color.textFaint}
+              />
+              <View style={styles.qtyChips}>
+                {[i.qty, Math.floor(i.qty / 2), 0].filter((v, idx, a) => a.indexOf(v) === idx).map(q => (
+                  <Chip key={q} small label={q === i.qty ? `all ${q}` : `${q}`} selected={qtys[i.productId] === q}
+                    onPress={() => setQty(i.productId, i.qty, q)} />
+                ))}
+              </View>
+            </View>
+          </Card>
+        ))}
+
+        <Card>
           <View style={styles.rowBetween}>
-            <Text style={styles.big}>{i.name}</Text>
-            <Text style={styles.meta}>ordered {i.qty}</Text>
-          </View>
-          <View style={styles.qtyRow}>
-            <TextInput
-              style={styles.qtyInput}
-              value={qtyTexts[i.productId] ?? String(qtys[i.productId] ?? i.qty)}
-              onChangeText={t => {
-                const digits = t.replace(/[^0-9]/g, '');
-                setQtyTexts(prev => ({ ...prev, [i.productId]: digits }));
-                setQtys(prev => ({
-                  ...prev,
-                  [i.productId]: digits ? Math.min(parseInt(digits, 10), i.qty) : 0,
-                }));
-              }}
-              keyboardType="number-pad"
-              placeholder={String(i.qty)}
-              placeholderTextColor={color.textFaint}
-            />
-            <View style={styles.qtyChips}>
-              {[i.qty, Math.floor(i.qty / 2), 0].filter((v, idx, a) => a.indexOf(v) === idx).map(q => (
-                <Chip key={q} small label={q === i.qty ? `all ${q}` : `${q}`} selected={qtys[i.productId] === q}
-                  onPress={() => setQty(i.productId, i.qty, q)} />
-              ))}
+            <Text style={[styles.big, styles.flexLabel]} numberOfLines={2}>Bill (delivered)</Text>
+            <View style={styles.valueRight}>
+              <Money amount={billed.grandTotal} size={font.stat} bold />
             </View>
           </View>
+          {oldBalance > 0 && (
+            <View style={styles.rowBetween}>
+              <Text style={[styles.meta, styles.flexLabel]} numberOfLines={2}>Old khata</Text>
+              <View style={styles.valueRight}>
+                <Money amount={oldBalance} color={color.danger} />
+              </View>
+            </View>
+          )}
         </Card>
-      ))}
 
-      <Card>
-        <View style={styles.rowBetween}>
-          <Text style={styles.big}>Bill (delivered)</Text>
-          <Money amount={billed.grandTotal} size={font.stat} bold />
-        </View>
-        {oldBalance > 0 && (
-          <View style={styles.rowBetween}>
-            <Text style={styles.meta}>Old khata</Text>
-            <Money amount={oldBalance} color={color.danger} />
-          </View>
-        )}
-      </Card>
-
-      <SectionLabel>Payment</SectionLabel>
-      <Card style={styles.tightCard}>
-        <View style={[styles.payBlock, styles.payDivider]}>
-          <View style={styles.payHead}>
-            <IconTile name="cash-multiple" size={34} />
-            <Text style={styles.payLabel}>How much is he paying?</Text>
-          </View>
-          <OptionBar options={payOptions} value={payChoice} render={payLabel} onChange={setPayChoice} />
-        </View>
-
-        {payChoice === 'part' && (
+        <SectionLabel>Payment</SectionLabel>
+        <Card style={styles.tightCard}>
           <View style={[styles.payBlock, styles.payDivider]}>
-            <Text style={styles.fieldLabel}>Amount he is handing over now</Text>
-            <TextInput
-              style={styles.input}
-              value={partText}
-              onChangeText={t => {
-                const digits = t.replace(/[^0-9]/g, '');
-                setPartText(digits ? String(clampMoney(Number.parseInt(digits, 10), maxPayable)) : '');
-              }}
-              keyboardType="number-pad"
-              placeholder={String(maxPayable)}
-              placeholderTextColor={color.textFaint}
-            />
-            <Text style={styles.fieldHint}>
-              Everything he owes today is Rs {maxPayable.toLocaleString()}
-            </Text>
-            <View style={styles.rowWrap}>
-              <Chip small label="+ half" onPress={() => addToPart(Math.floor(maxPayable / 2))} />
-              {QUICK_ADDS.map(v => (
-                <Chip key={v} small label={`+ ${v.toLocaleString()}`} onPress={() => addToPart(v)} />
-              ))}
-              {partText ? <Chip small label="Clear" danger onPress={() => setPartText('')} /> : null}
-            </View>
-          </View>
-        )}
-
-        <View style={[styles.payBlock, payAmount > 0 && styles.payDivider]}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.big}>Taking now</Text>
-            <Money amount={payAmount} size={font.stat} bold />
-          </View>
-          <Text style={stillOwed > 0 ? styles.oweText : styles.clearText}>
-            {stillOwed > 0
-              ? `Shop will still owe Rs ${stillOwed.toLocaleString()}`
-              : 'Shop clears everything — nothing left on the khata'}
-          </Text>
-        </View>
-
-        {payAmount > 0 && (
-          <View style={styles.payBlock}>
             <View style={styles.payHead}>
-              <IconTile name="bank-outline" size={34} />
-              <Text style={styles.payLabel}>How did he pay?</Text>
+              <IconTile name="cash-multiple" size={34} />
+              <Text style={styles.payLabel}>How much is he paying?</Text>
             </View>
-            <OptionBar options={modeOptions} value={mode} render={modeLabel} onChange={setModeChoice} />
+            <OptionBar options={payOptions} value={payChoice} render={payLabel} onChange={setPayChoice} />
           </View>
-        )}
-      </Card>
 
-      <View style={styles.ctaWrap}>
-        <PrimaryButton
-          label={payAmount > 0 ? `Delivered — take Rs ${payAmount.toLocaleString()}` : 'Delivered — on credit'}
-          icon="check-circle-outline"
-          disabled={(payChoice === 'part' && partAmount === 0) || busy}
-          disabledReason={busy ? 'Saving…' : 'Type how much he is paying'}
-          onPress={() => {
-            // One confirm between the thumb and an irreversible bill (audit).
-            const pieces = items.reduce((s, i) => s + (i.deliveredQty ?? 0), 0);
-            Alert.alert(
-              'Close this stop?',
-              `${order.shopSnapshot.name}\n${pieces} pcs delivered • bill Rs ${billed.grandTotal.toLocaleString()}` +
-                (payAmount > 0 ? `\nTaking Rs ${payAmount.toLocaleString()} (${mode})` : '\nNothing taken — on credit'),
-              [
-                { text: 'Not yet', style: 'cancel' },
-                {
-                  text: 'Delivered',
-                  onPress: async () => {
-                    setBusy(true);
-                    try {
-                      const r = await Promise.resolve(
-                        store.closeOutStop({
-                          orderId: order.id, deliveredQtys: qtys, paymentAmount: payAmount, mode,
-                        }),
-                      );
-                      setResult(r);
-                    } catch (e) {
-                      // The booker can cancel this order while the rider is at
-                      // the counter — say so and send him back to the route.
-                      Alert.alert('Cannot close this stop', e instanceof Error ? e.message : String(e), [
-                        { text: 'Back to route', onPress: onDone },
-                      ]);
-                    } finally {
-                      setBusy(false);
-                    }
-                  },
-                },
-              ],
-            );
-          }}
-        />
-        {/* The two honest ways OUT of a stop that cannot be delivered (audit
-            blocker: the only button used to be 'Delivered'). */}
-        <View style={styles.failRow}>
-          <Chip small label={`Shop closed — ${strings.delivery.tryTomorrow.toLowerCase()}`}
-            onPress={() =>
-              Alert.alert('Move to tomorrow?', `${order.orderNo} stays on the van and returns on tomorrow's route.`, [
-                { text: 'Back', style: 'cancel' },
-                { text: 'Move it', onPress: () => { store.deferOrder(order.id); onDone(); } },
-              ])
-            } />
-          <Chip small danger label={strings.delivery.sendBack}
-            onPress={() =>
-              Alert.alert('Send the goods back?', `${order.orderNo} is closed WITHOUT a bill and the stock returns to the godown count.`, [
-                { text: 'Back', style: 'cancel' },
-                { text: 'Send back', style: 'destructive', onPress: () => { store.returnOrder(order.id, 'refused at door'); onDone(); } },
-              ])
-            } />
+          {payChoice === 'part' && (
+            <View style={[styles.payBlock, styles.payDivider]}>
+              <Text style={styles.fieldLabel}>Amount he is handing over now</Text>
+              <TextInput
+                style={styles.input}
+                value={partText}
+                onChangeText={t => {
+                  const digits = t.replace(/[^0-9]/g, '');
+                  setPartText(digits ? String(clampMoney(Number.parseInt(digits, 10), maxPayable)) : '');
+                }}
+                keyboardType="number-pad"
+                placeholder={String(maxPayable)}
+                placeholderTextColor={color.textFaint}
+              />
+              <Text style={styles.fieldHint}>
+                Everything he owes today is Rs {maxPayable.toLocaleString()}
+              </Text>
+              <View style={styles.rowWrap}>
+                <Chip small label="+ half" onPress={() => addToPart(Math.floor(maxPayable / 2))} />
+                {QUICK_ADDS.map(v => (
+                  <Chip key={v} small label={`+ ${v.toLocaleString()}`} onPress={() => addToPart(v)} />
+                ))}
+                {partText ? <Chip small label="Clear" danger onPress={() => setPartText('')} /> : null}
+              </View>
+            </View>
+          )}
+
+          <View style={[styles.payBlock, payAmount > 0 && styles.payDivider]}>
+            <View style={styles.rowBetween}>
+              <Text style={[styles.big, styles.flexLabel]} numberOfLines={2}>Taking now</Text>
+              <View style={styles.valueRight}>
+                <Money amount={payAmount} size={font.stat} bold />
+              </View>
+            </View>
+            <Text style={stillOwed > 0 ? styles.oweText : styles.clearText}>
+              {stillOwed > 0
+                ? `Shop will still owe Rs ${stillOwed.toLocaleString()}`
+                : 'Shop clears everything — nothing left on the khata'}
+            </Text>
+          </View>
+
+          {payAmount > 0 && (
+            <View style={styles.payBlock}>
+              <View style={styles.payHead}>
+                <IconTile name="bank-outline" size={34} />
+                <Text style={styles.payLabel}>How did he pay?</Text>
+              </View>
+              <OptionBar options={modeOptions} value={mode} render={modeLabel} onChange={setModeChoice} />
+            </View>
+          )}
+        </Card>
+
+        <View style={styles.ctaWrap}>
+          <PrimaryButton
+            label={payAmount > 0 ? `Delivered — take Rs ${payAmount.toLocaleString()}` : 'Delivered — on credit'}
+            icon="check-circle-outline"
+            busy={busy}
+            disabled={payChoice === 'part' && partAmount === 0}
+            disabledReason="Type how much he is paying"
+            onPress={() => {
+              // One confirm between the thumb and an irreversible bill (audit).
+              const pieces = items.reduce((s, i) => s + (i.deliveredQty ?? 0), 0);
+              Alert.alert(
+                'Close this stop?',
+                `${order.shopSnapshot.name}\n${pieces} pcs delivered • bill Rs ${billed.grandTotal.toLocaleString()}` +
+                  (payAmount > 0 ? `\nTaking Rs ${payAmount.toLocaleString()} (${mode})` : '\nNothing taken — on credit'),
+                [
+                  { text: 'Not yet', style: 'cancel' },
+                  { text: 'Delivered', onPress: () => { void closeOut(); } },
+                ],
+              );
+            }}
+          />
+          {/* The two honest ways OUT of a stop that cannot be delivered (audit
+              blocker: the only button used to be 'Delivered'). */}
+          <View style={styles.failRow}>
+            <Chip small label={`Shop closed — ${strings.delivery.tryTomorrow.toLowerCase()}`}
+              onPress={() =>
+                Alert.alert('Move to tomorrow?', `${order.orderNo} stays on the van and returns on tomorrow's route.`, [
+                  { text: 'Back', style: 'cancel' },
+                  { text: 'Move it', onPress: () => leaveStop(() => store.deferOrder(order.id)) },
+                ])
+              } />
+            <Chip small danger label={strings.delivery.sendBack}
+              onPress={() =>
+                Alert.alert('Send the goods back?', `${order.orderNo} is closed WITHOUT a bill and the stock returns to the godown count.`, [
+                  { text: 'Back', style: 'cancel' },
+                  { text: 'Send back', style: 'destructive', onPress: () => leaveStop(() => store.returnOrder(order.id, 'refused at door')) },
+                ])
+              } />
+          </View>
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -428,22 +523,32 @@ export function RiderHistoryScreen() {
     .filter(o => o.status === 'delivered')
     .sort((a, b) => (b.deliveredAt ?? b.bookedAt) - (a.deliveredAt ?? a.bookedAt));
 
+  // The chip stays on screen while the PDF builds, so it needs its own guard.
+  const [sharingId, setSharingId] = React.useState<string | null>(null);
+
   // "Send it again" — the shopkeeper lost the PDF or asked later (audit).
   const resendBill = async (o: Order) => {
     const shop = store.shops.find(s => s.id === o.shopId);
-    if (!shop || !o.billedTotals || !o.invoiceNo) return;
-    const html = billHtml({
-      settings: store.settings,
-      order: o,
-      shop,
-      amountInWordsLine: amountInWordsLine(o.billedTotals.grandTotal),
-      received: o.amountPaid,
-      previousBalance: 0, // history re-send: today's balance is not that day's
-    });
-    await sharePdf(
-      html, o.invoiceNo,
-      `Bill ${o.invoiceNo} — Rs ${o.billedTotals.grandTotal.toLocaleString()}.`,
-    ).catch(e => Alert.alert('Could not share', e instanceof Error ? e.message : String(e)));
+    if (!shop || !o.billedTotals || !o.invoiceNo || sharingId) return;
+    setSharingId(o.id);
+    try {
+      const html = billHtml({
+        settings: store.settings,
+        order: o,
+        shop,
+        amountInWordsLine: amountInWordsLine(o.billedTotals.grandTotal),
+        received: o.amountPaid,
+        previousBalance: 0, // history re-send: today's balance is not that day's
+      });
+      await sharePdf(
+        html, o.invoiceNo,
+        `Bill ${o.invoiceNo} — Rs ${o.billedTotals.grandTotal.toLocaleString()}.`,
+      );
+    } catch (e) {
+      Alert.alert('Could not share', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSharingId(null);
+    }
   };
 
   return (
@@ -459,7 +564,8 @@ export function RiderHistoryScreen() {
             right={<Money amount={o.billedTotals?.grandTotal ?? 0} bold />}
           />
           <View style={styles.rowWrap}>
-            <Chip small label="Bill PDF" onPress={() => { void resendBill(o); }} />
+            <Chip small label="Bill PDF"
+              onPress={sharingId ? undefined : () => { void resendBill(o); }} />
           </View>
         </Card>
       ))}
@@ -484,6 +590,9 @@ export function RiderHandoverScreen() {
   const cashTotal = cashPile.reduce((s, p) => s + p.amount, 0);
   const transferTotal = transferPile.reduce((s, p) => s + p.amount, 0);
   const expected = cashTotal + transferTotal;
+  // handOver returns void — the day doc flips only once the write lands, so
+  // the button holds itself down from the first tap.
+  const [handedOver, setHandedOver] = React.useState(false);
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Card>
@@ -494,8 +603,10 @@ export function RiderHandoverScreen() {
         />
         {cashPile.map(p => (
           <View key={p.id} style={styles.rowBetween}>
-            <Text style={styles.meta}>{p.receiptNo}{p.mode === 'cheque' ? ' • cheque' : ''}</Text>
-            <Money amount={p.amount} />
+            <Text style={[styles.meta, styles.flexLabel]} numberOfLines={2}>{p.receiptNo}{p.mode === 'cheque' ? ' • cheque' : ''}</Text>
+            <View style={styles.valueRight}>
+              <Money amount={p.amount} />
+            </View>
           </View>
         ))}
         {transferPile.length > 0 && (
@@ -507,8 +618,10 @@ export function RiderHandoverScreen() {
             />
             {transferPile.map(p => (
               <View key={p.id} style={styles.rowBetween}>
-                <Text style={styles.meta}>{p.receiptNo}</Text>
-                <Money amount={p.amount} />
+                <Text style={[styles.meta, styles.flexLabel]} numberOfLines={2}>{p.receiptNo}</Text>
+                <View style={styles.valueRight}>
+                  <Money amount={p.amount} />
+                </View>
               </View>
             ))}
           </>
@@ -519,9 +632,9 @@ export function RiderHandoverScreen() {
           <PrimaryButton
             label={strings.money.handOver}
             icon="cash-multiple"
-            disabled={expected === 0}
-            disabledReason="No cash collected yet"
-            onPress={() => store.handOver()}
+            disabled={expected === 0 || handedOver}
+            disabledReason={expected === 0 ? 'No cash collected yet' : undefined}
+            onPress={() => { setHandedOver(true); store.handOver(); }}
           />
         </View>
       ) : (
@@ -542,54 +655,67 @@ export function RiderHandoverScreen() {
 }
 
 const styles = StyleSheet.create({
+  // Owns the height the ScrollView shrinks into when the keyboard is up.
+  fill: { flex: 1 },
   screen: { flex: 1, backgroundColor: color.bg },
-  content: { paddingTop: space.s, paddingBottom: space.xl },
+  // Deep enough that the CTA under the last field still clears the keyboard.
+  content: { paddingTop: space.s, paddingBottom: space.xl * 3 },
   centerPad: { alignItems: 'center', justifyContent: 'center', padding: space.xl },
   subLine: {
     fontSize: font.sub, color: color.textSub,
     marginHorizontal: space.l, marginTop: space.xs, marginBottom: space.s,
   },
   shopTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginHorizontal: space.l },
-  doneTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginTop: space.m, marginBottom: space.xs },
+  doneTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginTop: space.s, marginBottom: space.xs },
   big: { fontSize: font.h2, fontWeight: '700', color: color.text },
-  qty: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
+  qty: { fontSize: font.body, fontWeight: '700', color: color.text },
   meta: { fontSize: font.sub, color: color.textSub },
   hint: { fontSize: font.sub, color: color.textSub, marginTop: space.s, textAlign: 'center' },
   statusText: { fontSize: font.sub, color: color.textSub, marginTop: space.s },
   rowBetween: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.xs,
   },
+  // A flexible label beside a fixed value: the label takes all the slack and
+  // wraps to two lines, the number keeps its natural width so money never
+  // breaks mid-figure.
+  flexLabel: { flex: 1, minWidth: 0 },
+  valueRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.xs },
-  ctaWrap: { marginHorizontal: space.l, marginVertical: space.m },
+  ctaWrap: { marginHorizontal: space.l, marginVertical: space.s },
 
   tightCard: { paddingVertical: space.xs },
-  payBlock: { paddingVertical: space.m },
+  payBlock: { paddingVertical: space.s + 2 },
   payDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
-  payHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s + 2 },
-  payLabel: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
-  fieldHint: { fontSize: font.tiny + 1, color: color.textSub, marginTop: 6 },
+  payHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },
+  payLabel: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: space.m },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.s },
+  fieldHint: { fontSize: font.tiny, color: color.textSub, marginTop: space.s },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
   oweText: { fontSize: font.sub, fontWeight: '700', color: color.danger, marginTop: space.xs },
   clearText: { fontSize: font.sub, fontWeight: '700', color: color.success, marginTop: space.xs },
 
   undoRow: { flexDirection: 'row', paddingHorizontal: space.l, marginBottom: space.xs },
-  tagRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  // Capped and wrapping: two Tags side by side ("FROM EARLIER" + "COLLECT
+  // KHATA") used to eat the whole row and crop the shop's area line.
+  tagRow: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+    justifyContent: 'flex-end', gap: space.xs, flexShrink: 0, maxWidth: '55%',
+  },
   qtyRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
   qtyInput: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 44, width: 78,
+    paddingHorizontal: space.m, height: 42, width: 74,
     fontSize: font.h2, fontWeight: '700', color: color.text, textAlign: 'center',
   },
   qtyChips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginLeft: space.s },
   failRow: {
     flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
-    justifyContent: 'center', marginTop: space.m, gap: space.s,
+    justifyContent: 'center', marginTop: space.s, gap: space.s,
   },
 });

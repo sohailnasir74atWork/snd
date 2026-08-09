@@ -84,8 +84,29 @@ android {
         applicationId "com.apptechsolutions.fieldsales"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 6
-        versionName "1.5"
+        versionCode 11
+        versionName "1.7.3"
+
+        // Google Maps Android SDK key, injected into the manifest rather than
+        // written into it: the manifest IS in version control and an exposed
+        // Maps key can be used by anyone until it is restricted and rotated.
+        // Lives beside sdk.dir in android/local.properties, which is ignored.
+        //
+        // A build with no key still compiles and runs — the map renders as an
+        // empty grey square and logcat says "API key not found". That is a
+        // deliberate soft failure: a missing key must not stop the whole app
+        // from building, because everything except the pin screen works fine.
+        def mapsProps = new Properties()
+        def mapsPropsFile = rootProject.file('local.properties')
+        if (mapsPropsFile.exists()) {
+            mapsProps.load(new FileInputStream(mapsPropsFile))
+        }
+        def mapsKey = mapsProps['MAPS_API_KEY'] ?: ''
+        if (!mapsKey) {
+            logger.warn('WARNING: MAPS_API_KEY missing from android/local.properties — ' +
+                        'the shop location map will render blank. See HANDOFF.md §9.')
+        }
+        manifestPlaceholders = [MAPS_API_KEY: mapsKey]
     }
     signingConfigs {
         debug {

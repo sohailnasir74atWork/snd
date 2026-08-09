@@ -36,32 +36,38 @@ export const color = {
   border: '#E2E8F0',
 } as const;
 
+/**
+ * One step down from the first pass. The screens carry a lot of numbers per
+ * card, and the old scale pushed rows into two lines and clipped labels in
+ * the joined option bars. Nothing here goes below 10pt — these phones are
+ * read at arm's length in daylight.
+ */
 export const font = {
-  h1: 22,
-  h2: 17,
-  body: 15,
-  sub: 13,
-  tiny: 11,
-  stat: 20,
+  h1: 20,
+  h2: 16,
+  body: 14,
+  sub: 12,
+  tiny: 10,
+  stat: 18,
 } as const;
 
 export const radius = {
-  card: 14,
-  pill: 26,
-  tile: 12,
-  chip: 18,
+  card: 12,
+  pill: 22,
+  tile: 10,
+  chip: 16,
 } as const;
 
 export const space = {
-  xs: 4, s: 8, m: 12, l: 16, xl: 24,
+  xs: 4, s: 6, m: 10, l: 14, xl: 20,
 } as const;
 
 export const shadow = {
   card: {
     shadowColor: '#0F172A',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
     elevation: 2,
   },
   fab: {

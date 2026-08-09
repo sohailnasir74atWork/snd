@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import type {
-  CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
+  Area, CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
   Order, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
 import { DEFAULT_VISIBILITY, EMPTY_DAY, todayKey, tomorrowKey } from './models';
@@ -24,13 +24,26 @@ const seedProducts: Product[] = [
     tradePrice: 750, mrp: 895, stockQty: 180, committedQty: 0, active: true },
 ];
 
+/** The demo areas — the same list the owner would build in Areas. */
+const seedAreas: Area[] = [
+  { id: 'a1', name: 'Saddar', active: true },
+  { id: 'a2', name: 'Cantt', active: true },
+];
+
+// Real Lahore coordinates, and pinned on purpose: the demo is the only place
+// the area sweep can be seen working before the field has pinned anything.
+// s3 is deliberately left unpinned so the "not on the map yet" case shows too.
+const pin = (lat: number, lng: number) => ({ lat, lng, accuracyM: 8, savedAt: now, savedBy: 'demo' });
+
 const seedShops: Shop[] = [
   { id: 's1', name: 'Beauty Corner', ownerName: 'Rashid', phone: '923001234567', area: 'Saddar',
     outstanding: 2300, standingDiscountPercent: 0, active: true,
+    location: pin(31.5580, 74.3280),
     lastVisitAt: now - 8 * 86400_000,
     lastOrderSummary: [{ productId: 'p1', qty: 6 }, { productId: 'p2', qty: 4 }] },
   { id: 's2', name: 'Glow Mart', ownerName: 'Naveed', phone: '923009876543', area: 'Saddar',
     outstanding: 0, standingDiscountPercent: 0, active: true,
+    location: pin(31.5595, 74.3310),
     lastVisitAt: now - 9 * 86400_000,
     lastOrderSummary: [{ productId: 'p2', qty: 12 }] },
   { id: 's3', name: 'City Cosmetics', ownerName: 'Imran', phone: '923215551234', area: 'Cantt',
@@ -56,6 +69,7 @@ const seedSettings: CompanySettings = {
 interface StoreState {
   products: Product[];
   shops: Shop[];
+  areas: Area[];
   orders: Order[];
   payments: Payment[];
   day: DayState;
@@ -72,6 +86,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = React.useState<StoreState>({
     products: seedProducts,
     shops: seedShops,
+    areas: seedAreas,
     orders: [],
     payments: [],
     day: EMPTY_DAY(),
@@ -93,6 +108,9 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   const api: StoreApi = {
     ...state,
     ready: true,
+    // Nothing in preview mode ever leaves the phone, so nothing is ever queued.
+    pendingWrites: 0,
+    async flushPendingWrites() { return true; },
     // Preview stand-ins: the demo's single rider is the only staff member.
     staffDays: state.day.handedOver ? [{ ...state.day, staffId: 'rider' }] : [],
     staffNames: { rider: 'Delivery Rider (demo)', booker: 'Order Booker (demo)' },
@@ -319,12 +337,14 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       }));
     },
 
-    addShop({ openingBalance, ...s }: ShopInput) {
+    addShop({ openingBalance, location, ...s }: ShopInput) {
       setState(st => ({
         ...st,
         shops: [...st.shops, {
           id: `s${Date.now()}`, outstanding: openingBalance && openingBalance > 0 ? openingBalance : 0,
           active: true, standingDiscountPercent: s.standingDiscountPercent ?? 0, ...s,
+          // Stamped by the store, exactly as firestoreStore does it.
+          ...(location ? { location: { ...location, savedAt: Date.now(), savedBy: 'demo' } } : {}),
         }],
       }));
     },
@@ -333,6 +353,53 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       setState(st => ({
         ...st,
         shops: st.shops.map(s => (s.id === id ? { ...s, ...patch } : s)),
+      }));
+    },
+
+    setShopLocation(shopId, fix) {
+      setState(st => ({
+        ...st,
+        shops: st.shops.map(s => (s.id === shopId
+          ? { ...s, location: { ...fix, savedAt: Date.now(), savedBy: 'demo' } }
+          : s)),
+      }));
+    },
+
+    setShopPhoto(shopId, photoUrl) {
+      setState(st => ({
+        ...st,
+        shops: st.shops.map(s => (s.id === shopId ? { ...s, photoUrl } : s)),
+      }));
+    },
+
+    addArea(name) {
+      const clean = name.trim();
+      if (!clean) return;
+      setState(st => (st.areas.some(a => a.name.toLowerCase() === clean.toLowerCase())
+        ? st
+        : { ...st, areas: [...st.areas, { id: `a${Date.now()}`, name: clean, active: true }] }));
+    },
+
+    // Renames the shops too, exactly as firestoreStore does — a shop left on
+    // the old name would vanish from the area it belongs to.
+    renameArea(id, name) {
+      const clean = name.trim();
+      if (!clean) return;
+      setState(st => {
+        const before = st.areas.find(a => a.id === id);
+        if (!before || before.name === clean) return st;
+        return {
+          ...st,
+          areas: st.areas.map(a => (a.id === id ? { ...a, name: clean } : a)),
+          shops: st.shops.map(s => (s.area === before.name ? { ...s, area: clean } : s)),
+        };
+      });
+    },
+
+    setAreaActive(id, active) {
+      setState(st => ({
+        ...st,
+        areas: st.areas.map(a => (a.id === id ? { ...a, active } : a)),
       }));
     },
 
@@ -416,6 +483,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       setState(st => ({
         ...st,
         rewardStaff: [...st.rewardStaff, { id: `rs${Date.now()}`, ...s, active: true, addedBy: 'booker' }],
+      }));
+    },
+
+    setRewardStaffActive(id, active) {
+      setState(st => ({
+        ...st,
+        rewardStaff: st.rewardStaff.map(r => (r.id === id ? { ...r, active } : r)),
       }));
     },
 

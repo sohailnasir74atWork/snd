@@ -13,7 +13,7 @@
  * say "Provisional" honestly, and the shop is never shown two different
  * "final" numbers.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { kv } from './kv';
 
 export type SerialKind = 'order' | 'invoice' | 'receipt' | 'reward';
 
@@ -23,11 +23,16 @@ const PREFIX: Record<SerialKind, string> = {
 
 const LOCAL_KEY = 'snd.localSerialCounter';
 
-/** Monotonic per-device counter so two offline documents never collide. */
-export async function nextLocalRef(kind: SerialKind): Promise<string> {
-  const raw = await AsyncStorage.getItem(LOCAL_KEY);
-  const n = (raw ? parseInt(raw, 10) : 0) + 1;
-  await AsyncStorage.setItem(LOCAL_KEY, String(n));
+/**
+ * Monotonic per-device counter so two offline documents never collide.
+ *
+ * Synchronous on purpose: read and write now happen in one tick, so two
+ * documents created back to back with no signal cannot both read the counter
+ * before either has incremented it.
+ */
+export function nextLocalRef(kind: SerialKind): string {
+  const n = (kv.getNumber(LOCAL_KEY) ?? 0) + 1;
+  kv.set(LOCAL_KEY, n);
   // Device-scoped, obviously-temporary shape: LOCAL-ORD-7
   return `LOCAL-${PREFIX[kind]}-${n}`;
 }

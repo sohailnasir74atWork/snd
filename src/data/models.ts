@@ -17,6 +17,46 @@ export interface Product {
   photoUrl?: string;
 }
 
+/**
+ * A round — the patch of town a booker sweeps in one go.
+ *
+ * Shops still store the area's NAME, not its id. That is deliberate: every
+ * shop that already exists carries a free-typed name, and every order carries
+ * a frozen `shopSnapshot.area` copy of it. Keying on an id would mean
+ * rewriting all of both to gain nothing a name does not already do — so the
+ * area list governs what can be CHOSEN, and renaming fans the new name out to
+ * the shops that were using the old one.
+ */
+export interface Area {
+  id: string;
+  name: string;
+  /** Retired areas stay on old shops but disappear from every picker. */
+  active: boolean;
+}
+
+/**
+ * Where a shop actually is — dropped by whoever was standing at the counter.
+ *
+ * `savedAt` is the phone's clock, not a server timestamp, and deliberately so:
+ * nothing computes off it, it exists only to show the owner how old a pin is,
+ * and a plain number is readable offline the instant it is written instead of
+ * arriving as a null that has to be estimated (the bug that made a just-visited
+ * shop read back as "never visited" — see the shops listener).
+ */
+export interface ShopLocation {
+  lat: number;
+  lng: number;
+  /**
+   * GPS accuracy in metres when it was saved. A 5-metre pin and a 200-metre
+   * pin look identical on a map; this is the only thing that says which one
+   * to walk to. A bazaar street is ~15 m wide, so anything above that is
+   * pointing at the block, not the door.
+   */
+  accuracyM: number;
+  savedAt: number;
+  savedBy: string;
+}
+
 export interface Shop {
   id: string;
   name: string;
@@ -24,6 +64,10 @@ export interface Shop {
   phone: string;
   area: string;
   address?: string;
+  /** Set once someone stood there and saved it. Absent on every older shop. */
+  location?: ShopLocation;
+  /** Shopfront photo on the CDN — what the next person looks for from the road. */
+  photoUrl?: string;
   outstanding: number;
   standingDiscountPercent: number;
   lastVisitAt?: number;
@@ -178,6 +222,10 @@ export function todayKey(d: Date = new Date()): string {
 
 export function tomorrowKey(d: Date = new Date()): string {
   return todayKey(new Date(d.getTime() + 86400_000));
+}
+
+export function yesterdayKey(d: Date = new Date()): string {
+  return todayKey(new Date(d.getTime() - 86400_000));
 }
 
 export const EMPTY_DAY = (date = todayKey()): DayState => ({

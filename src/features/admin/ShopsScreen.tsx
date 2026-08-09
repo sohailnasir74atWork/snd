@@ -1,16 +1,23 @@
 /**
  * Admin — Shops. Grouped by area (same grouping as the booker's route), plus
  * the SRS two-field "Add shop" form: name + mobile up front, everything else
- * behind "More". Existing-area chips stop "Saddar"/"Sadar" fragmentation.
+ * behind "More".
+ *
+ * Areas are PICKED here, never typed — they are defined once in More → Areas.
+ * Chips beside a free-text box were meant to stop "Saddar"/"Sadar"
+ * fragmentation and did not: the box was always right there.
  */
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
+import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Shop } from '../../data/models';
+import { AreaSelect } from '../../components/AreaSelect';
+import { CounterStaffSection } from './CounterStaffSection';
 
 const DISCOUNT_CHIPS = [0, 2, 5];
 
@@ -35,7 +42,10 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
   const [khataDir, setKhataDir] = React.useState<'down' | 'up'>('down');
   const [payText, setPayText] = React.useState('');
   const [payMode, setPayMode] = React.useState<'cash' | 'transfer'>('transfer');
-  const [busy, setBusy] = React.useState(false);
+  // `collect` really is awaitable (it allocates a receipt serial), so it keeps
+  // its own busy state; everything else here is a fire-and-forget write.
+  const [recording, setRecording] = React.useState(false);
+  const { isBusy, run } = useWriteGuard();
 
   const khataDelta = toRupees(khataText);
   const payAmount = Math.min(toRupees(payText), shop.outstanding);
@@ -44,13 +54,18 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
     <Card style={styles.tightCard}>
       <View style={styles.formHead}>
         <IconTile name="storefront-outline" size={34} />
-        <Text style={styles.formTitle}>{shop.name}</Text>
+        {/* A long shop name used to run past the card edge here — it now takes
+            the remaining width and wraps. */}
+        <Text style={styles.formTitle} numberOfLines={2}>{shop.name}</Text>
       </View>
 
       <Field label="Shop name" value={name} onChange={setName} placeholder={shop.name} />
       <Field label="Mobile number" value={phone} onChange={setPhone}
         placeholder="03xx xxxxxxx" keyboardType="phone-pad" />
-      <Field label="Area" value={area} onChange={setArea} placeholder="Area" />
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Area</Text>
+        <AreaSelect value={area} onChange={setArea} />
+      </View>
       <Field label="Owner's name" value={ownerName} onChange={setOwnerName} placeholder="Who runs the shop" />
       <View style={styles.field}>
         <Text style={styles.fieldLabel}>Standing discount</Text>
@@ -60,7 +75,8 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
         label="Save details" icon="check-circle-outline"
         disabled={name.trim().length === 0 || phone.trim().length === 0}
         disabledReason="Name and mobile first"
-        onPress={() => {
+        busy={isBusy('details')}
+        onPress={() => run('details', () => {
           store.updateShop(shop.id, {
             name: name.trim(), phone: phone.trim(), area: area.trim(),
             // Empty string, not undefined: undefined is stripped before the
@@ -68,11 +84,11 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
             ownerName: ownerName.trim(), standingDiscountPercent: discount,
           });
           onClose();
-        }}
+        })}
       />
 
       <View style={styles.divider} />
-      <Text style={styles.fieldLabel}>
+      <Text style={styles.fieldLabel} numberOfLines={2}>
         Khata correction — owes Rs {shop.outstanding.toLocaleString()} now
       </Text>
       <OptionBar
@@ -86,17 +102,19 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
         keyboardType="number-pad" placeholder="0" placeholderTextColor={color.textFaint} />
       {khataDelta > 0 && (
         <View style={styles.rowWrap}>
+          {/* The khata moves by an atomic increment, so confirming twice took
+              the correction off the balance twice. */}
           <Chip small selected label={`Apply ${khataDir === 'down' ? '−' : '+'}Rs ${khataDelta.toLocaleString()}`}
-            onPress={() =>
+            onPress={isBusy('khata') ? undefined : () =>
               Alert.alert('Adjust the khata?',
                 `${shop.name}: Rs ${shop.outstanding.toLocaleString()} → Rs ${(shop.outstanding + (khataDir === 'down' ? -khataDelta : khataDelta)).toLocaleString()}`,
                 [
                   { text: 'Back', style: 'cancel' },
-                  { text: 'Apply', onPress: () => {
+                  { text: 'Apply', onPress: () => run('khata', () => {
                       store.adjustShopBalance(shop.id, khataDir === 'down' ? -khataDelta : khataDelta,
                         khataDir === 'down' ? 'manual reduction' : 'manual increase');
                       setKhataText('');
-                    } },
+                    }) },
                 ])
             } />
         </View>
@@ -120,9 +138,9 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
               {/* Clear the field FIRST: a second tap while the receipt serial
                   is still in flight would otherwise take the money twice. */}
               <Chip small selected
-                label={busy ? 'Recording…' : `Record Rs ${payAmount.toLocaleString()} received`}
-                onPress={busy ? undefined : async () => {
-                  setBusy(true);
+                label={recording ? 'Recording…' : `Record Rs ${payAmount.toLocaleString()} received`}
+                onPress={recording ? undefined : async () => {
+                  setRecording(true);
                   const amt = payAmount;
                   setPayText('');
                   try {
@@ -131,7 +149,7 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
                     Alert.alert('Not recorded', e instanceof Error ? e.message : String(e));
                     setPayText(String(amt));
                   } finally {
-                    setBusy(false);
+                    setRecording(false);
                   }
                 }} />
             </View>
@@ -139,11 +157,17 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
         </>
       )}
 
+      {/* The people who sell for us at this counter, in the one place anyone
+          would look for them. */}
+      <CounterStaffSection shop={shop} />
+
       <View style={styles.divider} />
       <View style={styles.rowWrap}>
         <Chip small danger={shop.active}
           label={shop.active ? 'Deactivate shop' : 'Reactivate shop'}
-          onPress={() => { store.updateShop(shop.id, { active: !shop.active }); onClose(); }} />
+          onPress={isBusy('active') ? undefined : () => run('active', () => {
+            store.updateShop(shop.id, { active: !shop.active }); onClose();
+          })} />
         <Chip small label="Close" onPress={onClose} />
       </View>
     </Card>
@@ -171,9 +195,13 @@ function Field({ label, value, onChange, placeholder, keyboardType }: {
 
 export function ShopsScreen() {
   const store = useStore();
+  const { isBusy, run } = useWriteGuard();
   const shops = store.shops;
   const byArea = [...new Set(shops.map(s => s.area))];
-  const knownAreas = [...new Set(shops.map(s => s.area).filter(a => a.trim().length > 0))];
+  // Counter staff hang off the shop by shopId, so the row can say whether a
+  // shop has anyone selling for us without opening it.
+  const counterStaffCount = (shopId: string) =>
+    store.rewardStaff.filter(r => r.active && r.shopId === shopId).length;
 
   // ---- add-shop form state ----
   const [adding, setAdding] = React.useState(false);
@@ -194,24 +222,35 @@ export function ShopsScreen() {
     setDiscount(0); setOpeningText(''); setShowMore(false); setAdding(false);
   };
 
+  // Without the guard a second tap made a duplicate shop — carrying a second
+  // copy of the opening khata balance with it.
   const save = () => {
-    store.addShop({
-      name: name.trim(),
-      phone: phone.trim(),
-      area: area.trim(),
-      ownerName: ownerName.trim() ? ownerName.trim() : undefined,
-      address: address.trim() ? address.trim() : undefined,
-      standingDiscountPercent: discount,
-      // The paper khata comes along on day one (audit blocker).
-      openingBalance: toRupees(openingText),
+    run('add', () => {
+      store.addShop({
+        name: name.trim(),
+        phone: phone.trim(),
+        area: area.trim(),
+        ownerName: ownerName.trim() ? ownerName.trim() : undefined,
+        address: address.trim() ? address.trim() : undefined,
+        standingDiscountPercent: discount,
+        // The paper khata comes along on day one (audit blocker).
+        openingBalance: toRupees(openingText),
+      });
+      reset();
     });
-    reset();
   };
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <KeyboardScreen style={styles.screen} contentContainerStyle={styles.content}>
       {shops.length > 0 && (
-        <Text style={styles.subLine}>{shops.length} shops — grouped by area</Text>
+        <Text style={styles.subLine}>
+          {shops.length} shops — grouped by area
+          {/* How far the map has got. The route can only ever visit pinned
+              shops, so this number is the feature's real progress bar. */}
+          {shops.some(s => !s.location)
+            ? ` • ${shops.filter(s => s.location).length} of ${shops.length} pinned`
+            : ' • all pinned'}
+        </Text>
       )}
 
       {!adding && (
@@ -224,7 +263,7 @@ export function ShopsScreen() {
         <Card style={styles.tightCard}>
           <View style={styles.formHead}>
             <IconTile name="storefront-outline" size={34} />
-            <Text style={styles.formTitle}>New shop</Text>
+            <Text style={styles.formTitle} numberOfLines={2}>New shop</Text>
           </View>
 
           <Field label="Shop name" value={name} onChange={setName}
@@ -242,17 +281,7 @@ export function ShopsScreen() {
             <View>
               <View style={styles.field}>
                 <Text style={styles.fieldLabel}>Area</Text>
-                {knownAreas.length > 0 && (
-                  <View style={styles.chipWrap}>
-                    {knownAreas.map(a => (
-                      <Chip small key={a} label={a} selected={area.trim() === a} onPress={() => setArea(a)} />
-                    ))}
-                  </View>
-                )}
-                <TextInput
-                  style={styles.input} value={area} onChangeText={setArea}
-                  placeholder="Tap an area above, or type a new one"
-                  placeholderTextColor={color.textFaint} />
+                <AreaSelect value={area} onChange={setArea} />
               </View>
 
               <Field label="Owner's name" value={ownerName} onChange={setOwnerName}
@@ -282,6 +311,7 @@ export function ShopsScreen() {
             icon="check-circle-outline"
             disabled={!canSave}
             disabledReason="Name and mobile first"
+            busy={isBusy('add')}
             onPress={save}
           />
           <View style={styles.rowWrap}>
@@ -309,13 +339,23 @@ export function ShopsScreen() {
                 <ListRow
                   icon="storefront-outline"
                   title={shop.name}
-                  sub={`${shop.ownerName ? `${shop.ownerName} • ` : ''}${shop.phone}`}
+                  // Counter staff belong to the shop, so the shop's own row is
+                  // where you find out it has any — without opening it.
+                  sub={`${shop.ownerName ? `${shop.ownerName} • ` : ''}${shop.phone}${
+                    counterStaffCount(shop.id) > 0
+                      ? ` • ${counterStaffCount(shop.id)} counter staff`
+                      : ''
+                  }`}
                   right={shop.outstanding > 0
                     ? <Money amount={shop.outstanding} bold color={color.danger} />
                     : undefined}
                 />
                 <View style={styles.rowWrap}>
                   {!shop.active && <Tag label="INACTIVE" tone="warn" />}
+                  {/* The owner sits at a desk, so this is a coverage report,
+                      not a button: an unpinned shop is one the map route will
+                      skip, and this is the only place that fact is visible. */}
+                  {!shop.location && <Tag label="NO PIN" tone="warn" />}
                   <Chip small label="Edit / khata / payment" onPress={() => setEditingId(shop.id)} />
                 </View>
                 {shop.outstanding > 0 && (
@@ -325,13 +365,15 @@ export function ShopsScreen() {
             ))}
         </View>
       ))}
-    </ScrollView>
+    </KeyboardScreen>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
-  content: { paddingTop: space.s, paddingBottom: space.xl },
+  // Extra bottom padding so the save button never ends up flush against the
+  // top of the keyboard.
+  content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
     marginHorizontal: space.l, marginBottom: space.xs,
@@ -340,25 +382,30 @@ const styles = StyleSheet.create({
 
   tightCard: { paddingVertical: space.xs },
   formHead: { flexDirection: 'row', alignItems: 'center', paddingTop: space.s, marginBottom: space.xs },
-  formTitle: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: 10 },
+  formTitle: {
+    flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '600',
+    color: color.text, marginLeft: space.m,
+  },
 
   field: { paddingVertical: space.s },
-  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: 6 },
+  fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,
-    paddingHorizontal: space.m, height: 46,
+    paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
   },
 
-  moreLink: { paddingVertical: space.m, marginTop: space.xs },
+  // Tighter padding, but minHeight keeps the tap target at 40.
+  moreLink: { paddingVertical: space.s, minHeight: 40, justifyContent: 'center', marginTop: space.xs },
   moreLinkText: { fontSize: font.body, fontWeight: '700', color: color.primary },
   owes: { fontSize: font.sub, color: color.danger, textAlign: 'right' },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: space.xs, alignItems: 'center' },
+  areaEmpty: { fontSize: font.sub, color: color.textSub, lineHeight: font.sub + 6, marginBottom: space.xs },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center', gap: space.xs },
   divider: {
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
-    marginTop: space.m, marginBottom: space.s,
+    marginTop: space.s, marginBottom: space.s,
   },
   gapTop: { marginTop: space.s },
 });

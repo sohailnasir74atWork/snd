@@ -3,6 +3,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- FR-12.10: push notifications (Android 13+ runtime prompt) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      Pinning a shop: the booker or rider stands at the counter and saves the
+      spot. FINE is what makes the pin worth having — COARSE is cell-tower
+      accurate, hundreds of metres, which in a dense bazaar points at the wrong
+      street. COARSE is declared alongside it because Android 12+ lets the
+      person grant only the approximate one, and the app must still function
+      (poorly, and it says so) rather than crash. Both are runtime-prompted.
+      No background location: the app never asks where anyone is unless a
+      button was just pressed.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- A phone with no GPS chip can still do everything else. -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <application
       android:name=".MainApplication"
@@ -13,6 +27,11 @@
       android:theme="@style/AppTheme"
       android:usesCleartextTraffic="${usesCleartextTraffic}"
       android:supportsRtl="true">
+      <!-- Substituted from android/local.properties at build time — see the
+           manifestPlaceholders block in app/build.gradle. -->
+      <meta-data
+        android:name="com.google.android.geo.API_KEY"
+        android:value="${MAPS_API_KEY}" />
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

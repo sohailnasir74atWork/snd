@@ -5,7 +5,7 @@
  * pill CTA per screen, quiet secondary text.
  */
 import React from 'react';
-import { Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { formatAmount } from '../lib/money';
 import { color, font, radius, shadow, space } from './theme';
@@ -17,12 +17,12 @@ export const DANGER = color.danger;
 export const OK = color.success;
 
 /** Wrapped vector icon — screens never import the font library directly. */
-export function Icon({ name, size = 22, color: c = color.text }: { name: string; size?: number; color?: string }) {
+export function Icon({ name, size = 20, color: c = color.text }: { name: string; size?: number; color?: string }) {
   return <MCIcon name={name} size={size} color={c} />;
 }
 
 /** Pastel rounded-square icon tile — the Quick Links look. */
-export function IconTile({ name, tint = color.primary, bg = color.primarySoft, size = 44 }: {
+export function IconTile({ name, tint = color.primary, bg = color.primarySoft, size = 38 }: {
   name: string; tint?: string; bg?: string; size?: number;
 }) {
   return (
@@ -74,30 +74,44 @@ export function Segmented({ options, value, onChange }: {
   );
 }
 
-/** The one bold pill CTA per screen (Vyapar's red pill). */
+/**
+ * The one bold pill CTA per screen (Vyapar's red pill).
+ *
+ * `busy` is not decoration. Every button here writes money or stock, and a
+ * second tap while the first write is in flight books the order twice. Passing
+ * `busy` blocks the press AND shows a spinner, so the person can see why
+ * nothing is happening instead of tapping again.
+ */
 export function PrimaryButton({
-  label, onPress, disabled, disabledReason, icon, variant = 'cta',
+  label, onPress, disabled, disabledReason, icon, variant = 'cta', busy, busyLabel,
 }: {
   label: string; onPress: () => void; disabled?: boolean; disabledReason?: string;
-  icon?: string; variant?: 'cta' | 'primary' | 'quiet';
+  icon?: string; variant?: 'cta' | 'primary' | 'quiet'; busy?: boolean; busyLabel?: string;
 }) {
-  const bg = disabled ? color.textFaint
+  const off = disabled || busy;
+  const bg = off ? color.textFaint
     : variant === 'cta' ? color.cta
     : variant === 'primary' ? color.primary
     : color.surface;
-  const fg = variant === 'quiet' && !disabled ? color.primary : color.onDark;
+  const fg = variant === 'quiet' && !off ? color.primary : color.onDark;
   return (
     <Pressable
-      onPress={disabled ? undefined : onPress}
+      onPress={off ? undefined : onPress}
+      disabled={off}
+      accessibilityState={{ disabled: !!off, busy: !!busy }}
       style={[
         styles.pill,
         { backgroundColor: bg },
-        variant === 'quiet' && !disabled && styles.pillQuiet,
-        !disabled && variant !== 'quiet' && shadow.fab,
+        variant === 'quiet' && !off && styles.pillQuiet,
+        !off && variant !== 'quiet' && shadow.fab,
       ]}>
-      {icon ? <MCIcon name={icon} size={19} color={fg} style={{ marginRight: 8 }} /> : null}
-      <Text style={[styles.pillText, { color: fg }]}>
-        {disabled && disabledReason ? disabledReason : label}
+      {busy
+        ? <ActivityIndicator size="small" color={fg} style={styles.pillSpinner} />
+        : icon ? <MCIcon name={icon} size={17} color={fg} style={styles.pillIcon} /> : null}
+      {/* Shrink and wrap rather than run off the pill: several labels carry a
+          shop name and an amount, which is long in the field. */}
+      <Text style={[styles.pillText, { color: fg }]} numberOfLines={2}>
+        {busy ? (busyLabel ?? 'Saving…') : disabled && disabledReason ? disabledReason : label}
       </Text>
     </Pressable>
   );
@@ -120,11 +134,17 @@ export function Tile({ label, value, accent, icon }: {
   return (
     <View style={[styles.tile, shadow.card]}>
       <View style={styles.tileTop}>
-        {icon ? <IconTile name={icon} size={34} tint={accent ?? color.primary}
+        {icon ? <IconTile name={icon} size={30} tint={accent ?? color.primary}
           bg={accent === color.danger ? color.dangerSoft : accent === color.success ? color.successSoft : accent === color.warn ? color.warnSoft : color.primarySoft} /> : null}
-        <Text style={[styles.tileValue, icon ? { marginLeft: 10 } : null]}>{value}</Text>
+        <Text
+          style={[styles.tileValue, icon ? { marginLeft: 8 } : null]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.7}>
+          {value}
+        </Text>
       </View>
-      <Text style={styles.tileLabel}>{label}</Text>
+      <Text style={styles.tileLabel} numberOfLines={2}>{label}</Text>
     </View>
   );
 }
@@ -146,13 +166,15 @@ export function ListRow({ icon, tint, bg, title, sub, right, onPress, chevron }:
 }) {
   return (
     <Pressable onPress={onPress} style={styles.listRow}>
-      {icon ? <IconTile name={icon} tint={tint} bg={bg} size={40} /> : null}
-      <View style={{ flex: 1, marginLeft: icon ? 12 : 0 }}>
-        <Text style={styles.listTitle}>{title}</Text>
-        {sub ? <Text style={styles.listSub}>{sub}</Text> : null}
+      {icon ? <IconTile name={icon} tint={tint} bg={bg} size={34} /> : null}
+      {/* minWidth 0 is what lets a long shop name shrink instead of pushing
+          the amount off the right edge. */}
+      <View style={[styles.listBody, { marginLeft: icon ? 10 : 0 }]}>
+        <Text style={styles.listTitle} numberOfLines={2}>{title}</Text>
+        {sub ? <Text style={styles.listSub} numberOfLines={2}>{sub}</Text> : null}
       </View>
-      {right}
-      {chevron ? <MCIcon name="chevron-right" size={22} color={color.textFaint} /> : null}
+      {right ? <View style={styles.listRight}>{right}</View> : null}
+      {chevron ? <MCIcon name="chevron-right" size={20} color={color.textFaint} /> : null}
     </Pressable>
   );
 }
@@ -170,7 +192,13 @@ export function OptionBar<T extends string | number>({ options, value, onChange,
             key={String(o)}
             onPress={() => onChange(o)}
             style={[styles.optionSeg, active && styles.optionSegActive]}>
-            <Text style={[styles.optionText, active && styles.optionTextActive]}>
+            {/* Joined bars carry up to four labels; shrink the text rather
+                than clip it ("+ old khata" used to lose its tail). */}
+            <Text
+              style={[styles.optionText, active && styles.optionTextActive]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}>
               {render ? render(o) : String(o)}
             </Text>
           </Pressable>
@@ -207,61 +235,66 @@ export function Tag({ label, tone = 'success' }: { label: string; tone?: 'succes
   } as const;
   const [bg, fg] = map[tone];
   return (
-    <View style={{ backgroundColor: bg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start' }}>
-      <Text style={{ color: fg, fontSize: font.tiny, fontWeight: '800', letterSpacing: 0.4 }}>{label}</Text>
+    <View style={{ backgroundColor: bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start' }}>
+      <Text style={{ color: fg, fontSize: font.tiny, fontWeight: '800', letterSpacing: 0.4 }} numberOfLines={1}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.chip,
-    borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, margin: 4,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.chip,
+    borderWidth: 1, borderColor: color.border, backgroundColor: color.surface, margin: 3,
   },
-  chipSmall: { paddingHorizontal: 10, paddingVertical: 5 },
+  chipSmall: { paddingHorizontal: 9, paddingVertical: 4 },
   chipSelected: { backgroundColor: color.primary, borderColor: color.primary },
   chipDanger: { borderColor: color.danger, backgroundColor: color.dangerSoft },
   chipText: { fontSize: font.sub, fontWeight: '600', color: color.textSub },
   chipTextSelected: { color: color.onDark },
   chipTextDanger: { color: color.danger },
 
-  segmentedRow: { flexDirection: 'row', gap: 10, marginHorizontal: space.l, marginVertical: space.s },
+  segmentedRow: { flexDirection: 'row', gap: 8, marginHorizontal: space.l, marginVertical: space.s },
   segment: {
     flex: 1, borderRadius: radius.pill, borderWidth: 1, borderColor: color.border,
-    backgroundColor: color.surface, paddingVertical: 10, alignItems: 'center',
+    backgroundColor: color.surface, paddingVertical: 8, alignItems: 'center',
   },
   segmentActive: { borderColor: color.cta, backgroundColor: color.ctaSoft },
-  segmentText: { fontSize: font.body, fontWeight: '600', color: color.textSub },
+  segmentText: { fontSize: font.sub, fontWeight: '600', color: color.textSub },
   segmentTextActive: { color: color.cta, fontWeight: '700' },
 
   pill: {
-    borderRadius: radius.pill, paddingVertical: 15, paddingHorizontal: 22,
+    borderRadius: radius.pill, paddingVertical: 12, paddingHorizontal: 18,
     alignItems: 'center', justifyContent: 'center', flexDirection: 'row',
-    marginVertical: 8, alignSelf: 'stretch',
+    marginVertical: 6, alignSelf: 'stretch',
   },
   pillQuiet: { borderWidth: 1, borderColor: color.primary },
-  pillText: { fontSize: font.body + 1, fontWeight: '700' },
+  pillIcon: { marginRight: 7 },
+  // Same width as the icon it replaces, so the label does not jump on press.
+  pillSpinner: { marginRight: 7, width: 17 },
+  pillText: { fontSize: font.body, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
 
   tile: {
-    backgroundColor: color.surface, borderRadius: radius.card, padding: 14,
-    margin: 6, minWidth: 150, flexGrow: 1,
+    backgroundColor: color.surface, borderRadius: radius.card, padding: 12,
+    margin: 5, minWidth: 138, flexGrow: 1, flexBasis: 0,
   },
   tileTop: { flexDirection: 'row', alignItems: 'center' },
-  tileValue: { fontSize: font.stat, fontWeight: '800', color: color.text },
-  tileLabel: { fontSize: font.sub, color: color.textSub, marginTop: 6 },
+  tileValue: { fontSize: font.stat, fontWeight: '800', color: color.text, flexShrink: 1 },
+  tileLabel: { fontSize: font.sub, color: color.textSub, marginTop: 4 },
 
   card: {
-    backgroundColor: color.surface, borderRadius: radius.card, padding: 14,
-    marginHorizontal: space.l, marginVertical: 6,
+    backgroundColor: color.surface, borderRadius: radius.card, padding: 12,
+    marginHorizontal: space.l, marginVertical: 5,
   },
-  listRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
-  listTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
+  listRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+  listBody: { flex: 1, minWidth: 0 },
+  listRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
+  listTitle: { fontSize: font.body + 1, fontWeight: '700', color: color.text },
   listSub: { fontSize: font.sub, color: color.textSub, marginTop: 1 },
 
   sectionLabel: {
-    fontSize: font.sub, fontWeight: '800', color: color.textSub,
-    marginHorizontal: space.l, marginTop: space.l, marginBottom: 4,
-    textTransform: 'uppercase', letterSpacing: 0.5,
+    fontSize: font.tiny + 1, fontWeight: '800', color: color.textSub,
+    marginHorizontal: space.l, marginTop: space.m, marginBottom: 3,
+    textTransform: 'uppercase', letterSpacing: 0.6,
   },
 
   optionBar: {
@@ -269,22 +302,22 @@ const styles = StyleSheet.create({
     borderRadius: radius.tile, borderWidth: 1, borderColor: color.border, padding: 3,
   },
   optionSeg: {
-    flex: 1, paddingVertical: 9, borderRadius: radius.tile - 3,
-    alignItems: 'center', justifyContent: 'center',
+    flex: 1, minWidth: 0, paddingVertical: 8, paddingHorizontal: 4,
+    borderRadius: radius.tile - 3, alignItems: 'center', justifyContent: 'center',
   },
   optionSegActive: {
     backgroundColor: color.primary,
-    shadowColor: color.primaryDark, shadowOpacity: 0.35, shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 }, elevation: 3,
+    shadowColor: color.primaryDark, shadowOpacity: 0.3, shadowRadius: 5,
+    shadowOffset: { width: 0, height: 1 }, elevation: 3,
   },
-  optionText: { fontSize: font.sub, fontWeight: '600', color: color.textSub },
+  optionText: { fontSize: font.sub, fontWeight: '600', color: color.textSub, textAlign: 'center' },
   optionTextActive: { color: color.onDark, fontWeight: '800' },
 
-  empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32 },
+  empty: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 28 },
   emptyIcon: {
-    width: 84, height: 84, borderRadius: 42, backgroundColor: color.primarySoft,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 14,
+    width: 68, height: 68, borderRadius: 34, backgroundColor: color.primarySoft,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
   },
   emptyTitle: { fontSize: font.h2, fontWeight: '700', color: color.text, textAlign: 'center' },
-  emptyHint: { fontSize: font.sub, color: color.textSub, textAlign: 'center', marginTop: 6, lineHeight: 19 },
+  emptyHint: { fontSize: font.sub, color: color.textSub, textAlign: 'center', marginTop: 5, lineHeight: 17 },
 });

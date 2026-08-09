@@ -4,7 +4,9 @@
  */
 import React from 'react';
 import LinearGradient from 'react-native-linear-gradient';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Image, KeyboardAvoidingView, Platform, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle,
+} from 'react-native';
 import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Tile,
   color, font, radius, space,
@@ -12,8 +14,78 @@ import {
 import { useStore } from '../../data/store';
 import { strings } from '../../i18n/strings';
 
+/**
+ * Double-tap guard for the store's fire-and-forget writes.
+ *
+ * Those methods return void: there is no promise to await and nothing tells
+ * the screen the write landed, so the only thing that can stop a fumbled
+ * second tap booking the same cash or stock twice is a latch that outlives the
+ * tap. The latch is a ref, so it blocks the second press before React has
+ * re-rendered; it is released on a short timer, so a failed write can never
+ * leave a control dead and a deliberate second action a moment later still
+ * goes through. Keyed, so one row's write never freezes another row's.
+ *
+ * Work that really is awaitable (addEmployee, collect, the CSV export) does
+ * NOT use this — it gets a proper busy state with try/finally instead, because
+ * only there is there something to show a spinner for.
+ */
+export function useWriteGuard(holdMs = 1200) {
+  const [busyKeys, setBusyKeys] = React.useState<readonly string[]>([]);
+  const inFlight = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  React.useEffect(() => {
+    const timers = inFlight.current;
+    return () => { timers.forEach(clearTimeout); timers.clear(); };
+  }, []);
+
+  const run = React.useCallback((key: string, write: () => void) => {
+    if (inFlight.current.has(key)) return; // the second tap writes nothing
+    const release = setTimeout(() => {
+      inFlight.current.delete(key);
+      setBusyKeys(keys => keys.filter(k => k !== key));
+    }, holdMs);
+    inFlight.current.set(key, release);
+    setBusyKeys(keys => [...keys, key]);
+    // Last, so a throw still leaves the release timer armed.
+    write();
+  }, [holdMs]);
+
+  const isBusy = React.useCallback((key: string) => busyKeys.includes(key), [busyKeys]);
+  return { isBusy, run };
+}
+
+/**
+ * Scroll container for every admin screen that has a TextInput. The Android
+ * manifest asks for `adjustResize`, but this app is edge-to-edge (targetSdk
+ * 36) where that alone no longer lifts the field — let alone the save button
+ * under it — clear of the keyboard. `keyboardShouldPersistTaps` is the other
+ * half: without it the first tap on a button only dismisses the keyboard and
+ * the button reads as dead.
+ */
+export function KeyboardScreen({ children, style, contentContainerStyle }: {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <KeyboardAvoidingView
+      style={styles.fill}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView
+        style={style}
+        contentContainerStyle={contentContainerStyle}
+        keyboardShouldPersistTaps="handled">
+        {children}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
 export function AdminActionScreen() {
   const store = useStore();
+  // Every card on this screen moves money, and every one of them stays on
+  // screen until the server round-trip lands — the window a second tap fits in.
+  const { isBusy, run } = useWriteGuard();
   const withStaff = store.payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
   const oldCredit = store.shops.filter(s => s.active && s.outstanding > 0);
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
@@ -22,15 +94,26 @@ export function AdminActionScreen() {
 
   // One card PER PERSON who has handed over: the owner counts one pile of
   // cash and confirms exactly that pile (FR-7.11).
-  const pending = store.staffDays
+  const handedOver = store.staffDays
     .filter(d => d.staffId && d.handedOver && !d.handoverConfirmed)
-    .map(d => ({
-      staffId: d.staffId!,
-      name: store.staffNames[d.staffId!] || 'Staff member',
-      amount: store.payments
-        .filter(p => !p.confirmed && !p.voided && p.collectedBy === d.staffId)
-        .reduce((s, p) => s + p.amount, 0),
-    }));
+    .map(d => d.staffId!);
+
+  // Cash whose holder can no longer hand it over. A removed employee cannot
+  // write his own day doc, so without this card the money he collected before
+  // being removed could never be confirmed by anyone — it just sat outside
+  // every total for good.
+  const stranded = Array.from(
+    new Set(store.payments.filter(p => !p.confirmed && !p.voided).map(p => p.collectedBy)),
+  ).filter(id => !handedOver.includes(id) && !store.staffNames[id]);
+
+  const pending = [...handedOver, ...stranded].map(staffId => ({
+    staffId,
+    name: store.staffNames[staffId] || 'Removed employee',
+    gone: !store.staffNames[staffId],
+    amount: store.payments
+      .filter(p => !p.confirmed && !p.voided && p.collectedBy === staffId)
+      .reduce((s, p) => s + p.amount, 0),
+  }));
   const pendingTotal = pending.reduce((s, h) => s + h.amount, 0);
   const stillOut = withStaff - pendingTotal; // collected but not yet handed over
   const exceptions = store.payments.filter(p => p.exception && !p.confirmed && !p.voided);
@@ -46,12 +129,16 @@ export function AdminActionScreen() {
           <View style={styles.row}>
             <IconTile name="alert-decagram" tint={color.danger} bg={color.dangerSoft} />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>Booker took cash — exception</Text>
-              <Text style={styles.meta}>
+              <Text style={styles.cardTitle} numberOfLines={2}>Booker took cash — exception</Text>
+              <Text style={styles.meta} numberOfLines={2}>
                 {store.staffNames[p.collectedBy] || 'Booker'} • {store.shops.find(s => s.id === p.shopId)?.name ?? 'shop'} • {p.receiptNo}
               </Text>
             </View>
-            <Money amount={p.amount} bold color={color.danger} />
+            {/* The amount never shrinks — a long shop name in the meta line used
+                to push it past the right edge of the card. */}
+            <View style={styles.rowRight}>
+              <Money amount={p.amount} bold color={color.danger} />
+            </View>
           </View>
           <Text style={styles.meta}>
             The shop's khata moves only when you confirm this at the handover.
@@ -65,12 +152,14 @@ export function AdminActionScreen() {
           <View style={styles.row}>
             <IconTile name="gift-outline" tint={color.warn} bg={color.warnSoft} />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>Reward claim — {c.staffName}</Text>
-              <Text style={styles.meta}>
+              <Text style={styles.cardTitle} numberOfLines={2}>Reward claim — {c.staffName}</Text>
+              <Text style={styles.meta} numberOfLines={2}>
                 {c.shopName} • {c.pieces} pcs • shelf {c.shelfCount} • {c.claimNo}
               </Text>
             </View>
-            <Money amount={c.amount} bold />
+            <View style={styles.rowRight}>
+              <Money amount={c.amount} bold />
+            </View>
           </View>
           {c.overLimit && (
             <View style={styles.tagRow}>
@@ -80,11 +169,17 @@ export function AdminActionScreen() {
           {c.photoUrl ? (
             <Image source={{ uri: c.photoUrl }} style={styles.proofPhoto} resizeMode="cover" />
           ) : null}
+          {/* Approving writes the float payout row that pays the reward. The
+              card only leaves once the listener catches up, so a second tap
+              here used to pay the same claim twice — one key covers both
+              chips, so approve-then-reject cannot race either. */}
           <View style={styles.chipRow}>
             <Chip small selected label={strings.rewards.approve}
-              onPress={() => store.decideRewardClaim(c.id, 'approved')} />
+              onPress={isBusy(`claim:${c.id}`) ? undefined
+                : () => run(`claim:${c.id}`, () => store.decideRewardClaim(c.id, 'approved'))} />
             <Chip small danger label={strings.rewards.reject}
-              onPress={() => store.decideRewardClaim(c.id, 'rejected')} />
+              onPress={isBusy(`claim:${c.id}`) ? undefined
+                : () => run(`claim:${c.id}`, () => store.decideRewardClaim(c.id, 'rejected'))} />
           </View>
         </Card>
       ))}
@@ -94,16 +189,27 @@ export function AdminActionScreen() {
           <View style={styles.row}>
             <IconTile name="cash-multiple" />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>{h.name} handed over</Text>
-              <Money amount={h.amount} size={font.stat + 4} bold />
+              <Text style={styles.cardTitle} numberOfLines={2}>
+                {h.gone ? `${h.name} — cash still to settle` : `${h.name} handed over`}
+              </Text>
+              <Money amount={h.amount} size={font.stat + 2} bold />
             </View>
           </View>
-          <Text style={styles.meta}>Count {h.name}'s cash, then confirm — only you can.</Text>
+          <Text style={styles.meta}>
+            {h.gone
+              ? 'Collected before this person was removed. Settle the cash, then confirm.'
+              : `Count ${h.name}'s cash, then confirm — only you can.`}
+          </Text>
+          {/* The card lives until the confirmation comes back down the
+              listener, so the owner sees an unchanged screen and taps again —
+              which re-ran the exception-cash khata adjustment. */}
           <PrimaryButton
             variant="cta"
             icon="check-circle-outline"
             label={`${strings.money.confirm} Rs ${h.amount.toLocaleString()}`}
-            onPress={() => store.confirmHandover(h.staffId)}
+            busy={isBusy(`handover:${h.staffId}`)}
+            busyLabel="Confirming…"
+            onPress={() => run(`handover:${h.staffId}`, () => store.confirmHandover(h.staffId))}
           />
         </Card>
       ))}
@@ -112,7 +218,7 @@ export function AdminActionScreen() {
           <View style={styles.row}>
             <IconTile name="clock-outline" tint={color.warn} bg={color.warnSoft} />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>Rs {stillOut.toLocaleString()} with staff</Text>
+              <Text style={styles.cardTitle} numberOfLines={2}>Rs {stillOut.toLocaleString()} with staff</Text>
               <Text style={styles.meta}>Collected at shops today — confirmation happens at the evening handover.</Text>
             </View>
           </View>
@@ -124,14 +230,16 @@ export function AdminActionScreen() {
           <View style={styles.row}>
             <IconTile name="close-circle-outline" tint={color.danger} bg={color.dangerSoft} />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>
+              <Text style={styles.cardTitle} numberOfLines={2}>
                 {o.shopSnapshot.name} — {o.status === 'cancelled' ? 'cancelled' : 'sent back'}
               </Text>
-              <Text style={styles.meta}>
+              <Text style={styles.meta} numberOfLines={2}>
                 {o.orderNo}{o.undeliveredReason ? ` • ${o.undeliveredReason}` : ''} • stock released
               </Text>
             </View>
-            <Money amount={o.orderedTotals.grandTotal} color={color.textSub} />
+            <View style={styles.rowRight}>
+              <Money amount={o.orderedTotals.grandTotal} color={color.textSub} />
+            </View>
           </View>
         </Card>
       ))}
@@ -141,10 +249,12 @@ export function AdminActionScreen() {
           <View style={styles.row}>
             <IconTile name="alert-circle-outline" tint={color.danger} bg={color.dangerSoft} />
             <View style={styles.rowBody}>
-              <Text style={styles.cardTitle}>{s.name} — credit</Text>
-              <Text style={styles.meta}>{s.area} • {s.ownerName} • {s.collectionFlagged ? 'rider will collect' : 'not yet flagged'}</Text>
+              <Text style={styles.cardTitle} numberOfLines={2}>{s.name} — credit</Text>
+              <Text style={styles.meta} numberOfLines={2}>{s.area} • {s.ownerName} • {s.collectionFlagged ? 'rider will collect' : 'not yet flagged'}</Text>
             </View>
-            <Money amount={s.outstanding} bold color={color.danger} />
+            <View style={styles.rowRight}>
+              <Money amount={s.outstanding} bold color={color.danger} />
+            </View>
           </View>
         </Card>
       ))}
@@ -220,7 +330,8 @@ export function AdminDashboardScreen() {
 
 export function AdminMoreMenu({ navigation }: { navigation: { navigate: (r: string) => void } }) {
   const items: [string, string, string, string][] = [
-    ['storefront-outline', 'Shops', 'add, edit, areas, balances', 'Shops'],
+    ['storefront-outline', 'Shops', 'add, edit, pins, balances', 'Shops'],
+    ['map-marker-radius-outline', 'Areas', 'the rounds a booker covers', 'Areas'],
     ['bottle-tonic-plus-outline', 'Products', 'prices, stock, activate/deactivate', 'Products'],
     ['account-multiple-outline', 'Employees', 'add by Gmail, roles, remove', 'Employees'],
     ['chart-line', 'Reports', 'sales, collections, who owes me', 'Reports'],
@@ -246,32 +357,38 @@ export function AdminMoreMenu({ navigation }: { navigation: { navigate: (r: stri
 }
 
 const styles = StyleSheet.create({
+  // The gradient keeps its literal whites (they sit on colour, not on the
+  // canvas), but the sizes come down to the tightened type scale.
   hero: {
-    marginHorizontal: 16, marginTop: 12, borderRadius: 18, padding: 20,
+    marginHorizontal: space.l, marginTop: space.s, borderRadius: radius.card + 2, padding: space.l + 2,
     shadowColor: '#1D4FD7', shadowOpacity: 0.35, shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
-  heroLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 12, fontWeight: '800', letterSpacing: 1.2 },
-  heroValue: { color: '#FFFFFF', fontSize: 34, fontWeight: '800', marginTop: 4, letterSpacing: -0.5 },
-  heroRow: { flexDirection: 'row', marginTop: 18, alignItems: 'center' },
-  heroStat: { flex: 1 },
-  heroStatValue: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  heroStatLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 2 },
-  heroDivider: { width: 1, height: 30, backgroundColor: 'rgba(255,255,255,0.25)', marginHorizontal: 12 },
+  heroLabel: { color: 'rgba(255,255,255,0.75)', fontSize: font.sub, fontWeight: '800', letterSpacing: 1.2 },
+  heroValue: { color: '#FFFFFF', fontSize: font.h1 + 6, fontWeight: '800', marginTop: 2, letterSpacing: -0.5 },
+  heroRow: { flexDirection: 'row', marginTop: space.l, alignItems: 'center' },
+  heroStat: { flex: 1, minWidth: 0 },
+  heroStatValue: { color: '#FFFFFF', fontSize: font.body, fontWeight: '700' },
+  heroStatLabel: { color: 'rgba(255,255,255,0.7)', fontSize: font.tiny, marginTop: 1 },
+  heroDivider: { width: 1, height: 26, backgroundColor: 'rgba(255,255,255,0.25)', marginHorizontal: space.m },
+  fill: { flex: 1 },
   screen: { flex: 1, backgroundColor: color.bg },
   content: { paddingTop: space.s, paddingBottom: space.xl },
   subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginBottom: space.xs },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: space.s + 2 },
   row: { flexDirection: 'row', alignItems: 'center' },
-  rowBody: { flex: 1, marginLeft: space.m },
+  // minWidth 0 is what lets a long name wrap instead of shoving the amount
+  // beside it off the card.
+  rowBody: { flex: 1, minWidth: 0, marginLeft: space.m },
+  rowRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
   cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
-  meta: { fontSize: font.sub, color: color.textSub, marginTop: space.xs },
+  meta: { fontSize: font.sub, color: color.textSub, marginTop: 2 },
 
   exceptionCard: { borderWidth: 1, borderColor: color.danger },
   tagRow: { flexDirection: 'row', marginTop: space.s },
   proofPhoto: {
-    height: 160, borderRadius: radius.tile, marginTop: space.m,
+    height: 140, borderRadius: radius.tile, marginTop: space.s,
     backgroundColor: color.surfaceAlt,
   },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: space.m },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: space.s },
 });
