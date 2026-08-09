@@ -17,8 +17,23 @@ const {
   assertFails,
   assertSucceeds,
 } = require('@firebase/rules-unit-testing');
+const { setLogLevel } = require('firebase/firestore');
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * Silence the SDK's gRPC chatter.
+ *
+ * Nearly every assertion in this suite is a REFUSAL, and the Firestore client
+ * logs each one as a PERMISSION_DENIED warning with a seven-line stack trace.
+ * A fully passing run printed some 1,700 lines of alarming red for 240 tests
+ * that all did exactly what they should. The denials are the product here, not
+ * an incident — so the log goes quiet and the jest summary speaks.
+ *
+ * A genuine failure still reports through jest with the rule line number,
+ * which is the part that actually helps.
+ */
+setLogLevel('silent');
 
 const PROJECT_ID = 'snd-rules-test';
 

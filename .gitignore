@@ -14,3 +14,8 @@ android/keystore.properties
 android/app/.cxx/
 .DS_Store
 android/.kotlin/
+
+# Firestore emulator scratch — written by `npm run test:rules`
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
