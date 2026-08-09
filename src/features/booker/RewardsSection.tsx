@@ -12,7 +12,7 @@ import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
-import { useStore } from '../../data/store';
+import { useNeed, useStore } from '../../data/store';
 import { capturePhotoBase64 } from '../../lib/photos';
 import { strings } from '../../i18n/strings';
 
@@ -25,6 +25,7 @@ const PIECE_CHIPS = [6, 12, 24];
 
 export function RewardsSection() {
   const store = useStore();
+  useNeed('rewardStaff', 'floatMovements');
 
   // ---- register form ----
   const [registering, setRegistering] = React.useState(false);

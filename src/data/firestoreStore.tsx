@@ -35,6 +35,7 @@ import {
   BookOrderInput, CloseOutInput, CollectionInput, ProductInput,
   RewardClaimInput, RewardStaffInput, ShopInput, StoreApi, StoreContext,
 } from './store';
+import type { LazyKey } from './store';
 import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
 import { mergeById, windowStartDate, windowStartKey } from '../lib/window';
@@ -430,13 +431,12 @@ export function FirestoreStoreProvider({
       }, warn('open payments')));
     }
 
-    // Rewards (FR-16): admin + booker; the rider has no reward screens and
-    // the rules deny him the list.
+    // Reward CLAIMS stay eager: a pending claim is a card on the owner's
+    // Action screen and on the booker's rewards tab, so it has to be there
+    // before anyone navigates. rewardStaff is the list you only need once you
+    // open a rewards screen, so it waits below with the others.
     if (!isRider) {
       subs.push(
-        onSnapshot(collection(db, `${base}/rewardStaff`), s =>
-          setRewardStaff(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<RewardStaff, 'id'>) }))),
-          warn('rewardStaff')),
         onSnapshot(
           isAdmin
             ? collection(db, `${base}/rewardClaims`)
@@ -451,20 +451,6 @@ export function FirestoreStoreProvider({
           })), warn('rewardClaims')),
       );
     }
-    // Float: the owner sees the whole ledger, staff see their own rows.
-    subs.push(
-      onSnapshot(
-        isAdmin
-          ? collection(db, `${base}/floatMovements`)
-          : query(collection(db, `${base}/floatMovements`), where('staffId', '==', user.uid)),
-        s => setFloatMovements(s.docs.map(d => {
-          const data = d.data() as Record<string, unknown>;
-          return {
-            id: d.id, ...(data as unknown as Omit<FloatMovement, 'id'>),
-            createdAt: toMillis(data.createdAt) || Date.now(),
-          } as FloatMovement;
-        })), warn('float')),
-    );
 
     // Owner-only collections — non-admins must not even ask (rules deny the list).
     if (isAdmin) {
@@ -496,23 +482,6 @@ export function FirestoreStoreProvider({
           setStaffNames(m);
           setStaffRoles(r);
         }, warn('users')),
-        onSnapshot(collection(db, `${base}/expenses`), s =>
-          setExpenses(s.docs.map(d => {
-            const data = d.data() as Record<string, unknown>;
-            return { id: d.id, ...(data as unknown as Omit<Expense, 'id'>), date: toMillis(data.date) || Date.now() } as Expense;
-          })), warn('expenses')),
-        onSnapshot(collection(db, `${base}/fixedCharges`), s =>
-          setFixedCharges(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<FixedCharge, 'id'>) }))), warn('charges')),
-        onSnapshot(collection(db, `${base}/employeeList`), s =>
-          setEmployees(s.docs
-            .map(d => {
-              const data = d.data() as Partial<Employee> & { removed?: boolean };
-              // The doc id IS the lowercased email, so it stands in for both
-              // fields when only a partial mirror row exists.
-              return { ...data, email: data.email || d.id, name: data.name || data.email || d.id };
-            })
-            .filter(isUsableEmployee)),
-          warn('employees')),
       );
     }
     return () => subs.forEach(u => u());
@@ -596,6 +565,85 @@ export function FirestoreStoreProvider({
     () => (isAdmin ? unassignedOf(orders, staffNames) : []),
     [isAdmin, orders, staffNames],
   );
+
+  /**
+   * Collections nobody needs until they open the screen that shows them.
+   *
+   * These five used to attach at sign-in on every phone, so a rider who never
+   * opens Expenses still paid to sync every expense the owner ever typed. A
+   * screen declares what it needs (`useNeed`) and the listener starts then.
+   *
+   * Once started it is NEVER detached for the rest of the session. That is
+   * deliberate: Firestore re-bills a listener that has been disconnected for
+   * more than 30 minutes as a brand-new query, so attach/detach churn on
+   * navigation would cost more than never lazy-loading at all. This buys the
+   * FIRST read, not every read.
+   */
+  const [needed, setNeeded] = React.useState<readonly LazyKey[]>([]);
+  const need = React.useCallback((key: LazyKey) => {
+    setNeeded(prev => (prev.includes(key) ? prev : [...prev, key]));
+  }, []);
+  // Each gate is its own boolean so a newly-needed collection cannot tear down
+  // and re-read the ones already running.
+  const wantExpenses = needed.includes('expenses');
+  const wantCharges = needed.includes('fixedCharges');
+  const wantEmployees = needed.includes('employeeList');
+  const wantFloat = needed.includes('floatMovements');
+  const wantRewardStaff = needed.includes('rewardStaff');
+
+  React.useEffect(() => {
+    if (!wantExpenses || !isAdmin) return;
+    return onSnapshot(collection(db, `${base}/expenses`), s =>
+      setExpenses(s.docs.map(d => {
+        const data = d.data() as Record<string, unknown>;
+        return { id: d.id, ...(data as unknown as Omit<Expense, 'id'>), date: toMillis(data.date) || Date.now() } as Expense;
+      })), e => console.warn('[snd] expenses listener error', e));
+  }, [wantExpenses, isAdmin, base]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (!wantCharges || !isAdmin) return;
+    return onSnapshot(collection(db, `${base}/fixedCharges`), s =>
+      setFixedCharges(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<FixedCharge, 'id'>) }))),
+      e => console.warn('[snd] fixedCharges listener error', e));
+  }, [wantCharges, isAdmin, base]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (!wantEmployees || !isAdmin) return;
+    return onSnapshot(collection(db, `${base}/employeeList`), s =>
+      setEmployees(s.docs
+        .map(d => {
+          const data = d.data() as Partial<Employee> & { removed?: boolean };
+          // The doc id IS the lowercased email, so it stands in for both
+          // fields when only a partial mirror row exists.
+          return { ...data, email: data.email || d.id, name: data.name || data.email || d.id };
+        })
+        .filter(isUsableEmployee)),
+      e => console.warn('[snd] employees listener error', e));
+  }, [wantEmployees, isAdmin, base]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Float: the owner sees the whole ledger, staff see their own rows.
+  React.useEffect(() => {
+    if (!wantFloat) return;
+    return onSnapshot(
+      isAdmin
+        ? collection(db, `${base}/floatMovements`)
+        : query(collection(db, `${base}/floatMovements`), where('staffId', '==', user.uid)),
+      s => setFloatMovements(s.docs.map(d => {
+        const data = d.data() as Record<string, unknown>;
+        return {
+          id: d.id, ...(data as unknown as Omit<FloatMovement, 'id'>),
+          createdAt: toMillis(data.createdAt) || Date.now(),
+        } as FloatMovement;
+      })), e => console.warn('[snd] float listener error', e));
+  }, [wantFloat, isAdmin, base, user.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Rewards (FR-16): admin + booker; the rules deny a rider the list.
+  React.useEffect(() => {
+    if (!wantRewardStaff || isRider) return;
+    return onSnapshot(collection(db, `${base}/rewardStaff`), s =>
+      setRewardStaff(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<RewardStaff, 'id'>) }))),
+      e => console.warn('[snd] rewardStaff listener error', e));
+  }, [wantRewardStaff, isRider, base]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Everyone who can be put on a round, by the job they do. Admin-only. */
   const staffOfRole = (want: Role, fallbackName: string) =>
@@ -719,7 +767,7 @@ export function FirestoreStoreProvider({
     products: productsView, shops, areas, orders, payments, settings, employees,
     staffDays, staffNames, expenses, fixedCharges,
     rewardStaff, rewardClaims, floatMovements, day, ready,
-    riders, bookers, routeShops, unassignedOrders,
+    riders, bookers, routeShops, unassignedOrders, need,
     pendingWrites: pendingOrders + pendingPayments,
 
     riderForShop(shopId) {

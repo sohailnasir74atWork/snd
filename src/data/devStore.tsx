@@ -121,6 +121,8 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     // The demo books everything to its one rider, so nothing is ever orphaned.
     unassignedOrders: [],
     riderForShop() { return 'rider'; },
+    // Nothing is lazy in preview mode: the whole demo is already in memory.
+    need() {},
 
     bookOrder(input: BookOrderInput): Order {
       const shop = state.shops.find(s => s.id === input.shopId)!;

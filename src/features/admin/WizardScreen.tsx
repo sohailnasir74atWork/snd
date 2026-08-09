@@ -12,7 +12,7 @@ import {
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
-import { useStore } from '../../data/store';
+import { useNeed, useStore } from '../../data/store';
 import type { Employee, Product } from '../../data/models';
 import { digitsOnly } from '../../lib/phone';
 
@@ -443,6 +443,9 @@ const ROLE_SHORT: Record<Employee['role'], string> = {
 
 function TeamStep({ onFinish }: { onFinish: () => void }) {
   const store = useStore();
+  // The last-admin guard below counts this list, so it has to be synced before
+  // the guard can mean anything.
+  useNeed('employeeList');
   const [email, setEmail] = React.useState('');
   const [name, setName] = React.useState('');
   const [role, setRole] = React.useState<Employee['role']>('admin');

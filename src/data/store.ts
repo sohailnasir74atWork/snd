@@ -10,6 +10,21 @@ import type {
   Order, OrderItem, Payment, Product, RewardClaim, RewardStaff, Shop, ShopLocation,
 } from './models';
 
+/**
+ * Collections that are only synced once a screen asks for them.
+ *
+ * Everything else attaches at sign-in because the field flow needs it before
+ * anyone navigates anywhere. These five do not: a rider who never opens
+ * Expenses should not be paying to sync the owner's expense history, and on a
+ * phone with a year of data that is a real fraction of every cold start.
+ */
+export type LazyKey =
+  | 'expenses'
+  | 'fixedCharges'
+  | 'employeeList'
+  | 'floatMovements'
+  | 'rewardStaff';
+
 export interface BookOrderInput {
   shopId: string;
   items: OrderItem[];
@@ -192,6 +207,15 @@ export interface StoreApi {
   setAreaRider(id: string, riderId: string | null): void;
   /** Give a round to a booker, or take it back (null) — his territory. */
   setAreaBooker(id: string, bookerId: string | null): void;
+  /**
+   * Start syncing a collection this screen needs. Prefer the `useNeed` hook.
+   *
+   * Idempotent, and once started the listener runs for the rest of the
+   * session — Firestore re-bills a listener disconnected for over 30 minutes
+   * as a brand-new query, so detaching on navigation would cost more than it
+   * saves. This buys the first read, not every read.
+   */
+  need(key: LazyKey): void;
   /** Hand ONE order to a van. The owner's answer to `unassignedOrders`. */
   assignOrder(orderId: string, riderId: string): void;
   /** Manual khata correction (returns, bounced cheques, paper-era fixes). */
@@ -240,4 +264,23 @@ export function useStore(): StoreApi {
   const ctx = React.useContext(StoreContext);
   if (!ctx) throw new Error('useStore outside a store provider');
   return ctx;
+}
+
+/**
+ * Declare what this screen reads. Call it at the top of any component that
+ * touches a lazy collection — including one that only reads a COUNT of it,
+ * which is the easy case to forget and shows up as a permanent zero.
+ *
+ *   useNeed('expenses', 'fixedCharges');
+ *
+ * Safe to call from several screens for the same key; the first one starts the
+ * listener and the rest are no-ops.
+ */
+export function useNeed(...keys: LazyKey[]): void {
+  const { need } = useStore();
+  // The key list is spread into the dep array, so a screen with a fixed set of
+  // keys re-runs this only when one of them actually changes.
+  React.useEffect(() => {
+    keys.forEach(need);
+  }, [need, ...keys]); // eslint-disable-line react-hooks/exhaustive-deps
 }

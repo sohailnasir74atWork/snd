@@ -10,7 +10,7 @@ import {
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
-import { useStore } from '../../data/store';
+import { useNeed, useStore } from '../../data/store';
 import type { Employee } from '../../data/models';
 
 const FLOAT_STEPS = [1000, 2000, 5000] as const;
@@ -22,6 +22,10 @@ const FLOAT_STEPS = [1000, 2000, 5000] as const;
  */
 function FloatSection() {
   const store = useStore();
+  // floatMovements as well as the list: floatBalance() below is computed from
+  // it, and without the declaration every staff member's cash float would
+  // render a confident Rs 0 instead of what he is actually holding.
+  useNeed('employeeList', 'floatMovements');
   // Float chips hand out real cash and the row stays put after the write, so
   // this is the screen's worst double-tap: +1,000 twice issued Rs 2,000.
   const { isBusy, run } = useWriteGuard();

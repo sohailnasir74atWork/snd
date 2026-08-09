@@ -10,7 +10,7 @@ import {
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
-import { useStore } from '../../data/store';
+import { useNeed, useStore } from '../../data/store';
 import type { Expense } from '../../data/models';
 
 const CATEGORIES: { key: Expense['category']; label: string }[] = [
@@ -49,6 +49,7 @@ function dayLabel(ts: number): string {
 
 export function ExpensesScreen() {
   const store = useStore();
+  useNeed('expenses', 'fixedCharges', 'employeeList');
   const { isBusy, run } = useWriteGuard();
 
   // ---- one-off expense form ----

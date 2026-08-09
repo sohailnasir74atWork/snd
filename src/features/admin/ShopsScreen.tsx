@@ -14,7 +14,7 @@ import {
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
-import { useStore } from '../../data/store';
+import { useNeed, useStore } from '../../data/store';
 import type { Shop } from '../../data/models';
 import { AreaSelect } from '../../components/AreaSelect';
 import { CounterStaffSection } from './CounterStaffSection';
@@ -33,6 +33,7 @@ function toRupees(text: string): number {
  */
 function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
   const store = useStore();
+  useNeed('rewardStaff');
   const [name, setName] = React.useState(shop.name);
   const [phone, setPhone] = React.useState(shop.phone);
   const [area, setArea] = React.useState(shop.area);

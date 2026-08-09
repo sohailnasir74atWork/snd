@@ -16,11 +16,12 @@ import React from 'react';
 import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Card, Chip, ListRow, PrimaryButton, Tag, color, font, radius, space } from '../../components/ui';
 import { useWriteGuard } from './AdminScreens';
-import { useStore } from '../../data/store';
+import { useNeed, useStore } from '../../data/store';
 import type { RewardStaff, Shop } from '../../data/models';
 
 export function CounterStaffSection({ shop }: { shop: Shop }) {
   const store = useStore();
+  useNeed('rewardStaff');
   const { isBusy, run } = useWriteGuard();
   const [adding, setAdding] = React.useState(false);
   const [name, setName] = React.useState('');
