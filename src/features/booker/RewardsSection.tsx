@@ -25,7 +25,7 @@ const PIECE_CHIPS = [6, 12, 24];
 
 export function RewardsSection() {
   const store = useStore();
-  useNeed('rewardStaff', 'floatMovements');
+  useNeed('floatMovements');
 
   // ---- register form ----
   const [registering, setRegistering] = React.useState(false);

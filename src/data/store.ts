@@ -14,7 +14,7 @@ import type {
  * Collections that are only synced once a screen asks for them.
  *
  * Everything else attaches at sign-in because the field flow needs it before
- * anyone navigates anywhere. These five do not: a rider who never opens
+ * anyone navigates anywhere. These four do not: a rider who never opens
  * Expenses should not be paying to sync the owner's expense history, and on a
  * phone with a year of data that is a real fraction of every cold start.
  */
@@ -22,8 +22,7 @@ export type LazyKey =
   | 'expenses'
   | 'fixedCharges'
   | 'employeeList'
-  | 'floatMovements'
-  | 'rewardStaff';
+  | 'floatMovements';
 
 export interface BookOrderInput {
   shopId: string;
@@ -71,7 +70,10 @@ export interface ShopInput {
 }
 
 export interface RewardStaffInput {
-  name: string; phone: string; shopId: string;
+  name: string;
+  /** Optional — plenty of counter staff are known by name and face only. */
+  phone?: string;
+  shopId: string;
 }
 
 export interface RewardClaimInput {
@@ -195,7 +197,14 @@ export interface StoreApi {
    */
   setShopLocation(shopId: string, fix: { lat: number; lng: number; accuracyM: number }): void;
   setShopPhoto(shopId: string, photoUrl: string): void;
-  /** Owner-only: the area list is what every shop form is allowed to pick from. */
+  /**
+   * Add a round. Owner from More → Areas, booker from the shop form's area
+   * sheet when what he typed matches nothing — he is the one standing in a
+   * street the company has never worked.
+   *
+   * Creating only. Renaming, retiring and putting a rider or booker on a round
+   * stay the owner's, enforced in firestore.rules.
+   */
   addArea(name: string): void;
   /** Renames the area AND every shop still filed under the old name. */
   renameArea(id: string, name: string): void;

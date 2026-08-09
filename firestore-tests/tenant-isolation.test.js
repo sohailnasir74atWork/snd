@@ -44,7 +44,6 @@ const COLLECTIONS = {
   fixedCharges: { amount: 20000, name: 'Rent', active: true },
   productCosts: { costPrice: 600 },
   employeeList: { email: 'x@y.com', name: 'X', role: 'rider', joined: true, removed: false },
-  rewardStaff: { name: 'Salman', shopId: 's1', active: true },
   rewardClaims: { by: 'a-booker', staffId: 'rs1', pieces: 5, amount: 200, status: 'pending' },
   floatMovements: { staffId: 'a-rider', amount: 2000, kind: 'issue' },
   stockMovements: { productId: 'p1', delta: 10, note: 'restock' },

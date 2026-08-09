@@ -6,7 +6,7 @@
 import React from 'react';
 import type {
   Area, CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
-  Order, Payment, Product, RewardClaim, RewardStaff, Shop,
+  Order, Payment, Product, RewardClaim, Shop,
 } from './models';
 import { DEFAULT_VISIBILITY, EMPTY_DAY, todayKey, tomorrowKey } from './models';
 import {
@@ -38,6 +38,10 @@ const pin = (lat: number, lng: number) => ({ lat, lng, accuracyM: 8, savedAt: no
 const seedShops: Shop[] = [
   { id: 's1', name: 'Beauty Corner', ownerName: 'Rashid', phone: '923001234567', area: 'Saddar',
     outstanding: 2300, standingDiscountPercent: 0, active: true,
+    // Counter staff live on their shop now — same as the real store.
+    counterStaff: [
+      { id: 'rs1', name: 'Salman (counter)', phone: '923001112233', active: true, addedBy: 'booker' },
+    ],
     location: pin(31.5580, 74.3280),
     lastVisitAt: now - 8 * 86400_000,
     lastOrderSummary: [{ productId: 'p1', qty: 6 }, { productId: 'p2', qty: 4 }] },
@@ -77,7 +81,6 @@ interface StoreState {
   employees: Employee[];
   expenses: Expense[];
   fixedCharges: FixedCharge[];
-  rewardStaff: RewardStaff[];
   rewardClaims: RewardClaim[];
   floatMovements: FloatMovement[];
 }
@@ -96,9 +99,6 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     ],
     expenses: [],
     fixedCharges: [],
-    rewardStaff: [
-      { id: 'rs1', name: 'Salman (counter)', phone: '923001112233', shopId: 's1', active: true, addedBy: 'booker' },
-    ],
     rewardClaims: [],
     floatMovements: [
       { id: 'f1', staffId: 'booker', amount: 2000, kind: 'issue', createdAt: now - 86400_000 },
@@ -121,6 +121,10 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     // The demo books everything to its one rider, so nothing is ever orphaned.
     unassignedOrders: [],
     riderForShop() { return 'rider'; },
+    // Derived from the shops, same as the real store — two stores that differ
+    // is how two production bugs hid for two rounds (HANDOFF section 3).
+    rewardStaff: state.shops.flatMap(sh =>
+      (sh.counterStaff ?? []).map(cs => ({ ...cs, shopId: sh.id }))),
     // Nothing is lazy in preview mode: the whole demo is already in memory.
     need() {},
 
@@ -512,19 +516,28 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     addRewardStaff(s: RewardStaffInput) {
       setState(st => ({
         ...st,
-        rewardStaff: [...st.rewardStaff, { id: `rs${Date.now()}`, ...s, active: true, addedBy: 'booker' }],
+        shops: st.shops.map(sh => (sh.id === s.shopId
+          ? { ...sh, counterStaff: [...(sh.counterStaff ?? []), {
+              id: `cs${Date.now()}`, name: s.name, active: true, addedBy: 'booker',
+              ...(s.phone ? { phone: s.phone } : {}),
+            }] }
+          : sh)),
       }));
     },
 
     setRewardStaffActive(id, active) {
       setState(st => ({
         ...st,
-        rewardStaff: st.rewardStaff.map(r => (r.id === id ? { ...r, active } : r)),
+        shops: st.shops.map(sh => ((sh.counterStaff ?? []).some(cs => cs.id === id)
+          ? { ...sh, counterStaff: sh.counterStaff!.map(cs => (cs.id === id ? { ...cs, active } : cs)) }
+          : sh)),
       }));
     },
 
     async submitRewardClaim({ staffId, pieces, shelfCount }: RewardClaimInput) {
-      const rStaff = state.rewardStaff.find(r => r.id === staffId)!;
+      const rStaff = state.shops
+        .flatMap(sh => (sh.counterStaff ?? []).map(cs => ({ ...cs, shopId: sh.id })))
+        .find(r => r.id === staffId)!;
       const shop = state.shops.find(sh => sh.id === rStaff.shopId);
       const amount = pieces * state.settings.rewardPerPiece;
       const claimNo = nextSerial('RWD');

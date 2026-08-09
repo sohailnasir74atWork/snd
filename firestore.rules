@@ -102,7 +102,23 @@ service cloud.firestore {
       // taking area creation out of the shop form.
       match /areas/{areaId} {
         allow read: if inCompany(companyId);
-        allow write: if isAdmin(companyId);
+        // A booker may CREATE a round, because he is the one standing in a
+        // street the company has never worked, holding a shop that cannot be
+        // registered without one. Constrained to the four keys `addArea`
+        // actually writes, and `active` must be true — so the create door
+        // cannot be used to smuggle in a riderId or a bookerId.
+        allow create: if isAdmin(companyId)
+                      || (isBooker(companyId)
+                          && request.resource.data.keys()
+                               .hasOnly(['name', 'active', 'createdAt', 'createdBy'])
+                          && request.resource.data.active == true
+                          && request.resource.data.createdBy == request.auth.uid);
+        // Renaming, retiring, and putting people on rounds stay the owner's.
+        // `riderId` decides which van every future order in this area goes to
+        // and `bookerId` decides whose territory it is — a booker who could
+        // write those could redirect the company's deliveries or take a
+        // colleague's shops.
+        allow update, delete: if isAdmin(companyId);
       }
 
       match /shops/{shopId} {
@@ -276,11 +292,15 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      match /rewardStaff/{id} {
-        allow read: if isAdmin(companyId) || isBooker(companyId);
-        allow create, update: if isAdmin(companyId) || isBooker(companyId);
-        allow delete: if false;
-      }
+      // Counter staff USED to live in their own collection here. They are now
+      // a `counterStaff` array on the shop they stand in, so they are governed
+      // by the shops rules above: a booker may write them (he is the one who
+      // signs someone up at the counter), a rider may not — his whitelist is
+      // pins and photos and nothing else.
+      //
+      // The collection is left with no rule at all, which under the default
+      // deny means an old build that still writes to it fails loudly rather
+      // than quietly maintaining a second, divergent list.
 
       match /rewardClaims/{id} {
         allow read: if isAdmin(companyId)

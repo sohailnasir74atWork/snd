@@ -99,6 +99,11 @@ export interface Shop {
   /** Shelf-count collection (FR-16 / §v1 scope) — recorded on booker visits. */
   lastShelfCount?: number;
   lastShelfCountAt?: number;
+  /**
+   * Who sells for us behind this counter (FR-16). Optional and usually empty:
+   * a shop is registered long before anyone agrees to the reward scheme.
+   */
+  counterStaff?: CounterStaff[];
   active: boolean;
 }
 
@@ -191,13 +196,41 @@ export interface Payment {
 // ---- Rewards (FR-16): counter-staff program -------------------------------
 
 /** A shop's counter person registered for the per-piece reward. */
-export interface RewardStaff {
+/**
+ * A counter person, stored ON the shop they stand in.
+ *
+ * They are not our employees — they work behind someone else's counter and
+ * recommend our product for a per-piece reward — so they are a property of the
+ * shop in exactly the way its phone number is. The only question anyone ever
+ * asks is "who sells for us in THIS shop", and the answer now travels with the
+ * shop instead of living in a separate collection you have to go and join.
+ *
+ * Optional and often absent: register a shop today with nobody, find someone
+ * next month, open the shop and add them. An empty list and a missing field
+ * mean the same thing.
+ *
+ * `id` is generated on the device and must never be reused, because
+ * `RewardClaim.staffId` points at it and a claim is a money record that has to
+ * survive the list being edited around it.
+ */
+export interface CounterStaff {
   id: string;
   name: string;
-  phone: string;
-  shopId: string;
+  /** Optional — plenty of counter staff are known by name and face only. */
+  phone?: string;
   active: boolean;
   addedBy: string; // uid
+}
+
+/**
+ * A counter person flattened out with the shop they belong to.
+ *
+ * Derived, never stored — the store builds this from every shop's
+ * `counterStaff` so screens that want one company-wide list (the booker's
+ * rewards tab) do not each have to walk the shops themselves.
+ */
+export interface RewardStaff extends CounterStaff {
+  shopId: string;
 }
 
 export type RewardClaimStatus = 'pending' | 'approved' | 'rejected';

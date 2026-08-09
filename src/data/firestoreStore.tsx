@@ -17,7 +17,7 @@
 import React from 'react';
 import { Alert, PermissionsAndroid, Platform } from 'react-native';
 import {
-  collection, deleteDoc, deleteField, doc, getFirestore, increment, onSnapshot,
+  arrayUnion, collection, deleteDoc, deleteField, doc, getFirestore, increment, onSnapshot,
   query, where, runTransaction, serverTimestamp, setDoc, updateDoc,
   waitForPendingWrites, writeBatch,
 } from '@react-native-firebase/firestore';
@@ -27,8 +27,8 @@ import {
   getMessaging, getToken, onTokenRefresh, requestPermission,
 } from '@react-native-firebase/messaging';
 import type {
-  Area, CompanySettings, DayState, Employee, Expense, FixedCharge, FloatMovement,
-  Order, Payment, Product, RewardClaim, RewardStaff, Shop,
+  Area, CompanySettings, CounterStaff, DayState, Employee, Expense, FixedCharge,
+  FloatMovement, Order, Payment, Product, RewardClaim, RewardStaff, Shop,
 } from './models';
 import { DEFAULT_VISIBILITY, EMPTY_DAY, todayKey, tomorrowKey, yesterdayKey } from './models';
 import {
@@ -201,7 +201,6 @@ export function FirestoreStoreProvider({
   const [staffDays, setStaffDays] = React.useState<DayState[]>([]);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [fixedCharges, setFixedCharges] = React.useState<FixedCharge[]>([]);
-  const [rewardStaff, setRewardStaff] = React.useState<RewardStaff[]>([]);
   const [rewardClaims, setRewardClaims] = React.useState<RewardClaim[]>([]);
   const [floatMovements, setFloatMovements] = React.useState<FloatMovement[]>([]);
   const [ready, setReady] = React.useState(false);
@@ -589,7 +588,6 @@ export function FirestoreStoreProvider({
   const wantCharges = needed.includes('fixedCharges');
   const wantEmployees = needed.includes('employeeList');
   const wantFloat = needed.includes('floatMovements');
-  const wantRewardStaff = needed.includes('rewardStaff');
 
   React.useEffect(() => {
     if (!wantExpenses || !isAdmin) return;
@@ -637,13 +635,17 @@ export function FirestoreStoreProvider({
       })), e => console.warn('[snd] float listener error', e));
   }, [wantFloat, isAdmin, base, user.uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Rewards (FR-16): admin + booker; the rules deny a rider the list.
-  React.useEffect(() => {
-    if (!wantRewardStaff || isRider) return;
-    return onSnapshot(collection(db, `${base}/rewardStaff`), s =>
-      setRewardStaff(s.docs.map(d => ({ id: d.id, ...(d.data() as Omit<RewardStaff, 'id'>) }))),
-      e => console.warn('[snd] rewardStaff listener error', e));
-  }, [wantRewardStaff, isRider, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  /**
+   * Every counter person in the company, flattened out of the shops.
+   *
+   * Derived rather than fetched: counter staff live ON their shop now, and
+   * shops are already synced on every phone, so this list costs nothing and
+   * can never disagree with what the shop editor shows.
+   */
+  const rewardStaff = React.useMemo<RewardStaff[]>(
+    () => shops.flatMap(sh => (sh.counterStaff ?? []).map(cs => ({ ...cs, shopId: sh.id }))),
+    [shops],
+  );
 
   /** Everyone who can be put on a round, by the job they do. Admin-only. */
   const staffOfRole = (want: Role, fallbackName: string) =>
@@ -1293,14 +1295,44 @@ export function FirestoreStoreProvider({
 
     // ---- rewards (FR-16) + shelf counts ------------------------------------
 
+    /**
+     * Register a counter person ON their shop.
+     *
+     * `arrayUnion` rather than a rewritten array: a booker registering someone
+     * in the field and the owner editing the same shop from the office would
+     * otherwise be a last-write-wins race that silently drops one of them.
+     * Union appends without reading, so both land.
+     *
+     * The id is minted here. It must be unique for all time because
+     * `RewardClaim.staffId` points at it — a claim is money, and it has to
+     * survive the list being edited around it.
+     */
     addRewardStaff(s: RewardStaffInput) {
-      setDoc(doc(collection(db, `${base}/rewardStaff`)), {
-        ...s, active: true, addedBy: user.uid, createdAt: serverTimestamp(),
-      }).catch(writeRejected('Counter-staff registration'));
+      const entry: CounterStaff = {
+        id: `cs_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        name: s.name,
+        active: true,
+        addedBy: user.uid,
+        ...(s.phone ? { phone: s.phone } : {}),
+      };
+      updateDoc(doc(db, `${base}/shops/${s.shopId}`), { counterStaff: arrayUnion(entry) })
+        .catch(writeRejected('Counter-staff registration'));
     },
 
+    /**
+     * Retire or restore one counter person.
+     *
+     * Flipping a flag inside an array means rewriting the array — there is no
+     * "update the element matching this id" in Firestore. The window for two
+     * people to collide is a few hundred milliseconds on a record that changes
+     * perhaps twice a year, which is why this is acceptable where `arrayUnion`
+     * was worth the trouble for adds.
+     */
     setRewardStaffActive(id, active) {
-      updateDoc(doc(db, `${base}/rewardStaff/${id}`), { active })
+      const shop = shops.find(sh => (sh.counterStaff ?? []).some(cs => cs.id === id));
+      if (!shop) return;
+      const next = (shop.counterStaff ?? []).map(cs => (cs.id === id ? { ...cs, active } : cs));
+      updateDoc(doc(db, `${base}/shops/${shop.id}`), { counterStaff: next })
         .catch(writeRejected('Counter staff'));
     },
 

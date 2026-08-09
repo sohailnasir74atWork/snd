@@ -142,6 +142,28 @@ describe('the shop khata — a booker never moves a balance (FR-7.10)', () => {
     await assertFails(patch(booker().doc(`companies/${co()}/shops/s1`), { outstanding: 0 }));
   });
 
+  test('a booker may sign up a counter person — they live ON the shop now', async () => {
+    // Counter staff moved out of their own collection and onto the shop, so
+    // the shops rules are what governs them. The booker is the one standing at
+    // the counter when someone agrees to sell for us.
+    await assertSucceeds(patch(booker().doc(`companies/${co()}/shops/s1`), {
+      counterStaff: [{ id: 'cs1', name: 'Salman', phone: '923001112233', active: true, addedBy: 'a-booker' }],
+    }));
+  });
+
+  test('a rider cannot — his whitelist is pins and photos', async () => {
+    await assertFails(patch(rider().doc(`companies/${co()}/shops/s1`), {
+      counterStaff: [{ id: 'cs1', name: 'Planted', active: true, addedBy: 'a-rider' }],
+    }));
+  });
+
+  test('the old rewardStaff collection is dead — writing to it fails loudly', async () => {
+    // No rule at all now, so the default deny catches an old build that still
+    // maintains a second, divergent list instead of letting it drift.
+    await assertFails(booker().doc(`companies/${co()}/rewardStaff/x`).set({ name: 'Salman', active: true }));
+    await assertFails(admin().doc(`companies/${co()}/rewardStaff/x`).set({ name: 'Salman', active: true }));
+  });
+
   test('shops are deactivated, never deleted', async () => {
     await assertFails(admin().doc(`companies/${co()}/shops/s1`).delete());
     await assertSucceeds(patch(admin().doc(`companies/${co()}/shops/s1`), { active: false }));
@@ -226,6 +248,36 @@ describe('settings and areas are the owner\'s (FR-12.1)', () => {
   test('only the owner writes them', async () => {
     await assertFails(booker().doc(`companies/${co()}/settings/company`).set({ maxDiscountPercent: 90 }));
     await assertSucceeds(admin().doc(`companies/${co()}/settings/company`).set({ maxDiscountPercent: 15 }));
+  });
+
+  test('a booker may create a round — he is the one standing in a new street', async () => {
+    await assertSucceeds(booker().doc(`companies/${co()}/areas/new1`).set({
+      name: 'Bund Road', active: true, createdBy: 'a-booker', createdAt: new Date(),
+    }));
+  });
+
+  test('but he cannot smuggle a rider or a territory in through the create door', async () => {
+    // riderId decides which van every future order in this area goes to;
+    // bookerId decides whose shops they are. Both stay the owner's.
+    await assertFails(booker().doc(`companies/${co()}/areas/new2`).set({
+      name: 'Bund Road', active: true, createdBy: 'a-booker', riderId: 'a-rider',
+    }));
+    await assertFails(booker().doc(`companies/${co()}/areas/new3`).set({
+      name: 'Bund Road', active: true, createdBy: 'a-booker', bookerId: 'a-booker',
+    }));
+    await assertFails(booker().doc(`companies/${co()}/areas/new4`).set({
+      name: 'Retired on arrival', active: false, createdBy: 'a-booker',
+    }));
+    await assertFails(booker().doc(`companies/${co()}/areas/new5`).set({
+      name: 'Someone else', active: true, createdBy: 'a-admin',
+    }));
+  });
+
+  test('a booker cannot rename or retire an existing round', async () => {
+    await seed(db => db.doc(`companies/${co()}/areas/a1`).set({ name: 'Saddar', active: true }));
+    await assertFails(patch(booker().doc(`companies/${co()}/areas/a1`), { name: 'Renamed' }));
+    await assertFails(patch(booker().doc(`companies/${co()}/areas/a1`), { active: false }));
+    await assertFails(rider().doc(`companies/${co()}/areas/r1`).set({ name: 'Rider round', active: true }));
   });
 
   test('only the owner puts a rider on a round', async () => {

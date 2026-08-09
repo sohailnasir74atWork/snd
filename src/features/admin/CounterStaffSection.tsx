@@ -9,19 +9,22 @@
  * so an owner opening a shop had no idea whether it had a counter person at
  * all.
  *
- * The records themselves already carry `shopId`, so nothing moved in the
- * database — this is the screen that was missing, not the link.
+ * They are stored ON the shop — `shop.counterStaff`, an optional array — for
+ * the same reason. Register a shop today with nobody behind the counter, find
+ * someone next month, open the shop and add them; an absent field and an empty
+ * list mean the same thing. They used to live in their own `rewardStaff`
+ * collection, which meant the answer to "who sells for us here" was a join
+ * away from the shop it was about.
  */
 import React from 'react';
 import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Card, Chip, ListRow, PrimaryButton, Tag, color, font, radius, space } from '../../components/ui';
 import { useWriteGuard } from './AdminScreens';
-import { useNeed, useStore } from '../../data/store';
+import { useStore } from '../../data/store';
 import type { RewardStaff, Shop } from '../../data/models';
 
 export function CounterStaffSection({ shop }: { shop: Shop }) {
   const store = useStore();
-  useNeed('rewardStaff');
   const { isBusy, run } = useWriteGuard();
   const [adding, setAdding] = React.useState(false);
   const [name, setName] = React.useState('');
@@ -37,11 +40,14 @@ export function CounterStaffSection({ shop }: { shop: Shop }) {
   const claimsFor = (staffId: string) =>
     store.rewardClaims.filter(c => c.staffId === staffId && c.status !== 'rejected').length;
 
-  const canSave = name.trim().length > 0 && phone.trim().length >= 7;
+  // A name is the whole requirement. Plenty of counter staff are known by face
+  // and first name only, and refusing to register one because nobody has his
+  // number just means he goes unrecorded and unpaid.
+  const canSave = name.trim().length > 0;
 
   const save = () => {
     run('add-staff', () => {
-      store.addRewardStaff({ name: name.trim(), phone: phone.trim(), shopId: shop.id });
+      store.addRewardStaff({ name: name.trim(), phone: phone.trim() || undefined, shopId: shop.id });
       setName(''); setPhone(''); setAdding(false);
     });
   };
@@ -109,12 +115,12 @@ export function CounterStaffSection({ shop }: { shop: Shop }) {
             placeholderTextColor={color.textFaint}
             autoFocus
           />
-          <Text style={styles.fieldLabel}>Their mobile number</Text>
+          <Text style={styles.fieldLabel}>Their mobile number (optional)</Text>
           <TextInput
             style={styles.input}
             value={phone}
             onChangeText={setPhone}
-            placeholder="03xx xxxxxxx"
+            placeholder="03xx xxxxxxx — leave blank if you don't have it"
             placeholderTextColor={color.textFaint}
             keyboardType="phone-pad"
           />
@@ -122,7 +128,7 @@ export function CounterStaffSection({ shop }: { shop: Shop }) {
             label="Save counter person"
             icon="check-circle-outline"
             disabled={!canSave}
-            disabledReason="Name and mobile first"
+            disabledReason="Type their name first"
             busy={isBusy('add-staff')}
             onPress={save}
           />
