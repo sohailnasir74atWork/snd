@@ -6,7 +6,8 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, Tag,
+  Card, Chip, EmptyState, Icon, IconTile, Money, MoreFields, OptionBar, PrimaryButton,
+  Reveal, Tag,
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
@@ -134,30 +135,42 @@ export function ProductsScreen() {
             <Text style={styles.formTitle}>New product</Text>
           </View>
 
+          {/*
+            `canSave` is name + price, and every other field here already
+            defaults in `save()` — blank code, blank pack, unit 'pc', MRP falls
+            back to the trade price, stock 0, and a blank cost is left off the
+            document entirely. So the form asks for the two it needs, in order,
+            and keeps the other six one tap away.
+          */}
           <Field label="Name" value={name} onChange={setName}
             placeholder="e.g. Glow Face Wash" />
-          <Field label="Product code" value={code} onChange={setCode}
-            placeholder="e.g. GFW-120" autoCapitalize="characters" />
-          <Field label="Pack size" value={packSize} onChange={setPackSize}
-            placeholder="e.g. 120 ml" />
+          <Reveal when={name.trim() !== ''}>
+            <Field label="Price to shop (Rs)" value={tradeText} onChange={setTradeText}
+              placeholder="0" keyboardType="number-pad" />
+          </Reveal>
 
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Sold by</Text>
-            <OptionBar
-              options={UNITS}
-              value={unit}
-              onChange={u => setUnit(u)}
-            />
-          </View>
-
-          <Field label="Price to shop (Rs)" value={tradeText} onChange={setTradeText}
-            placeholder="0" keyboardType="number-pad" />
-          <Field label="Retail price (Rs) — what the customer pays" value={mrpText} onChange={setMrpText}
-            placeholder={tradePrice > 0 ? `${tradePrice}` : '0'} keyboardType="number-pad" />
-          <Field label="Cost price (what you pay)" value={costText} onChange={setCostText}
-            placeholder="0" keyboardType="number-pad" />
-          <Field label="Opening stock (how many you have now)" value={stockText} onChange={setStockText}
-            placeholder="0" keyboardType="number-pad" />
+          <Reveal when={canSave}>
+            <MoreFields label="Code, pack, retail, cost, stock" count={6}>
+              <Field label="Product code" value={code} onChange={setCode}
+                placeholder="e.g. GFW-120" autoCapitalize="characters" />
+              <Field label="Pack size" value={packSize} onChange={setPackSize}
+                placeholder="e.g. 120 ml" />
+              <View style={styles.field}>
+                <Text style={styles.fieldLabel}>Sold by</Text>
+                <OptionBar
+                  options={UNITS}
+                  value={unit}
+                  onChange={u => setUnit(u)}
+                />
+              </View>
+              <Field label="Retail price (Rs) — what the customer pays" value={mrpText} onChange={setMrpText}
+                placeholder={tradePrice > 0 ? `${tradePrice}` : '0'} keyboardType="number-pad" />
+              <Field label="Cost price (what you pay)" value={costText} onChange={setCostText}
+                placeholder="0" keyboardType="number-pad" />
+              <Field label="Opening stock (how many you have now)" value={stockText} onChange={setStockText}
+                placeholder="0" keyboardType="number-pad" />
+            </MoreFields>
+          </Reveal>
 
           <PrimaryButton
             label="Save product"

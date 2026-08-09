@@ -5,7 +5,7 @@
  * pill CTA per screen, quiet secondary text.
  */
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { formatAmount } from '../lib/money';
 import { color, font, radius, shadow, space } from './theme';
@@ -212,6 +212,82 @@ export function SectionLabel({ children }: { children: string }) {
   return <Text style={styles.sectionLabel}>{children}</Text>;
 }
 
+/**
+ * One step of a guided form: render nothing until `when` is true, then fade in.
+ *
+ * The point is what the person sees when they ARRIVE. A setup form showing
+ * seven inputs at once reads as paperwork and gets abandoned; the same seven
+ * revealed one at a time as each is answered reads as a short conversation.
+ * Nothing is removed — the last field is still the last field — but the screen
+ * is never wider than the question being asked.
+ *
+ * Once revealed it STAYS revealed, even if the field that opened it is
+ * cleared. A form that collapses under you while you are correcting a typo is
+ * worse than one that was always long.
+ *
+ * Use for the required chain. For the optional tail, use `MoreFields`.
+ *
+ * Deliberately NOT for the daily field loop — the rider's close-out, Collect,
+ * quantity entry. Those are run sixty times a day by someone who knows exactly
+ * what they are doing, and hiding a field he is reaching for costs him a tap
+ * and the context around it. This is a first-time-user technique.
+ */
+export function Reveal({ when, children }: { when: boolean; children: React.ReactNode }) {
+  const [shown, setShown] = React.useState(when);
+  const fade = React.useRef(new Animated.Value(when ? 1 : 0)).current;
+
+  React.useEffect(() => {
+    if (!when || shown) return;
+    setShown(true);
+    Animated.timing(fade, {
+      toValue: 1,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [when, shown, fade]);
+
+  if (!shown) return null;
+  return (
+    <Animated.View
+      style={{
+        opacity: fade,
+        // A short rise rather than a slide: enough to read as "this arrived",
+        // not enough to push the keyboard-adjacent field around.
+        transform: [{ translateY: fade.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+/**
+ * The optional tail of a form, behind one tap.
+ *
+ * Everything in here already has a working default in the code — pack size,
+ * MRP, opening stock — so hiding it removes nothing except the impression
+ * that the app is asking for a lot. `count` names how much is waiting so the
+ * tap is an informed one.
+ */
+export function MoreFields({
+  label, count, children,
+}: { label: string; count?: number; children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false);
+  if (open) return <>{children}</>;
+  return (
+    <Pressable
+      onPress={() => setOpen(true)}
+      style={({ pressed }) => [styles.moreFields, pressed && styles.moreFieldsPressed]}
+      accessibilityRole="button"
+    >
+      <MCIcon name="tune-variant" size={16} color={color.primary} />
+      <Text style={styles.moreFieldsLabel}>
+        {label}{count ? ` (${count})` : ''}
+      </Text>
+    </Pressable>
+  );
+}
+
 /** Guided empty state (§5.4) with an icon instead of an illustration. */
 export function EmptyState({ icon, title, hint }: { icon: string; title: string; hint: string }) {
   return (
@@ -292,6 +368,14 @@ const styles = StyleSheet.create({
   listTitle: { fontSize: font.body + 1, fontWeight: '700', color: color.text },
   listSub: { fontSize: font.sub, color: color.textSub, marginTop: 1 },
 
+  moreFields: {
+    flexDirection: 'row', alignItems: 'center', gap: space.s,
+    alignSelf: 'flex-start', marginTop: space.m,
+    paddingVertical: space.s, paddingHorizontal: space.m,
+    borderRadius: radius.chip, backgroundColor: color.primarySoft,
+  },
+  moreFieldsPressed: { opacity: 0.7 },
+  moreFieldsLabel: { color: color.primary, fontSize: font.sub, fontWeight: '700' },
   sectionLabel: {
     fontSize: font.tiny + 1, fontWeight: '800', color: color.textSub,
     marginHorizontal: space.gutter, marginTop: space.m, marginBottom: 3,

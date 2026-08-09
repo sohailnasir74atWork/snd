@@ -8,7 +8,8 @@ import React from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
+  Card, Chip, Icon, IconTile, ListRow, Money, MoreFields, OptionBar, PrimaryButton,
+  Reveal, SectionLabel, Tag,
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
@@ -104,27 +105,35 @@ function CompanyStep({ onNext }: { onNext: () => void }) {
             placeholderTextColor={color.textFaint}
           />
         </View>
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Address</Text>
-          <TextInput
-            style={styles.input}
-            value={address}
-            onChangeText={setAddress}
-            placeholder="Shop / office address (optional)"
-            placeholderTextColor={color.textFaint}
-          />
-        </View>
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Phone</Text>
-          <TextInput
-            style={styles.input}
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="0300-1234567 (optional)"
-            placeholderTextColor={color.textFaint}
-            keyboardType="phone-pad"
-          />
-        </View>
+        {/*
+          Address and phone are optional — this step has no validation at all
+          beyond the name. They print on your bills, which is a reason to fill
+          them in and no reason at all to face them before you have typed who
+          you are. The very first screen of the app asks one question.
+        */}
+        <MoreFields label="Add address & phone for your bills" count={2}>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Address</Text>
+            <TextInput
+              style={styles.input}
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Shop / office address (optional)"
+              placeholderTextColor={color.textFaint}
+            />
+          </View>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Phone</Text>
+            <TextInput
+              style={styles.input}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="0300-1234567 (optional)"
+              placeholderTextColor={color.textFaint}
+              keyboardType="phone-pad"
+            />
+          </View>
+        </MoreFields>
       </Card>
       <View style={styles.footer}>
         <PrimaryButton
@@ -202,38 +211,27 @@ function ProductsStep({ onNext }: { onNext: () => void }) {
             placeholderTextColor={color.textFaint}
           />
         </View>
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Product code</Text>
-          <TextInput
-            style={styles.input}
-            value={code}
-            onChangeText={setCode}
-            placeholder="e.g. RS-100"
-            placeholderTextColor={color.textFaint}
-            autoCapitalize="characters"
-          />
-        </View>
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Sold by</Text>
-          <OptionBar
-            options={UNITS}
-            value={unit}
-            render={u => UNIT_LABELS[u]}
-            onChange={setUnit}
-          />
-        </View>
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Pack size</Text>
-          <TextInput
-            style={styles.input}
-            value={packSize}
-            onChangeText={setPackSize}
-            placeholder="e.g. 12 pcs per box"
-            placeholderTextColor={color.textFaint}
-          />
-        </View>
-        <View style={styles.twoCol}>
-          <View style={[styles.col, styles.field]}>
+        {/*
+          The chain: name → code → price. Each arrives when the one before it
+          has an answer, so the card is never taller than the question being
+          asked. All three are enforced by `disabledReason` above; nothing here
+          is hidden that you can skip.
+        */}
+        <Reveal when={name.trim() !== ''}>
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Product code</Text>
+            <TextInput
+              style={styles.input}
+              value={code}
+              onChangeText={setCode}
+              placeholder="e.g. RS-100"
+              placeholderTextColor={color.textFaint}
+              autoCapitalize="characters"
+            />
+          </View>
+        </Reveal>
+        <Reveal when={code.trim() !== ''}>
+          <View style={styles.field}>
             <Text style={styles.fieldLabel}>Price to shop (Rs)</Text>
             <TextInput
               style={styles.input}
@@ -244,33 +242,62 @@ function ProductsStep({ onNext }: { onNext: () => void }) {
               keyboardType="number-pad"
             />
           </View>
-          <View style={[styles.col, styles.field]}>
-            <Text style={styles.fieldLabel}>Retail price (Rs)</Text>
-            <TextInput
-              style={styles.input}
-              value={mrp}
-              onChangeText={t => setMrp(digitsOnly(t))}
-              placeholder="same as shop price"
-              placeholderTextColor={color.textFaint}
-              keyboardType="number-pad"
-            />
-          </View>
-        </View>
-        <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Stock you have now</Text>
-          <View style={styles.rowWrap}>
-            {STOCK_CHIPS.map(q => (
-              <Chip key={q} small label={`+${q}`} onPress={() => setStockQty(String(toInt(stockQty) + q))} />
-            ))}
-            {toInt(stockQty) > 0 && <Chip small label="clear" onPress={() => setStockQty('0')} />}
-            <TextInput
-              style={[styles.input, styles.qtyInput]}
-              value={stockQty}
-              onChangeText={t => setStockQty(digitsOnly(t))}
-              keyboardType="number-pad"
-            />
-          </View>
-        </View>
+        </Reveal>
+        {/*
+          Everything below already has a working default in `add()` above —
+          unit 'pc', pack '1 pc', MRP falls back to the trade price, stock 0.
+          Hiding them removes nothing except the impression that adding your
+          first product is a form to fill in.
+        */}
+        <Reveal when={toInt(tradePrice) > 0}>
+          <MoreFields label="Unit, pack, retail price, stock" count={4}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Sold by</Text>
+              <OptionBar
+                options={UNITS}
+                value={unit}
+                render={u => UNIT_LABELS[u]}
+                onChange={setUnit}
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Pack size</Text>
+              <TextInput
+                style={styles.input}
+                value={packSize}
+                onChangeText={setPackSize}
+                placeholder="e.g. 12 pcs per box"
+                placeholderTextColor={color.textFaint}
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Retail price (Rs)</Text>
+              <TextInput
+                style={styles.input}
+                value={mrp}
+                onChangeText={t => setMrp(digitsOnly(t))}
+                placeholder="same as shop price"
+                placeholderTextColor={color.textFaint}
+                keyboardType="number-pad"
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Stock you have now</Text>
+              <View style={styles.rowWrap}>
+                {STOCK_CHIPS.map(q => (
+                  <Chip key={q} small label={`+${q}`} onPress={() => setStockQty(String(toInt(stockQty) + q))} />
+                ))}
+                {toInt(stockQty) > 0 && <Chip small label="clear" onPress={() => setStockQty('0')} />}
+                <TextInput
+                  style={[styles.input, styles.qtyInput]}
+                  value={stockQty}
+                  onChangeText={t => setStockQty(digitsOnly(t))}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+          </MoreFields>
+        </Reveal>
         <PrimaryButton
           label="Add product"
           icon="plus"
