@@ -53,7 +53,8 @@ export const strings = {
   },
   tabs: {
     admin: { action: 'Action', dashboard: 'Dashboard', more: 'More' },
-    booker: { route: 'Route', areaMap: 'Map', newOrder: 'New Order', myDay: 'My Day' },
+    // `newOrder` is a screen title now, not a tab — booking is reached from Route.
+    booker: { route: 'Route', areaMap: 'Map', newOrder: 'New order', myDay: 'My Day' },
     rider: { route: 'Route', areaMap: 'Map', history: 'History', handover: 'Handover' },
   },
   order: {

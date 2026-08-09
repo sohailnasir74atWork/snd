@@ -14,7 +14,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { strings } from '../i18n/strings';
 import { Icon, color, font, radius, space } from '../components/ui';
 import type { Role } from './types';
-import { BookerRouteScreen, MyDayScreen, NewOrderScreen } from '../features/booker/BookerScreens';
+import {
+  BookerRouteScreen, MyDayScreen, NewOrderScreen, ShopSearchScreen,
+} from '../features/booker/BookerScreens';
 import { RiderHandoverScreen, RiderHistoryScreen, RiderRouteScreen } from '../features/rider/RiderScreens';
 import { CollectScreen } from '../features/rider/CollectScreen';
 import { AdminActionScreen, AdminDashboardScreen, AdminMoreMenu } from '../features/admin/AdminScreens';
@@ -30,6 +32,57 @@ import { ExpensesScreen } from '../features/admin/ExpensesScreen';
 
 const MoreStack = createNativeStackNavigator();
 const RiderStack = createNativeStackNavigator();
+const BookerStack = createNativeStackNavigator();
+
+/**
+ * The booker's first tab: his round, with the order form and the shop search
+ * pushed on top of it.
+ *
+ * "New order" used to be a tab of its own, and a tab has to be able to stand
+ * on its own — so it opened on a picker listing his whole round grouped by
+ * area, which is the Route screen drawn a second time from the same shops. Two
+ * lists of the same thing is where the confusion came from, and it doubled
+ * every future change to a shop row. There is one list now, and booking is
+ * something you do TO a shop rather than a place you go.
+ *
+ * `onSwitchRole` is threaded through because the tab's own header is gone:
+ * the account switch lives on this stack's header instead, beside the search.
+ */
+function BookerRouteStack({ onSwitchRole }: { onSwitchRole?: () => void }) {
+  return (
+    <BookerStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: color.surface },
+        headerTintColor: color.text,
+        headerTitleStyle: { fontWeight: '700', fontSize: font.h2 },
+        headerShadowVisible: false,
+      }}>
+      <BookerStack.Screen
+        name="RouteHome"
+        component={BookerRouteScreen}
+        options={({ navigation }) => ({
+          title: strings.tabs.booker.route,
+          headerRight: () => (
+            <View style={styles.headerRow}>
+              <Pressable onPress={() => navigation.navigate('ShopSearch')} style={styles.headerBtn}>
+                <Icon name="magnify" size={22} color={color.primary} />
+              </Pressable>
+              {onSwitchRole && (
+                <Pressable onPress={onSwitchRole} style={styles.headerBtn}>
+                  <Icon name="account-switch-outline" size={20} color={color.primary} />
+                </Pressable>
+              )}
+            </View>
+          ),
+        })}
+      />
+      <BookerStack.Screen name="NewOrder" component={NewOrderScreen}
+        options={{ title: strings.tabs.booker.newOrder }} />
+      <BookerStack.Screen name="ShopSearch" component={ShopSearchScreen}
+        options={{ title: 'Find a shop' }} />
+    </BookerStack.Navigator>
+  );
+}
 
 /**
  * The rider's third tab: today's handover, with his past days one tap behind
@@ -203,9 +256,20 @@ export function RoleTabs({ role, onSwitchRole }: { role: Role; onSwitchRole?: ()
         />,
       ]}
       {role === 'booker' && [
-        tabScreen('Route', t.booker.route, "Today's visit list builds itself: due shops, grouped by area, a day's work at most."),
+        <Tab.Screen
+          key="RouteTab"
+          name="RouteTab"
+          options={{
+            title: t.booker.route,
+            headerShown: false,
+            tabBarIcon: ({ focused }) => (
+              <Icon name={TAB_ICONS.Route} size={24}
+                color={focused ? color.primary : color.textFaint} />
+            ),
+          }}>
+          {() => <BookerRouteStack onSwitchRole={onSwitchRole} />}
+        </Tab.Screen>,
         tabScreen('AreaMap', t.booker.areaMap, 'Pick a round and be walked through it shop by shop, nearest first.'),
-        tabScreen('NewOrder', t.booker.newOrder, 'Pick the shop you are standing at, tap Same as last time, choose Today or Tomorrow, send.'),
         tabScreen('MyDay', t.booker.myDay, 'Your orders, shelf counts, reward claims and the evening float handover.'),
       ]}
       {role === 'rider' && [
@@ -419,6 +483,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.l, minHeight: 44,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
   },
+  // Two header buttons side by side: search, then the account switch. Tighter
+  // padding than a lone button so the pair does not crowd the title.
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginRight: -space.s },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: color.bg },
   placeholderTitle: { fontSize: font.h1, fontWeight: '700', color: color.text, marginBottom: space.m },
   placeholderHint: { fontSize: font.body, color: color.textSub, textAlign: 'center', lineHeight: 20 },

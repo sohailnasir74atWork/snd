@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import {
-  Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View,
+  Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
@@ -15,7 +15,8 @@ import { useStore } from '../../data/store';
 import type { CollectionInput } from '../../data/store';
 import type { Order, OrderItem, Shop } from '../../data/models';
 import { todayKey } from '../../data/models';
-import { computeTotals } from '../../lib/order';
+import { computeTotals, discountPercentForPrice, lowestPrice, netOfTax } from '../../lib/order';
+import { formatAmount } from '../../lib/money';
 import { visitCycleDays } from '../../lib/assignment';
 import { strings } from '../../i18n/strings';
 import { orderConfirmationHtml } from '../../documents/templates';
@@ -168,12 +169,67 @@ export function BookerRouteScreen() {
   const due = active.filter(isDue);
   const notDue = active.filter(s => !isDue(s));
   const [showNotDue, setShowNotDue] = React.useState(false);
-  const byArea = [...new Set(due.map(s => s.area))];
+
+  /**
+   * Which round the booker is working.
+   *
+   * A territory of seven areas at a hundred shops each is not a list, it is a
+   * directory — and he stands in ONE street at a time. Pick the area, then
+   * show a day's worth of it. That is the whole filtering story on this
+   * screen: one control, no search box, nothing to learn.
+   */
+  const [areaFilter, setAreaFilter] = React.useState<string | null>(null);
+  /** One card open at a time — the rest stay one line tall. */
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
+  /** Pages of `shopsPerDay`, grown by the button at the foot of the list. */
+  const [pages, setPages] = React.useState(1);
+
+  const areas = [...new Set(active.map(s => s.area))].sort((a, b) => a.localeCompare(b));
+  const dueInArea = (a: string) => due.filter(s => s.area === a).length;
+
+  /**
+   * Exactly one area, always — there is no "all" and no unfiltered state.
+   *
+   * Showing every area at once is the crowded screen this replaced, so the
+   * escape hatch back to it was never worth keeping. Falling back through the
+   * list rather than trusting the stored name also self-heals: an area the
+   * owner renames or retires under the booker's feet leaves him on a real
+   * round instead of an empty screen.
+   */
+  const activeArea = areaFilter !== null && areas.includes(areaFilter)
+    ? areaFilter
+    : areas.find(a => dueInArea(a) > 0) ?? areas[0] ?? null;
+
+  const matches = (s: Shop) => s.area === activeArea;
+  const dueShown = due.filter(matches);
+  const notDueShown = notDue.filter(matches);
+  const pageSize = Math.max(5, store.settings.shopsPerDay);
+  const limit = pages * pageSize;
+  // The cap is not decoration. This list renders into a ScrollView, so every
+  // card it emits is MOUNTED — a hundred of them, each with its own chips, on
+  // the 3GB phones this app is for.
+  const visibleDue = dueShown.slice(0, limit);
+  const moreDue = dueShown.length - visibleDue.length;
   // FR-2.x: balances (and everything that acts on them) can be hidden.
   const seesBalances = store.settings.visibility.bookerSeesBalances;
   const [exceptionShopId, setExceptionShopId] = React.useState<string | null>(null);
   const [shelfShopId, setShelfShopId] = React.useState<string | null>(null);
   const [shelfText, setShelfText] = React.useState('');
+  /**
+   * Editing a shop the booker is standing in front of.
+   *
+   * He is the one who finds out the name is spelt wrong, the number is dead or
+   * the counter has moved street — and until now the only way to fix any of it
+   * was to tell the owner, who was not there. The rules have always let a
+   * booker write a shop (everything except `outstanding`, which is what
+   * payments are for); it was the screen that had no way in.
+   */
+  const [editShopId, setEditShopId] = React.useState<string | null>(null);
+  const [editName, setEditName] = React.useState('');
+  const [editPhone, setEditPhone] = React.useState('');
+  const [editOwner, setEditOwner] = React.useState('');
+  const [editArea, setEditArea] = React.useState('');
+  const savingEditRef = React.useRef(false);
   // New shop registered on the spot (a new counter wants to start today).
   const [addingShop, setAddingShop] = React.useState(false);
   const [newName, setNewName] = React.useState('');
@@ -243,6 +299,30 @@ export function BookerRouteScreen() {
     setShelfText('');
   };
 
+  const openEdit = (shop: Shop) => {
+    savingEditRef.current = false;
+    if (editShopId === shop.id) { setEditShopId(null); return; }
+    setEditShopId(shop.id);
+    setEditName(shop.name);
+    setEditPhone(shop.phone);
+    setEditOwner(shop.ownerName ?? '');
+    setEditArea(shop.area);
+  };
+
+  const saveEdit = (shopId: string) => {
+    if (savingEditRef.current) return;
+    savingEditRef.current = true;
+    store.updateShop(shopId, {
+      name: editName.trim(),
+      phone: editPhone.trim(),
+      // Empty string rather than undefined: undefined is stripped before the
+      // write, so clearing a wrong owner name would silently keep the old one.
+      ownerName: editOwner.trim(),
+      area: editArea.trim(),
+    });
+    setEditShopId(null);
+  };
+
   const saveShop = () => {
     if (savingShopRef.current) return;
     savingShopRef.current = true;
@@ -262,29 +342,49 @@ export function BookerRouteScreen() {
     navigation.navigate('NewOrder');
   };
 
-  const shopCard = (shop: Shop) => (
-            <Card key={shop.id}>
-              <View style={styles.rowBetween}>
-                <Text style={[styles.shopName, styles.flexLabel]} numberOfLines={2}>{shop.name}</Text>
+  /**
+   * One shop, one line — and everything else one tap away.
+   *
+   * The card used to carry every action it could ever need, permanently: book,
+   * shelf count, pin, photo, tell the rider, exception cash. Six controls is
+   * fine on the four shops of a pilot and it is three and a half thousand live
+   * tap targets across a real territory, on a card tall enough that a screen
+   * holds five of them. Booking stays out in the open because booking is the
+   * job; the other five live under the chevron.
+   */
+  const shopCard = (shop: Shop) => {
+    const open = expandedId === shop.id;
+    const meta = [
+      shop.ownerName,
+      shop.lastVisitAt
+        ? `last visit ${Math.round((Date.now() - shop.lastVisitAt) / 86400_000)} days ago`
+        : 'never visited',
+      shop.lastShelfCount !== undefined ? `shelf ${shop.lastShelfCount}` : '',
+    ].filter(Boolean).join(' • ');
+    return (
+            <Card key={shop.id} onPress={() => setExpandedId(open ? null : shop.id)}>
+              <View style={styles.rowCenter}>
+                <View style={styles.rowTextFlush}>
+                  <Text style={styles.shopName} numberOfLines={1}>{shop.name}</Text>
+                  <Text style={styles.shopMeta} numberOfLines={1}>{meta}</Text>
+                </View>
                 {seesBalances && shop.outstanding > 0 && (
                   <View style={styles.owedCol}>
                     <Money amount={shop.outstanding} bold color={color.danger} />
                     <Text style={styles.owedLabel}>owed</Text>
                   </View>
                 )}
+                <View style={styles.rowActions}>
+                  <Chip small selected label="Book" onPress={() => startOrder(shop.id)} />
+                  <Icon name={open ? 'chevron-up' : 'chevron-down'} size={22} color={color.textFaint} />
+                </View>
               </View>
-              <Text style={styles.shopMeta}>
-                {shop.ownerName}
-                {shop.lastVisitAt
-                  ? ` • last visit ${Math.round((Date.now() - shop.lastVisitAt) / 86400_000)} days ago`
-                  : ' • never visited'}
-                {shop.lastShelfCount !== undefined ? ` • shelf ${shop.lastShelfCount}` : ''}
-              </Text>
+              {open && (
               <View style={styles.rowWrap}>
-                <Chip small selected label="Book order" onPress={() => startOrder(shop.id)} />
                 {seesBalances && shop.outstanding > 0 && !shop.collectionFlagged && !flagged[shop.id] && (
                   <Chip small danger label={strings.order.tellTheRider} onPress={() => flagShop(shop.id)} />
                 )}
+                <Chip small label="Edit details" onPress={() => openEdit(shop)} />
                 <Chip small label="Shelf count" onPress={() => openShelf(shop.id)} />
                 <ShopPlaceChips
                   shop={shop}
@@ -295,6 +395,45 @@ export function BookerRouteScreen() {
                   <Chip small label="Shop insists on paying me" onPress={() => setExceptionShopId(shop.id)} />
                 )}
               </View>
+              )}
+              {editShopId === shop.id && (
+                <View style={styles.shelfEditor}>
+                  <Text style={styles.fieldLabel}>Shop name</Text>
+                  <TextInput style={styles.input} value={editName} onChangeText={setEditName}
+                    placeholder="Shop name" placeholderTextColor={color.textFaint} />
+                  <Text style={styles.fieldLabel}>Mobile number</Text>
+                  <TextInput style={styles.input} value={editPhone} onChangeText={setEditPhone}
+                    placeholder="03xx xxxxxxx" placeholderTextColor={color.textFaint}
+                    keyboardType="phone-pad" />
+                  <Text style={styles.fieldLabel}>Owner's name</Text>
+                  <TextInput style={styles.input} value={editOwner} onChangeText={setEditOwner}
+                    placeholder="Who runs the shop" placeholderTextColor={color.textFaint} />
+                  <Text style={styles.fieldLabel}>Area</Text>
+                  {/* Picked, never typed — same sheet as everywhere else, so a
+                      booker cannot fork a round into three spellings from here. */}
+                  <AreaSelect value={editArea} onChange={setEditArea} />
+                  <View style={styles.rowWrap}>
+                    <Chip
+                      small
+                      selected={editName.trim() !== '' && editPhone.trim().length >= 7 && editArea.trim() !== ''}
+                      label={
+                        editName.trim() === '' || editPhone.trim().length < 7 ? 'Name and mobile first'
+                        : editArea.trim() === '' ? 'Pick the area first'
+                        : 'Save details'
+                      }
+                      onPress={
+                        editName.trim() === '' || editPhone.trim().length < 7 || editArea.trim() === ''
+                          ? undefined
+                          : () => saveEdit(shop.id)
+                      }
+                    />
+                    <Chip small label="Cancel" onPress={() => setEditShopId(null)} />
+                  </View>
+                  {/* The balance is deliberately absent: a booker moves money
+                      through payments, never by editing a number on a shop —
+                      and the rules refuse the write if he tries. */}
+                </View>
+              )}
               {shelfShopId === shop.id && (
                 <View style={styles.shelfEditor}>
                   <Text style={styles.fieldLabel}>Pieces on the shelf right now</Text>
@@ -323,7 +462,8 @@ export function BookerRouteScreen() {
                 </View>
               )}
             </Card>
-  );
+    );
+  };
 
   return (
     <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -331,6 +471,40 @@ export function BookerRouteScreen() {
         <Text style={styles.sub}>
           {due.length} due today • {notDue.length} visited recently • ~{cycleDays}-day cycle
         </Text>
+
+        {/* The ONLY filter on this screen. One row he can thumb through
+            instead of seven headings he has to scroll past: a booker works one
+            area a day, and the other six are noise until tomorrow. A
+            single-area business gets no row at all.
+
+            There is no search box beside it on purpose — two ways to narrow
+            the same list is one way too many, and the area a man is standing
+            in is a thing he knows without typing. Shop-name search lives on
+            New Order, where picking the right shop is the whole job. */}
+        {areas.length > 1 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            // Without flexGrow 0 a ScrollView nested in a ScrollView claims
+            // the height of the screen and pushes the whole list off it.
+            style={styles.filterScroll}
+            contentContainerStyle={styles.filterRow}
+            keyboardShouldPersistTaps="handled">
+            {/* No "All" chip. One area is always selected, and tapping the
+                selected one does nothing rather than dropping him back into
+                the whole territory — that view is the crowding this screen
+                exists to get rid of. */}
+            {areas.map(a => (
+              <Chip
+                key={a || 'no-area'}
+                small
+                selected={activeArea === a}
+                label={`${a.trim() ? a : 'No area yet'} ${dueInArea(a)}`}
+                onPress={() => { setAreaFilter(a); setPages(1); setExpandedId(null); }}
+              />
+            ))}
+          </ScrollView>
+        )}
 
         {!addingShop ? (
           <View style={styles.rowWrapPadded}>
@@ -374,8 +548,21 @@ export function BookerRouteScreen() {
             />
             <PrimaryButton
               label="Save shop" icon="check-circle-outline"
-              disabled={newName.trim().length === 0 || newPhone.trim().length < 7}
-              disabledReason="Name and mobile first"
+              // Area is required now. A shop saved without one belongs to no
+              // round, so it is due on nobody's morning and appears on no
+              // map — invisible from the moment it is created, and only ever
+              // found by an owner who goes looking. Better to ask for the
+              // street while the man is standing in it.
+              disabled={
+                newName.trim().length === 0
+                || newPhone.trim().length < 7
+                || newArea.trim().length === 0
+              }
+              disabledReason={
+                newName.trim().length === 0 || newPhone.trim().length < 7
+                  ? 'Name and mobile first'
+                  : 'Pick the area first'
+              }
               onPress={saveShop}
             />
             <View style={styles.rowWrap}>
@@ -384,31 +571,148 @@ export function BookerRouteScreen() {
           </Card>
         )}
 
-        {byArea.map(area => (
-          <View key={area || 'no-area'}>
-            <SectionLabel>{area.trim() ? area : 'No area yet'}</SectionLabel>
-            {due.filter(s => s.area === area).map(shopCard)}
+        {/* No area headings: the list is one area by construction, and the
+            selected chip above already says which. */}
+        {visibleDue.map(shopCard)}
+
+        {moreDue > 0 && (
+          <View style={styles.rowWrapPadded}>
+            {/* A day's work, then the rest on request. An unbounded list of
+                due shops is a list nobody can finish, which is a worse start
+                to a morning than a short one. */}
+            <Chip small label={`Show ${Math.min(moreDue, pageSize)} more — ${moreDue} left`}
+              onPress={() => setPages(p => p + 1)} />
           </View>
-        ))}
-        {due.length === 0 && (
-          <EmptyState
-            icon="check-circle-outline"
-            title="Route covered"
-            hint="Every shop was visited within the cycle — check back tomorrow."
-          />
         )}
 
-        {notDue.length > 0 && (
+        {dueShown.length === 0 && (
+          due.length === 0 ? (
+            <EmptyState
+              icon="check-circle-outline"
+              title="Route covered"
+              hint="Every shop was visited within the cycle — check back tomorrow."
+            />
+          ) : (
+            <EmptyState
+              icon="check-circle-outline"
+              title="This area is covered"
+              hint="Nothing due here today — pick another area above."
+            />
+          )
+        )}
+
+        {notDueShown.length > 0 && (
           <>
             <View style={styles.rowWrapPadded}>
               <Chip
                 small
-                label={showNotDue ? 'Hide recently visited' : `Visited recently (${notDue.length})`}
+                label={showNotDue ? 'Hide recently visited' : `Visited recently (${notDueShown.length})`}
                 onPress={() => setShowNotDue(v => !v)}
               />
             </View>
-            {showNotDue && notDue.map(shopCard)}
+            {/* Capped as hard as the due list: this toggle used to mount every
+                shop in the territory that was NOT due, which is most of them. */}
+            {showNotDue && notDueShown.slice(0, limit).map(shopCard)}
           </>
+        )}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+/**
+ * Find a shop — every counter in the business, behind one magnifier.
+ *
+ * The Route screen is the round: due shops, one area, no search box in the
+ * way. This is the other half of that decision. A booker who walks past a shop
+ * that is not due today, or covers a colleague's patch for an afternoon, needs
+ * a way to reach it, and hiding it behind an icon costs him one tap on the
+ * rare day he wants it instead of a permanent row on every other day.
+ *
+ * Company-wide on purpose, like the picker it replaces: covering someone
+ * else's shop is normal, and the rules keep `shops` readable across the
+ * company rather than carving territory up in the database.
+ */
+const SEARCH_LIMIT = 40;
+
+export function ShopSearchScreen() {
+  const store = useStore();
+  const navigation = useNavigation<{ navigate: (r: string) => void }>();
+  const [search, setSearch] = React.useState('');
+  const seesBalances = store.settings.visibility.bookerSeesBalances;
+
+  const q = search.trim().toLowerCase();
+  // Nothing typed shows HIS round, so the screen is useful the instant it
+  // opens; typing widens to the whole business.
+  const pool = q ? store.shops : store.routeShops;
+  const matches = pool.filter(s =>
+    s.active && (!q || s.name.toLowerCase().includes(q) || s.area.toLowerCase().includes(q)
+      || (s.ownerName ?? '').toLowerCase().includes(q)));
+  // Capped, because this list is drawn into a ScrollView and a thousand shops
+  // is a thousand mounted cards. Nobody reads past the fortieth result — they
+  // type another letter, which is the faster path anyway.
+  const shown = matches.slice(0, SEARCH_LIMIT);
+  const hidden = matches.length - shown.length;
+
+  const choose = (s: Shop) => {
+    setPendingOrderShop(s.id);
+    navigation.navigate('NewOrder');
+  };
+
+  return (
+    <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.searchWrap}>
+          <TextInput
+            style={styles.input}
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search shop, area or owner…"
+            placeholderTextColor={color.textFaint}
+            autoCorrect={false}
+            autoFocus
+          />
+        </View>
+        <Text style={styles.sub}>
+          {q
+            ? `${matches.length} ${matches.length === 1 ? 'shop' : 'shops'} across the business`
+            : 'Your round. Type to search every shop in the business.'}
+        </Text>
+
+        {shown.map(s => (
+          <Card key={s.id} onPress={() => choose(s)}>
+            <View style={styles.rowCenter}>
+              <IconTile name="storefront-outline" size={40} />
+              <View style={styles.rowText}>
+                <Text style={styles.shopName} numberOfLines={1}>{s.name}</Text>
+                <Text style={styles.shopMeta} numberOfLines={1}>
+                  {s.ownerName ? `${s.area} • ${s.ownerName}` : s.area}
+                </Text>
+              </View>
+              {seesBalances && s.outstanding > 0 && (
+                <View style={styles.owedCol}>
+                  <Money amount={s.outstanding} bold color={color.danger} />
+                  <Text style={styles.owedLabel}>owed</Text>
+                </View>
+              )}
+            </View>
+          </Card>
+        ))}
+
+        {hidden > 0 && (
+          <Text style={styles.discountHint}>
+            {hidden} more match — type a little more to narrow it down.
+          </Text>
+        )}
+
+        {matches.length === 0 && (
+          <EmptyState
+            icon="storefront-outline"
+            title={store.shops.length === 0 ? 'No shops yet' : 'Nothing matches'}
+            hint={store.shops.length === 0
+              ? 'Shops added by your admin will appear here.'
+              : 'Try the area name, or the owner’s name.'}
+          />
         )}
       </ScrollView>
     </KeyboardAvoidingView>
@@ -417,23 +721,43 @@ export function BookerRouteScreen() {
 
 export function NewOrderScreen() {
   const store = useStore();
+  const navigation = useNavigation<{ navigate: (r: string) => void; goBack: () => void }>();
   const [shop, setShop] = React.useState<Shop | null>(null);
   const [qtys, setQtys] = React.useState<Record<string, number>>({});
   // Typed quantities ride alongside the chips — "3 face wash" is the
   // commonest order and chips alone could not book it (audit).
   const [qtyTexts, setQtyTexts] = React.useState<Record<string, string>>({});
-  const [deliveryDay, setDeliveryDay] = React.useState<'today' | 'tomorrow'>('today');
-  const [discount, setDiscount] = React.useState(0);
-  const [search, setSearch] = React.useState('');
+  /**
+   * Tomorrow, always, until the booker says otherwise.
+   *
+   * An order booked at a counter is loaded on a van that has usually already
+   * left, so "today" is a promise the round cannot keep — and the store
+   * silently rewrites it to tomorrow anyway once the rider starts his route.
+   * Starting on the honest answer means the shop is told the truth while the
+   * booker is still standing there, instead of finding out when nothing
+   * arrives. Today is one tap away for the shops close enough to make it.
+   */
+  const [deliveryDay, setDeliveryDay] = React.useState<'today' | 'tomorrow'>('tomorrow');
+  /**
+   * The negotiated price in rupees, empty until the booker types one.
+   *
+   * Empty is not "no discount" — it means "whatever this shop's standing rate
+   * gives", so a shop on a permanent 5% still gets it without anyone opening
+   * the panel. Typing a price overrides that for this order only.
+   */
+  const [priceText, setPriceText] = React.useState('');
+  const [priceOpen, setPriceOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [sharing, setSharing] = React.useState(false);
   const [confirmed, setConfirmed] = React.useState<{ order: Order; shop: Shop } | null>(null);
 
   const pickShop = React.useCallback((s: Shop) => {
     setShop(s);
-    // The daily negotiation: prefill the standing rate, allow up to the
-    // owner's max (FR: discount is adjustable per order within the cap).
-    setDiscount(s.standingDiscountPercent ?? 0);
+    // A new shop is a new negotiation: the price panel closes and empties, so
+    // the last shop's haggle cannot ride along to this one.
+    setPriceText('');
+    setPriceOpen(false);
+    setDeliveryDay('tomorrow');
   }, []);
 
   /**
@@ -454,24 +778,70 @@ export function NewOrderScreen() {
     }
   }, [store.shops, pickShop]));
 
+  /**
+   * Every quantity change goes through here, and every one of them throws the
+   * negotiated price away.
+   *
+   * A price is agreed for a basket. Keep it while the basket changes and "700"
+   * typed against one face wash silently becomes 700 for eleven of them — the
+   * percent needed to hold that total is enormous, and above the cap it is
+   * quietly clamped instead of refused. Clearing costs one retype in the rare
+   * case where the haggle came before the last item; the alternative loses the
+   * company real money without showing anything on screen.
+   */
   const setQty = (productId: string, q: number) => {
     const v = Math.max(0, Math.min(q, 9999));
     setQtys(prev => ({ ...prev, [productId]: v }));
     setQtyTexts(prev => ({ ...prev, [productId]: v > 0 ? String(v) : '' }));
+    setPriceText('');
+  };
+
+  const typeQty = (productId: string, text: string) => {
+    const digits = text.replace(/[^0-9]/g, '');
+    setQtyTexts(prev => ({ ...prev, [productId]: digits }));
+    setQtys(prev => ({ ...prev, [productId]: digits ? Math.min(parseInt(digits, 10), 9999) : 0 }));
+    setPriceText('');
   };
 
   const items: OrderItem[] = store.products
     .filter(p => p.active && (qtys[p.id] ?? 0) > 0)
     .map(p => ({ productId: p.id, name: p.name, qty: qtys[p.id], unitPrice: p.tradePrice }));
+
   const maxDiscount = store.settings.maxDiscountPercent;
-  const discountOptions = [...new Set([0, 2, 5, 10, shop?.standingDiscountPercent ?? 0])]
-    .filter(d => d <= maxDiscount)
-    .sort((a, b) => a - b);
-  const totals = computeTotals(items, discount);
+  const subTotal = items.reduce((sum, it) => sum + it.qty * it.unitPrice, 0);
+  // The shop's standing rate, still capped by the owner's maximum — a rate set
+  // before the cap was lowered must not outlive it.
+  const standing = Math.min(shop?.standingDiscountPercent ?? 0, maxDiscount);
+  const typedPrice = priceText.trim() === '' ? null : toInt(priceText);
+  const discount = typedPrice === null
+    ? standing
+    : discountPercentForPrice(subTotal, typedPrice, maxDiscount);
+  // Tax rides along here as well as in the store: the booker's TOTAL and the
+  // number that gets written must be the same number.
+  const totals = computeTotals(items, discount, false, store.settings.taxPercent);
+  /** What the price field controls — the goods, before any tax on top. */
+  const goodsTotal = netOfTax(totals);
+  const priceFloor = lowestPrice(subTotal, maxDiscount);
+
+  /**
+   * One line under the field, and it always says what the limits are rather
+   * than only complaining once they are crossed. A booker mid-haggle needs to
+   * know how far he can go before he offers it, not after.
+   */
+  const priceHint = subTotal === 0
+    ? 'Add a quantity first.'
+    : typedPrice !== null && typedPrice > subTotal
+      ? `Full price is Rs ${formatAmount(subTotal)} — you cannot charge above it.`
+      : typedPrice !== null && typedPrice < priceFloor
+        ? `Owner's cap is ${maxDiscount}% — the lowest you can go is Rs ${formatAmount(priceFloor)}.`
+        : typedPrice === null && standing > 0
+          ? `${shop?.name}'s standing rate is already applied. Leave it blank to keep it.`
+          : `Full price Rs ${formatAmount(subTotal)} · lowest Rs ${formatAmount(priceFloor)}${
+            totals.taxTotal ? ' · sales tax is added on top' : ''}`;
 
   const reset = () => {
     setShop(null); setQtys({}); setQtyTexts({}); setConfirmed(null);
-    setDeliveryDay('today'); setDiscount(0); setSearch('');
+    setDeliveryDay('tomorrow'); setPriceText(''); setPriceOpen(false);
   };
 
   const bookOrder = async () => {
@@ -539,62 +909,28 @@ export function NewOrderScreen() {
 
   const seesBalances = store.settings.visibility.bookerSeesBalances;
 
+  /**
+   * Arriving with no shop is now the exceptional path, not the normal one.
+   *
+   * This screen used to open on a picker that listed the booker's whole round
+   * grouped by area — a second copy of the Route screen, drawn from the same
+   * shops, with none of Route's capping. At a thousand shops it mounted a
+   * thousand cards. Every way in now carries a shop with it (Route → Book, or
+   * Find a shop), so what is left here is a signpost rather than a list.
+   */
   if (!shop) {
-    const q = search.trim().toLowerCase();
-    // Browsing shows HIS round; typing searches the whole company. Covering a
-    // colleague's shop for a day is normal, and a picker that made it
-    // impossible would be a worse bug than the collisions territories fix —
-    // which is also why the shops collection stays readable company-wide in
-    // the rules rather than being carved up there.
-    const matches = (q ? store.shops : store.routeShops).filter(s =>
-      s.active && (!q || s.name.toLowerCase().includes(q) || s.area.toLowerCase().includes(q)
-        || (s.ownerName ?? '').toLowerCase().includes(q)));
-    const pickerAreas = [...new Set(matches.map(s => s.area))];
     return (
-      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
-          <Text style={styles.sub}>Which shop are you at?</Text>
-          <View style={styles.searchWrap}>
-            <TextInput
-              style={styles.input}
-              value={search}
-              onChangeText={setSearch}
-              placeholder="Search shop, area or owner…"
-              placeholderTextColor={color.textFaint}
-              autoCorrect={false}
-            />
-          </View>
-          {pickerAreas.map(a => (
-            <View key={a || 'no-area'}>
-              <SectionLabel>{a.trim() ? a : 'No area yet'}</SectionLabel>
-              {matches.filter(s => s.area === a).map(s => (
-                <Card key={s.id} onPress={() => pickShop(s)}>
-                  <View style={styles.rowCenter}>
-                    <IconTile name="storefront-outline" size={40} />
-                    <View style={styles.rowText}>
-                      <Text style={styles.shopName} numberOfLines={2}>{s.name}</Text>
-                      <Text style={styles.shopMeta} numberOfLines={2}>{s.ownerName ? `${s.area} • ${s.ownerName}` : s.area}</Text>
-                    </View>
-                    {seesBalances && s.outstanding > 0 && (
-                      <View style={styles.owedCol}>
-                        <Money amount={s.outstanding} bold color={color.danger} />
-                        <Text style={styles.owedLabel}>owed</Text>
-                      </View>
-                    )}
-                  </View>
-                </Card>
-              ))}
-            </View>
-          ))}
-          {store.shops.length === 0 && (
-            <EmptyState
-              icon="storefront-outline"
-              title="No shops yet"
-              hint="Shops added by your admin will appear here."
-            />
-          )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+      <View style={[styles.screen, styles.center]}>
+        <EmptyState
+          icon="storefront-outline"
+          title="Which shop are you at?"
+          hint="Tap Book on a shop in your round, or search for any shop in the business."
+        />
+        <View style={styles.ctaWrapWide}>
+          <PrimaryButton icon="magnify" label="Find a shop"
+            onPress={() => navigation.navigate('ShopSearch')} />
+        </View>
+      </View>
     );
   }
 
@@ -647,11 +983,7 @@ export function NewOrderScreen() {
               <TextInput
                 style={styles.qtyInput}
                 value={qtyTexts[p.id] ?? ''}
-                onChangeText={t => {
-                  const digits = t.replace(/[^0-9]/g, '');
-                  setQtyTexts(prev => ({ ...prev, [p.id]: digits }));
-                  setQtys(prev => ({ ...prev, [p.id]: digits ? Math.min(parseInt(digits, 10), 9999) : 0 }));
-                }}
+                onChangeText={t => typeQty(p.id, t)}
                 keyboardType="number-pad"
                 placeholder="0"
                 placeholderTextColor={color.textFaint}
@@ -667,19 +999,14 @@ export function NewOrderScreen() {
           </Card>
         ))}
 
-        <SectionLabel>Discount</SectionLabel>
-        <View style={styles.chipRow}>
-          <OptionBar
-            options={discountOptions}
-            value={discount}
-            render={d => (d === (shop.standingDiscountPercent ?? 0) ? `${d}% •` : `${d}%`)}
-            onChange={setDiscount}
-          />
-        </View>
-        <Text style={styles.discountHint}>
-          • = {shop.name}'s standing rate. Owner's cap: {maxDiscount}%.
-        </Text>
-
+        {/* There is no discount section any more, and its absence is the point.
+            A row reading "0% 2% 5% 10%" sits at eye level on a phone the
+            shopkeeper is looking at across his own counter, and it announced
+            that money was on the table before the booker had decided to put it
+            there — every negotiation started from the largest number on
+            screen. The concession now lives behind the chevron on the TOTAL
+            row, closed until the booker opens it, and it is entered in rupees
+            because rupees is what the two of them are actually arguing about. */}
         <Card>
           <View style={styles.totalRow}>
             <Text style={[styles.totalKey, styles.flexLabel]} numberOfLines={2}>Subtotal</Text>
@@ -687,20 +1014,62 @@ export function NewOrderScreen() {
               <Money amount={totals.subTotal} />
             </View>
           </View>
-          {discount > 0 && (
+          {totals.discountTotal > 0 && (
             <View style={styles.totalRow}>
-              <Text style={[styles.totalKey, styles.flexLabel]} numberOfLines={2}>Discount {discount}%</Text>
+              {/* No percent on screen. The rate is bookkeeping; the shop is
+                  owed a straight answer about how many rupees came off. */}
+              <Text style={[styles.totalKey, styles.flexLabel]} numberOfLines={2}>Discount</Text>
               <View style={styles.valueRight}>
                 <Money amount={-totals.discountTotal} />
               </View>
             </View>
           )}
+          {totals.taxTotal ? (
+            <View style={styles.totalRow}>
+              <Text style={[styles.totalKey, styles.flexLabel]} numberOfLines={2}>
+                Sales tax {store.settings.taxPercent}%
+              </Text>
+              <View style={styles.valueRight}>
+                <Money amount={totals.taxTotal} />
+              </View>
+            </View>
+          ) : null}
           <View style={[styles.totalRow, styles.totalDivider]}>
             <Text style={[styles.totalLabel, styles.flexLabel]} numberOfLines={2}>TOTAL</Text>
             <View style={styles.valueRight}>
               <Money amount={totals.grandTotal} size={font.stat} bold />
             </View>
+            {/* The whole of the discount UI when it is closed: a plain
+                expander that gives nothing away to someone reading the screen
+                upside down. The booker knows what is under it. */}
+            <Pressable
+              onPress={() => setPriceOpen(o => !o)}
+              hitSlop={14}
+              accessibilityRole="button"
+              accessibilityLabel={priceOpen ? 'Hide price entry' : 'Change price'}
+              style={styles.priceToggle}>
+              <Icon name={priceOpen ? 'chevron-up' : 'chevron-down'} size={22} color={color.textFaint} />
+            </Pressable>
           </View>
+
+          {priceOpen && (
+            <View style={styles.priceEditor}>
+              <Text style={styles.fieldLabel}>Discounted price</Text>
+              <TextInput
+                style={styles.input}
+                value={priceText}
+                onChangeText={t => setPriceText(t.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad"
+                // The placeholder is the live total, so an empty field is
+                // visibly "no change" rather than "nothing decided".
+                placeholder={String(goodsTotal)}
+                placeholderTextColor={color.textFaint}
+                maxLength={9}
+                selectTextOnFocus
+              />
+              <Text style={styles.priceHint}>{priceHint}</Text>
+            </View>
+          )}
         </Card>
 
         <SectionLabel>Deliver</SectionLabel>
@@ -721,8 +1090,15 @@ export function NewOrderScreen() {
             disabledReason="Add a quantity first"
             onPress={() => { void bookOrder(); }}
           />
+          {/* Back to the round rather than to a picker: the shop he wants is
+              almost always the next one on Route, and the search is one tap
+              from there when it is not. */}
           <PrimaryButton variant="quiet" icon="arrow-left" label="Different shop"
-            onPress={() => { setShop(null); setQtys({}); setQtyTexts({}); }} />
+            onPress={() => {
+              setShop(null); setQtys({}); setQtyTexts({});
+              setPriceText(''); setPriceOpen(false);
+              navigation.goBack();
+            }} />
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -812,7 +1188,7 @@ export function MyDayScreen() {
           <EmptyState
             icon="cart-outline"
             title="No orders yet today"
-            hint="Book your first order from the New Order tab."
+            hint="Tap Book on a shop in your round to start one."
           />
         )}
 
@@ -903,6 +1279,17 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowCenter: { flexDirection: 'row', alignItems: 'center' },
   rowText: { flex: 1, minWidth: 0, marginLeft: space.m },
+  // Same as rowText, without the icon-tile gap — the collapsed shop row leads
+  // with the name, not a tile.
+  rowTextFlush: { flex: 1, minWidth: 0 },
+  rowActions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', marginLeft: space.s },
+  // Aligned with `rowWrapPadded` below it rather than with the card edge:
+  // the two chip rows sit one above the other and must agree with each other.
+  filterScroll: { flexGrow: 0 },
+  filterRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: space.gutter, paddingBottom: space.xs,
+  },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: space.s, marginLeft: -space.xs },
   areaEmpty: {
     fontSize: font.sub, color: color.textSub, lineHeight: font.sub + 6,
@@ -914,6 +1301,16 @@ const styles = StyleSheet.create({
   totalKey: { fontSize: font.body, color: color.textSub },
   totalDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border, marginTop: space.s, paddingTop: space.s + 2 },
   totalLabel: { fontSize: font.body, fontWeight: '800', color: color.text, letterSpacing: 0.4 },
+
+  // Quiet on purpose — see the comment at the call site. It sits inside the
+  // TOTAL row rather than under it so nothing on the closed card looks like a
+  // section that has been collapsed away.
+  priceToggle: { paddingLeft: space.s, paddingVertical: space.xs },
+  priceEditor: {
+    marginTop: space.s, paddingTop: space.xs,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
+  },
+  priceHint: { fontSize: font.tiny, color: color.textSub, marginTop: space.xs, lineHeight: font.tiny + 5 },
 
   ctaWrap: { paddingHorizontal: space.gutter, marginTop: space.s },
   ctaWrapWide: { alignSelf: 'stretch', marginTop: space.m },
