@@ -297,13 +297,17 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
         await sRef.set({ defaultRiderId: null, autoAssignRiderId: null }, { merge: true });
       }
     }
-    const rounds = await db
-      .collection(`companies/${companyId}/areas`)
-      .where('riderId', '==', target.uid)
-      .get();
-    if (!rounds.empty) {
+    // Both jobs, because either one left dangling points a round at a ghost:
+    // as a rider his orders go dark, as a booker his territory belongs to
+    // nobody and drops off every route screen in the company.
+    const [asRider, asBooker] = await Promise.all([
+      db.collection(`companies/${companyId}/areas`).where('riderId', '==', target.uid).get(),
+      db.collection(`companies/${companyId}/areas`).where('bookerId', '==', target.uid).get(),
+    ]);
+    if (!asRider.empty || !asBooker.empty) {
       const batch = db.batch();
-      rounds.docs.forEach((d) => batch.update(d.ref, { riderId: FieldValue.delete() }));
+      asRider.docs.forEach((d) => batch.update(d.ref, { riderId: FieldValue.delete() }));
+      asBooker.docs.forEach((d) => batch.update(d.ref, { bookerId: FieldValue.delete() }));
       await batch.commit().catch((e) => console.warn('clear rounds on removal', e.message));
     }
   }

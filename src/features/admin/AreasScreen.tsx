@@ -44,6 +44,13 @@ export function AreasScreen() {
     return `${store.riders.find(r => r.id === fallback)?.name ?? 'default rider'} (default)`;
   };
 
+  /** Whose territory, appended only once the company has more than one booker. */
+  const bookerLabel = (area: Area): string => {
+    if (store.bookers.length < 2) return '';
+    if (!area.bookerId) return ' • unclaimed';
+    return ` • ${store.bookers.find(b => b.id === area.bookerId)?.name ?? 'removed booker'}`;
+  };
+
   /**
    * Names sitting on shops that no area doc claims.
    *
@@ -189,7 +196,7 @@ export function AreasScreen() {
               <ListRow
                 icon="map-marker-radius-outline"
                 title={area.name}
-                sub={`${countIn(area.name)} ${countIn(area.name) === 1 ? 'shop' : 'shops'} • ${riderLabel(area)}`}
+                sub={`${countIn(area.name)} ${countIn(area.name) === 1 ? 'shop' : 'shops'} • ${riderLabel(area)}${bookerLabel(area)}`}
               />
               {/*
                 Who drives this round. Only shown once there is a real choice
@@ -217,6 +224,35 @@ export function AreasScreen() {
                     {area.riderId
                       ? 'New orders for shops on this round go to him. Orders already booked keep the van they were booked to.'
                       : 'Nobody on this round yet — new orders here wait in Unassigned on your Action screen.'}
+                  </Text>
+                </>
+              )}
+              {/*
+                Whose territory this is. Same rule as the rider row: hidden
+                until there is more than one booker, so a small business never
+                has to think about it and keeps seeing every shop.
+              */}
+              {area.active && store.bookers.length > 1 && (
+                <>
+                  <Text style={styles.fieldLabel}>Booked by</Text>
+                  <View style={styles.rowWrap}>
+                    {store.bookers.map(b => (
+                      <Chip
+                        key={b.id}
+                        small
+                        label={b.name}
+                        selected={area.bookerId === b.id}
+                        onPress={isBusy(`booker-${area.id}`) ? undefined : () => run(
+                          `booker-${area.id}`,
+                          () => store.setAreaBooker(area.id, area.bookerId === b.id ? null : b.id),
+                        )}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.hint}>
+                    {area.bookerId
+                      ? 'This round is on his route screen, and his visit cycle is measured over it.'
+                      : 'Unclaimed — it shows up for any booker who has no round of his own.'}
                   </Text>
                 </>
               )}

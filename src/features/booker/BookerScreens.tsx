@@ -16,6 +16,7 @@ import type { CollectionInput } from '../../data/store';
 import type { Order, OrderItem, Shop } from '../../data/models';
 import { todayKey } from '../../data/models';
 import { computeTotals } from '../../lib/order';
+import { visitCycleDays } from '../../lib/assignment';
 import { strings } from '../../i18n/strings';
 import { orderConfirmationHtml } from '../../documents/templates';
 import { sharePdf } from '../../documents/share';
@@ -152,10 +153,17 @@ function ExceptionCashScreen({ shop, onDone }: { shop: Shop; onDone: () => void 
 export function BookerRouteScreen() {
   const store = useStore();
   const navigation = useNavigation<{ navigate: (r: string) => void }>();
-  const active = store.shops.filter(s => s.active);
+  // HIS round, not the company's. Ten bookers used to read every shop in the
+  // business and compute the identical "due today" list from it — they
+  // collided on the same counters and no shop had an owner.
+  const active = store.routeShops;
   // Visit cycle: with ~shopsPerDay visits a day, a shop is DUE once its last
   // visit is a full cycle old (or it was never visited). The rest wait below.
-  const cycleDays = Math.max(1, Math.round(active.length / Math.max(1, store.settings.shopsPerDay)));
+  //
+  // Measured over the territory for the same reason. Divided by the whole
+  // company, 2,000 shops at 20 a day gave a 100-DAY cycle, so almost nothing
+  // was ever due and the screen the booker starts his day on was empty.
+  const cycleDays = visitCycleDays(active.length, store.settings.shopsPerDay);
   const isDue = (s: Shop) => !s.lastVisitAt || Date.now() - s.lastVisitAt >= cycleDays * 86400_000;
   const due = active.filter(isDue);
   const notDue = active.filter(s => !isDue(s));
@@ -525,7 +533,12 @@ export function NewOrderScreen() {
 
   if (!shop) {
     const q = search.trim().toLowerCase();
-    const matches = store.shops.filter(s =>
+    // Browsing shows HIS round; typing searches the whole company. Covering a
+    // colleague's shop for a day is normal, and a picker that made it
+    // impossible would be a worse bug than the collisions territories fix —
+    // which is also why the shops collection stays readable company-wide in
+    // the rules rather than being carved up there.
+    const matches = (q ? store.shops : store.routeShops).filter(s =>
       s.active && (!q || s.name.toLowerCase().includes(q) || s.area.toLowerCase().includes(q)
         || (s.ownerName ?? '').toLowerCase().includes(q)));
     const pickerAreas = [...new Set(matches.map(s => s.area))];

@@ -115,6 +115,9 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     staffDays: state.day.handedOver ? [{ ...state.day, staffId: 'rider' }] : [],
     staffNames: { rider: 'Delivery Rider (demo)', booker: 'Order Booker (demo)' },
     riders: [{ id: 'rider', name: 'Delivery Rider (demo)' }],
+    bookers: [{ id: 'booker', name: 'Order Booker (demo)' }],
+    // One booker covers the whole demo, so his round is every live shop.
+    routeShops: state.shops.filter(s => s.active),
     // The demo books everything to its one rider, so nothing is ever orphaned.
     unassignedOrders: [],
     riderForShop() { return 'rider'; },
@@ -411,6 +414,13 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       setState(st => ({
         ...st,
         areas: st.areas.map(a => (a.id === id ? { ...a, riderId: riderId ?? undefined } : a)),
+      }));
+    },
+
+    setAreaBooker(id, bookerId) {
+      setState(st => ({
+        ...st,
+        areas: st.areas.map(a => (a.id === id ? { ...a, bookerId: bookerId ?? undefined } : a)),
       }));
     },
 

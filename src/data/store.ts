@@ -89,6 +89,18 @@ export interface StoreApi {
    * A company has as many riders as it has vans; nothing here assumes one.
    */
   riders: { id: string; name: string }[];
+  /** Everyone who can be given a territory — admin only (others get []). */
+  bookers: { id: string; name: string }[];
+  /**
+   * The active shops on THIS person's round.
+   *
+   * A booker gets his territory (the rounds he is on, or the rounds nobody
+   * covers if he has none, or everything while no territory is set at all);
+   * a rider and the owner get every active shop. Screens should prefer this
+   * over filtering `shops` themselves — it is what makes ten bookers stop
+   * working the same street.
+   */
+  routeShops: Shop[];
   /**
    * Booked orders no van is carrying: the round has no rider on it, or the
    * rider it was addressed to has been removed. Admin only (others get []).
@@ -178,6 +190,8 @@ export interface StoreApi {
    * orders already written keep the van they were booked to.
    */
   setAreaRider(id: string, riderId: string | null): void;
+  /** Give a round to a booker, or take it back (null) — his territory. */
+  setAreaBooker(id: string, bookerId: string | null): void;
   /** Hand ONE order to a van. The owner's answer to `unassignedOrders`. */
   assignOrder(orderId: string, riderId: string): void;
   /** Manual khata correction (returns, bounced cheques, paper-era fixes). */

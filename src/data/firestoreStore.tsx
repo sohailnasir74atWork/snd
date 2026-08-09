@@ -38,7 +38,7 @@ import {
 import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
 import { mergeById, windowStartDate, windowStartKey } from '../lib/window';
-import { riderForShop, unassignedOf } from '../lib/assignment';
+import { riderForShop, shopsForBooker, unassignedOf } from '../lib/assignment';
 import { formatSerial, nextLocalRef, type SerialKind } from '../lib/serials';
 import { uploadPhotoBase64 } from '../lib/storage';
 import type { Role, SessionUser } from '../app/types';
@@ -597,14 +597,28 @@ export function FirestoreStoreProvider({
     [isAdmin, orders, staffNames],
   );
 
-  /** Everyone who can be put on a round, newest name wins. Admin-only. */
-  const riders = React.useMemo(
-    () => Object.entries(staffRoles)
-      .filter(([, role]) => role === 'rider')
-      .map(([id]) => ({ id, name: staffNames[id] || 'Rider' }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    [staffRoles, staffNames],
-  );
+  /** Everyone who can be put on a round, by the job they do. Admin-only. */
+  const staffOfRole = (want: Role, fallbackName: string) =>
+    Object.entries(staffRoles)
+      .filter(([, role]) => role === want)
+      .map(([id]) => ({ id, name: staffNames[id] || fallbackName }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  const riders = React.useMemo(() => staffOfRole('rider', 'Rider'),
+    [staffRoles, staffNames]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bookers = React.useMemo(() => staffOfRole('booker', 'Booker'),
+    [staffRoles, staffNames]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * The shops on THIS person's round.
+   *
+   * Only a booker has a territory — a rider follows the orders he was given,
+   * and the owner sees the whole company by definition. Inactive shops are
+   * filtered here rather than in every screen that reads this.
+   */
+  const routeShops = React.useMemo(() => {
+    const live = shops.filter(s => s.active);
+    return user.role === 'booker' ? shopsForBooker(user.uid, live, areas) : live;
+  }, [shops, areas, user.role, user.uid]);
 
   /**
    * Which van an order belongs to.
@@ -705,7 +719,7 @@ export function FirestoreStoreProvider({
     products: productsView, shops, areas, orders, payments, settings, employees,
     staffDays, staffNames, expenses, fixedCharges,
     rewardStaff, rewardClaims, floatMovements, day, ready,
-    riders, unassignedOrders,
+    riders, bookers, routeShops, unassignedOrders,
     pendingWrites: pendingOrders + pendingPayments,
 
     riderForShop(shopId) {
@@ -1150,6 +1164,19 @@ export function FirestoreStoreProvider({
     setAreaRider(id, riderId) {
       updateDoc(doc(db, `${base}/areas/${id}`), { riderId: riderId ?? deleteField() })
         .catch(writeRejected('Round rider'));
+    },
+
+    /**
+     * Put a booker on a round, or take him off it (null).
+     *
+     * Territory is a client-side scope, not a rule: the shops collection stays
+     * readable company-wide because a booker legitimately covers a colleague's
+     * patch when someone is off sick, and a rule that made that impossible
+     * would be a worse bug than the one it prevents.
+     */
+    setAreaBooker(id, bookerId) {
+      updateDoc(doc(db, `${base}/areas/${id}`), { bookerId: bookerId ?? deleteField() })
+        .catch(writeRejected('Round booker'));
     },
 
     /** Hand ONE order to a van — the owner's answer to the unassigned list. */

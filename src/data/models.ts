@@ -46,6 +46,15 @@ export interface Area {
    * be first in the employee table.
    */
   riderId?: string;
+  /**
+   * The booker who covers this round — his territory.
+   *
+   * Unset means nobody owns it, and an unowned round is picked up by any
+   * booker who has no territory of his own (see `shopsForBooker`). While NO
+   * round has a booker on it, every booker sees every shop, which is exactly
+   * how the app behaved before territories existed.
+   */
+  bookerId?: string;
 }
 
 /**
