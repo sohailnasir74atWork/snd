@@ -11,11 +11,11 @@
 |---|---|
 | Branch | `main`, pushed to `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 14` / `versionName "1.9"` |
+| Version | `versionCode 15` / `versionName "2.0"` |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (86 warnings, all pre-existing house style: `no-void`, inline styles) |
 | Unit tests | **97 / 97**, 10 suites |
-| Rules tests | **240 / 240**, 2 suites — `npm run test:rules` |
+| Rules tests | **235 / 235**, 2 suites — `npm run test:rules` |
 | CI | green on every push — [Actions](https://github.com/sohailnasir74atWork/snd/actions) |
 | Device | ❗ **NOT driven by hand since the SaaS round** — see §4.1 before publishing |
 
@@ -102,8 +102,8 @@ have made `collect()` allocate that cash to nothing. See `src/lib/window.ts`.
 > it. Same reason the owner's unsynced-payment count comes from the
 > `confirmed == false` listener.
 
-**Lazy collections.** `expenses`, `fixedCharges`, `employeeList`,
-`floatMovements`, `rewardStaff` sync only once a screen calls `useNeed(...)`.
+**Lazy collections.** `expenses`, `fixedCharges`, `employeeList` and
+`floatMovements` sync only once a screen calls `useNeed(...)`.
 Once started they never detach — Firestore re-bills a listener disconnected
 over 30 minutes as a new query. **The failure mode is silent:** read one
 without declaring it and you get a confident zero, not an error.
@@ -125,7 +125,9 @@ photo (camera → Bunny CDN → `shop.photoUrl`) and drop a GPS pin (`shop.locat
 screen shows accuracy and warns past 30 m. **Saving never depends on the map loading** —
 the pin is the GPS fix, so a grey square on one bar costs only the ability to double-check.
 
-**Areas are a managed list.** `companies/{c}/areas`, owner-writes-only. Shops still store
+**Areas are a managed list.** `companies/{c}/areas`. The owner may rename, retire and put a
+rider or booker on a round; a BOOKER may only create one, and only when what he typed
+matches nothing — he is the one standing in a street the company has never worked. Shops still store
 the area NAME (no migration; orders carry a frozen `shopSnapshot.area`), so renaming an
 area fans the new name out to every shop under it in one batch. Every shop form picks from
 a searchable sheet — `components/AreaSelect.tsx`. The **wizard is the one place a name may
@@ -137,9 +139,14 @@ Pick a round, get an ordered stop list nearest-first, a live map with your own d
 distance and heading, arrival detection at 40 m, mark-and-advance. Entirely in-app;
 "Open in Google Maps" survives as a small link for the long hop into an area.
 
-**Counter staff live in the shop.** They always carried `shopId`; what was missing was any
-admin UI. `features/admin/CounterStaffSection.tsx` sits inside the shop editor, and the
-shops list shows "*n* counter staff" per row.
+**Counter staff live ON the shop** — `Shop.counterStaff?: CounterStaff[]`, optional and
+usually absent. They used to be their own `rewardStaff` collection, which put the answer to
+"who sells for us here" a join away from the shop it was about. Phone is optional; a name is
+the whole requirement. `features/admin/CounterStaffSection.tsx` sits inside the shop editor,
+and the shops list shows "*n* counter staff" per row. The company-wide flat list
+(`store.rewardStaff`) is DERIVED from the shops, never stored, so it cannot disagree with
+what the shop editor shows. The old collection has no rule at all now, so an old build that
+still writes there fails loudly rather than maintaining a second, divergent list.
 
 **Team today** (`features/admin/TeamDayScreen.tsx`, logic in `lib/workday.ts`) — when each
 person started and stopped, hours, shops touched, orders, deliveries, cash. There is no
@@ -353,12 +360,13 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 14` / `versionName "1.9"` |
+| Version | `versionCode 15` / `versionName "2.0"` |
 | File | `builds/SnD-Manager-v1.9-build14.aab` (62 MB, outside the repo — AABs are not committed) |
 | Also at | `android/app/build/outputs/bundle/release/app-release.aab` |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3 |
 | Built | 2026-08-09, from `main` |
+| Needs | the rules deployed — done; the booker-creates-area path 403s without them |
 
 **Not published, and not yet safe to publish.** See §4.1 — the four device
 checks have not been run. Building the file is safe; putting it on a track
