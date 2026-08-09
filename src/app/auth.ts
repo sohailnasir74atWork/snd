@@ -15,6 +15,7 @@ import {
   signOut as fbSignOut,
 } from '@react-native-firebase/auth';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
+import { getCrashlytics, setAttributes, setUserId } from '@react-native-firebase/crashlytics';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { kv } from '../lib/kv';
 import { strings } from '../i18n/strings';
@@ -100,6 +101,35 @@ type AdmitResponse =
   | { status: 'access_ended' };
 
 /**
+ * Tell Crashlytics WHICH BUSINESS this phone belongs to.
+ *
+ * Without it a crash report says a device in Pakistan threw in
+ * `BookerScreens` and nothing else — no way to know which of two hundred
+ * distributors is affected, whether it is one phone or all of theirs, or who
+ * to ring. With two hundred tenants that is the difference between a support
+ * call and a guess.
+ *
+ * The identifier is the companyId, deliberately NOT the email: a crash report
+ * is a diagnostic artefact that leaves the device, and putting a person's
+ * address in one turns every stack trace into personal data. The uid is
+ * already in the store's own error records when a specific phone matters.
+ *
+ * Best-effort throughout — crash reporting must never be the thing that
+ * crashes, and on a phone with no Play Services it simply is not there.
+ */
+function tagCrashReports(u: SessionUser | null): void {
+  try {
+    const cl = getCrashlytics();
+    if (!u) {
+      void setUserId(cl, '');
+      return;
+    }
+    void setUserId(cl, u.companyId);
+    void setAttributes(cl, { companyId: u.companyId, role: u.role });
+  } catch {}
+}
+
+/**
  * The last admitted identity, kept on the device.
  *
  * `getIdTokenResult(false)` does NOT hand back an expired token: past the
@@ -108,6 +138,10 @@ type AdmitResponse =
  * street next morning is bounced to Welcome and cannot work at all.
  */
 function storeSession(u: SessionUser): void {
+  // Every established session funnels through here — first sign-in, silent
+  // restore, and the re-admission that follows a role change — so it is the
+  // one place that can tag a crash without being called from three.
+  tagCrashReports(u);
   try {
     kv.set(SESSION_KEY, JSON.stringify(u));
   } catch {} // a phone that cannot write this still works, it just re-admits
@@ -276,6 +310,9 @@ export async function signInWithGoogle(
 }
 
 export async function signOutEverywhere(): Promise<void> {
+  // Untag first: a crash after this point belongs to nobody, and filing it
+  // against the business the phone just left is worse than filing it nowhere.
+  tagCrashReports(null);
   try {
     kv.remove(SESSION_KEY);
   } catch {}

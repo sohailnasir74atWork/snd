@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # So a green tick can be demanded before anything is built or uploaded.
+  workflow_dispatch:
+
+concurrency:
+  # A newer push makes an in-flight run pointless; cancel it rather than pay
+  # for two answers about code nobody has any more.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          # package.json engines: ">= 22.11.0"
+          node-version: '22'
+          cache: npm
+
+      - name: Java for the Firestore emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # firebase-tools refuses anything below 21. The Android build wants
+          # 17, but nothing here builds Android — that stays a local/release
+          # concern, so the two never have to agree in CI.
+          java-version: '21'
+
+      - run: npm ci
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Lint
+        # The repo carries ~81 long-standing house-style warnings; only errors
+        # should ever stop a build, so the threshold is explicit rather than
+        # implied by exit codes.
+        run: npx eslint . --max-warnings 200
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+      - name: Firestore rules
+        # THE important one. firestore.rules is the entire boundary between one
+        # distribution business and another's shops, margins and khata, and
+        # these 240 assertions are the only thing that checks it. If this step
+        # is ever removed or allowed to fail, the product is not multi-tenant
+        # any more — it just looks like it is.
+        run: npm run test:rules
+
+      - name: Release bundle
+        # Catches what tsc cannot: an import cycle or a missing asset that only
+        # shows up when Metro actually resolves the graph.
+        run: |
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output /tmp/ci-bundle.js \
+            --assets-dest /tmp/ci-assets

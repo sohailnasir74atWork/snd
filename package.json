@@ -8,7 +8,7 @@
     "lint": "eslint .",
     "start": "react-native start",
     "test": "jest",
-    "test:rules": "JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home npx firebase-tools emulators:exec --only firestore \"jest --config jest.rules.config.js\""
+    "test:rules": "JAVA_HOME=\"${JAVA_HOME:-/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home}\" npx firebase-tools emulators:exec --only firestore \"jest --config jest.rules.config.js\""
   },
   "dependencies": {
     "@react-native-community/geolocation": "^3.4.0",
