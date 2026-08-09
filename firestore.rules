@@ -68,13 +68,24 @@ service cloud.firestore {
       match /days/{dayId} {
         allow read: if inCompany(companyId);
         // His own fresh day: allowed, but never already-confirmed.
+        //
+        // inCompany() is load-bearing on BOTH branches and was missing from
+        // both. Owning the uid in staffId is not proof of membership: any
+        // Google account anywhere — including one that got `not_on_list` and
+        // holds no claims at all — could create and then edit documents at
+        // companies/{ANY}/days/{ANY} simply by writing its own uid. That put a
+        // phantom "cash still to settle" card on a stranger's owner dashboard
+        // and gave every signed-in account on earth an unmetered write channel
+        // into every tenant, billed to that tenant.
         allow create: if isAdmin(companyId)
-                      || (request.resource.data.staffId == request.auth.uid
+                      || (inCompany(companyId)
+                          && request.resource.data.staffId == request.auth.uid
                           && request.resource.data.get('handoverConfirmed', false) == false);
         // Updating his own day: he may start his route and hand over; only an
         // admin may ever touch handoverConfirmed (FR-7.11).
         allow update: if isAdmin(companyId)
-                      || (resource.data.staffId == request.auth.uid
+                      || (inCompany(companyId)
+                          && resource.data.staffId == request.auth.uid
                           && !request.resource.data.diff(resource.data)
                                 .affectedKeys().hasAny(['handoverConfirmed']));
         allow delete: if false;
@@ -144,10 +155,20 @@ service cloud.firestore {
                     || (isBooker(companyId) && resource.data.bookedBy == request.auth.uid)
                     || (isRider(companyId) && resource.data.assignedTo == request.auth.uid);
         allow create: if isAdmin(companyId) || isBooker(companyId);
+        // The booker's ONLY update path in the app is cancelOrder (store:615),
+        // which writes exactly {status: 'cancelled'}. The rule used to grant
+        // him every other key on the document while the status was still
+        // booked/assigned — so a modified client could stamp his own order
+        // delivered and paid, with no cash collected and no payment row to
+        // reconcile against, and it counted as revenue on the owner's
+        // dashboard. The whitelist is what the code actually does.
         allow update: if isAdmin(companyId)
                       || (isBooker(companyId)
                           && resource.data.bookedBy == request.auth.uid
-                          && resource.data.status in ['booked', 'assigned'])
+                          && resource.data.status in ['booked', 'assigned']
+                          && request.resource.data.diff(resource.data)
+                               .affectedKeys().hasOnly(['status'])
+                          && request.resource.data.status == 'cancelled')
                       || (isRider(companyId)
                           && resource.data.assignedTo == request.auth.uid
                           && request.resource.data.diff(resource.data)
@@ -213,7 +234,18 @@ service cloud.firestore {
       // staff phone could reset them and re-issue duplicate bill numbers (§8.1).
       match /counters/{year} {
         allow read: if inCompany(companyId);
-        allow create: if inCompany(companyId);
+        // The first serial of a year. store:441 writes {...data, [kind]: n},
+        // and on a fresh document data is {} and n is 1 — so a legitimate
+        // create is exactly one of these four keys set to 1. The old rule
+        // allowed any keys and any values, which let a modified client seed
+        // the year's counters anywhere it liked and re-issue bill numbers
+        // that already existed on paper.
+        allow create: if inCompany(companyId)
+                      && request.resource.data.keys().hasOnly(['order', 'invoice', 'receipt', 'reward'])
+                      && (!('order' in request.resource.data) || request.resource.data.order == 1)
+                      && (!('invoice' in request.resource.data) || request.resource.data.invoice == 1)
+                      && (!('receipt' in request.resource.data) || request.resource.data.receipt == 1)
+                      && (!('reward' in request.resource.data) || request.resource.data.reward == 1);
         allow update: if inCompany(companyId)
                       && request.resource.data.keys().hasOnly(['order', 'invoice', 'receipt', 'reward'])
                       && (!('order' in request.resource.data) || !('order' in resource.data)

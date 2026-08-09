@@ -18,7 +18,7 @@ import React from 'react';
 import { Alert, PermissionsAndroid, Platform } from 'react-native';
 import {
   collection, deleteDoc, deleteField, doc, getFirestore, increment, onSnapshot,
-  orderBy, query, where, runTransaction, serverTimestamp, setDoc, updateDoc,
+  query, where, runTransaction, serverTimestamp, setDoc, updateDoc,
   waitForPendingWrites, writeBatch,
 } from '@react-native-firebase/firestore';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
@@ -37,6 +37,7 @@ import {
 } from './store';
 import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
+import { mergeById, windowStartDate, windowStartKey } from '../lib/window';
 import { formatSerial, nextLocalRef, type SerialKind } from '../lib/serials';
 import { uploadPhotoBase64 } from '../lib/storage';
 import type { Role, SessionUser } from '../app/types';
@@ -91,6 +92,43 @@ function toMillis(v: unknown): number {
   return anyV.toMillis ? anyV.toMillis() : 0;
 }
 
+/** The shape both order/payment mappers need from a snapshot document. */
+type DocLike = {
+  id: string;
+  data: (options?: { serverTimestamps: 'estimate' }) => Record<string, unknown>;
+};
+
+/**
+ * Snapshot document → Order. ONE implementation because two listeners now feed
+ * the same array, and a mapper written twice is the exact shape of bug that
+ * hid in devStore/firestoreStore for two rounds (HANDOFF §3).
+ *
+ * 'estimate' resolves a serverTimestamp that has not landed yet to the local
+ * write time instead of null: `deliveredAt` must be readable the instant the
+ * rider closes a stop, because the route header counts by it and offline that
+ * write can sit for hours.
+ */
+function toOrder(d: DocLike): Order {
+  const data = d.data({ serverTimestamps: 'estimate' });
+  return {
+    id: d.id, ...(data as unknown as Omit<Order, 'id'>),
+    bookedAt: toMillis(data.bookedAt) || Date.now(),
+    deliveredAt: data.deliveredAt ? toMillis(data.deliveredAt) : undefined,
+  } as Order;
+}
+
+/** Snapshot document → Payment. Same single-implementation rule as toOrder. */
+function toPayment(d: DocLike): Payment {
+  const data = d.data({ serverTimestamps: 'estimate' });
+  return {
+    id: d.id, ...(data as unknown as Omit<Payment, 'id'>),
+    createdAt: toMillis(data.createdAt) || Date.now(),
+    confirmed: Boolean(data.confirmed),
+    voided: Boolean(data.voided),
+    voidedAt: data.voidedAt ? toMillis(data.voidedAt) : undefined,
+  } as Payment;
+}
+
 /**
  * A write the server REFUSED (rules, quota) — not an offline queue. Offline
  * writes stay pending and never reach here; a rejection means the change was
@@ -139,8 +177,21 @@ export function FirestoreStoreProvider({
   const [costs, setCosts] = React.useState<Record<string, number>>({});
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [areas, setAreas] = React.useState<Area[]>([]);
-  const [orders, setOrders] = React.useState<Order[]>([]);
-  const [payments, setPayments] = React.useState<Payment[]>([]);
+  // Orders and payments are the only two collections that grow forever, so
+  // they are the only two that are not loaded whole. Each is fetched by TWO
+  // listeners whose results are merged below:
+  //
+  //   …Window — the last WINDOW_DAYS, which is what the app works with daily.
+  //   …Open   — the set money correctness depends on, at ANY age: bills that
+  //             still carry a balance, and cash the owner has not confirmed.
+  //
+  // The open slice is bounded by the BUSINESS (how much credit is out, how
+  // much cash is un-counted), not by how long the tenant has been a customer,
+  // so it stays small forever while the window stops history accumulating.
+  const [ordersWindow, setOrdersWindow] = React.useState<Order[]>([]);
+  const [ordersOpen, setOrdersOpen] = React.useState<Order[]>([]);
+  const [paymentsWindow, setPaymentsWindow] = React.useState<Payment[]>([]);
+  const [paymentsOpen, setPaymentsOpen] = React.useState<Payment[]>([]);
   const [settings, setSettings] = React.useState<CompanySettings>(DEFAULT_SETTINGS);
   const [employees, setEmployees] = React.useState<Employee[]>([]);
   const [staffNames, setStaffNames] = React.useState<Record<string, string>>({});
@@ -155,6 +206,24 @@ export function FirestoreStoreProvider({
   // out throws the offline queue away, so the sign-out flow checks this first.
   const [pendingOrders, setPendingOrders] = React.useState(0);
   const [pendingPayments, setPendingPayments] = React.useState(0);
+
+  /**
+   * The two slices, merged. Every consumer below and every screen sees one
+   * array exactly as before — the split is invisible above this line.
+   *
+   * Sorted newest-first here rather than in the query, because the windowed
+   * query has to order by its inequality field (`deliveryDate`) and the app
+   * has always presented orders by `bookedAt`. Sorting the merged array keeps
+   * the old contract without a second index.
+   */
+  const orders = React.useMemo(
+    () => mergeById(ordersWindow, ordersOpen).sort((a, b) => b.bookedAt - a.bookedAt),
+    [ordersWindow, ordersOpen],
+  );
+  const payments = React.useMemo(
+    () => mergeById(paymentsWindow, paymentsOpen),
+    [paymentsWindow, paymentsOpen],
+  );
 
   /**
    * One day document per person PER DATE, id "{uid}_{YYYY-MM-DD}". Reusing a
@@ -190,15 +259,64 @@ export function FirestoreStoreProvider({
       console.warn(`[snd] ${label} listener error`, e);
 
     // Every query carries the filter its security rule checks (audit finding #1).
-    const ordersQuery = isAdmin
-      ? query(collection(db, `${base}/orders`), orderBy('bookedAt', 'desc'))
-      : isRider
-        ? query(collection(db, `${base}/orders`), where('assignedTo', '==', user.uid))
-        : query(collection(db, `${base}/orders`), where('bookedBy', '==', user.uid));
+    const from = windowStartKey();
 
+    const ordersQuery = isAdmin
+      ? query(collection(db, `${base}/orders`), where('deliveryDate', '>=', from))
+      : isRider
+        ? query(collection(db, `${base}/orders`),
+                where('assignedTo', '==', user.uid), where('deliveryDate', '>=', from))
+        : query(collection(db, `${base}/orders`),
+                where('bookedBy', '==', user.uid), where('deliveryDate', '>=', from));
+
+    /**
+     * Orders the window would drop but money still depends on.
+     *
+     * One filter, `paymentStatus in ['unpaid','partial']`, does two jobs:
+     * a delivered bill still carrying a balance (what a collection visit is
+     * FOR — a shop that owed money four months ago is the *primary* target,
+     * and windowing it away would have made `collect()` allocate that cash to
+     * nothing and book it as `unallocated`), and an order booked long ago that
+     * was never delivered, which would otherwise vanish from the route in
+     * silence. Paid and settled history is what actually falls out of memory.
+     *
+     * The booker is excluded on purpose: nothing on his phone allocates
+     * against old bills. His forced-cash exception writes a flagged payment
+     * and the khata moves at the owner's confirmation (FR-7.13), on the
+     * owner's phone, from the owner's full view.
+     */
+    const openOrdersQuery = isAdmin
+      ? query(collection(db, `${base}/orders`),
+              where('paymentStatus', 'in', ['unpaid', 'partial']))
+      : isRider
+        ? query(collection(db, `${base}/orders`),
+                where('assignedTo', '==', user.uid),
+                where('paymentStatus', 'in', ['unpaid', 'partial']))
+        : null;
+
+    // Staff payment queries are already scoped to one person and stay small on
+    // their own — a rider writes a few hundred receipts a year. Only the
+    // owner, who sees everyone's, needs the window.
     const paymentsQuery = isAdmin
-      ? collection(db, `${base}/payments`)
+      ? query(collection(db, `${base}/payments`), where('createdAt', '>=', windowStartDate()))
       : query(collection(db, `${base}/payments`), where('collectedBy', '==', user.uid));
+
+    /**
+     * Cash nobody has counted yet, at any age — the owner's confirm cards and
+     * the "with staff" total are built from exactly this set, and an
+     * un-confirmed rupee from six months ago is precisely the one he must not
+     * lose sight of.
+     *
+     * It also covers a gap the window cannot: `createdAt` is a
+     * `serverTimestamp()`, so a payment written with no signal has no resolved
+     * value to compare and would miss the windowed query until it synced.
+     * `confirmed` is a client-written boolean and every new payment is created
+     * `false` (enforced in the rules), so this listener always sees it — which
+     * is why the unsynced-money count below is taken from here.
+     */
+    const openPaymentsQuery = isAdmin
+      ? query(collection(db, `${base}/payments`), where('confirmed', '==', false))
+      : null;
 
     const subs: (() => void)[] = [
       onSnapshot(collection(db, `${base}/products`), s => {
@@ -254,33 +372,21 @@ export function FirestoreStoreProvider({
       // includeMetadataChanges so the unsynced count falls back to zero when
       // the queue drains — without it the acknowledgement is a metadata-only
       // change and never reaches this callback.
+      // A freshly booked order always lands in THIS slice — `deliveryDate` is
+      // today or tomorrow by construction — so the unsynced-order count is
+      // complete here and needs no help from the open slice.
       onSnapshot(ordersQuery, { includeMetadataChanges: true }, s => {
         setPendingOrders(s.docs.filter(d => d.metadata.hasPendingWrites).length);
-        setOrders(s.docs.map(d => {
-          // 'estimate' so deliveredAt is readable the instant the rider closes
-          // a stop, not only once the server timestamp lands — the route
-          // header counts by it, and offline that write can sit for hours.
-          const data = d.data({ serverTimestamps: 'estimate' }) as Record<string, unknown>;
-          return {
-            id: d.id, ...(data as unknown as Omit<Order, 'id'>),
-            bookedAt: toMillis(data.bookedAt) || Date.now(),
-            deliveredAt: data.deliveredAt ? toMillis(data.deliveredAt) : undefined,
-          } as Order;
-        }));
+        setOrdersWindow(s.docs.map(toOrder));
       }, warn('orders')),
 
       onSnapshot(paymentsQuery, { includeMetadataChanges: true }, s => {
-        setPendingPayments(s.docs.filter(d => d.metadata.hasPendingWrites).length);
-        setPayments(s.docs.map(d => {
-          const data = d.data({ serverTimestamps: 'estimate' }) as Record<string, unknown>;
-          return {
-            id: d.id, ...(data as unknown as Omit<Payment, 'id'>),
-            createdAt: toMillis(data.createdAt) || Date.now(),
-            confirmed: Boolean(data.confirmed),
-            voided: Boolean(data.voided),
-            voidedAt: data.voidedAt ? toMillis(data.voidedAt) : undefined,
-          } as Payment;
-        }));
+        // The owner's count comes from the unconfirmed listener instead (see
+        // openPaymentsQuery): his slice is windowed on a serverTimestamp and
+        // would miss a payment he wrote with no signal — which is the only
+        // kind the sign-out guard exists to catch.
+        if (!isAdmin) setPendingPayments(s.docs.filter(d => d.metadata.hasPendingWrites).length);
+        setPaymentsWindow(s.docs.map(toPayment));
       }, warn('payments')),
 
       onSnapshot(doc(db, `${base}/settings/company`), s => {
@@ -308,6 +414,19 @@ export function FirestoreStoreProvider({
           ...EMPTY_DAY(), ...(d.data() as Partial<DayState>),
         }) as DayState)), warn('days')),
     ];
+
+    // The two open slices. Both are small by construction and both are the
+    // reason the window above is safe to have at all.
+    if (openOrdersQuery) {
+      subs.push(onSnapshot(openOrdersQuery,
+        s => setOrdersOpen(s.docs.map(toOrder)), warn('open orders')));
+    }
+    if (openPaymentsQuery) {
+      subs.push(onSnapshot(openPaymentsQuery, { includeMetadataChanges: true }, s => {
+        setPendingPayments(s.docs.filter(d => d.metadata.hasPendingWrites).length);
+        setPaymentsOpen(s.docs.map(toPayment));
+      }, warn('open payments')));
+    }
 
     // Rewards (FR-16): admin + booker; the rider has no reward screens and
     // the rules deny him the list.
