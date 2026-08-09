@@ -851,7 +851,7 @@ const styles = StyleSheet.create({
   screenContent: { paddingBottom: space.xl * 3 },
   center: { alignItems: 'center', justifyContent: 'center', padding: space.xl },
 
-  sub: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginTop: space.xs, marginBottom: space.xs },
+  sub: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.gutter, marginTop: space.xs, marginBottom: space.xs },
   shopName: { fontSize: font.h2, fontWeight: '700', color: color.text },
   // Product rows put a name beside a price: let the name take the slack and
   // wrap instead of shoving the amount off the card. minWidth 0 is the half
@@ -885,7 +885,7 @@ const styles = StyleSheet.create({
   totalDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border, marginTop: space.s, paddingTop: space.s + 2 },
   totalLabel: { fontSize: font.body, fontWeight: '800', color: color.text, letterSpacing: 0.4 },
 
-  ctaWrap: { paddingHorizontal: space.l, marginTop: space.s },
+  ctaWrap: { paddingHorizontal: space.gutter, marginTop: space.s },
   ctaWrapWide: { alignSelf: 'stretch', marginTop: space.m },
   successBadge: {
     width: 72, height: 72, borderRadius: 36, backgroundColor: color.successSoft,
@@ -911,12 +911,12 @@ const styles = StyleSheet.create({
 
   rowWrapPadded: {
     flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
-    paddingHorizontal: space.l, marginBottom: space.xs,
+    paddingHorizontal: space.gutter, marginBottom: space.xs,
   },
   tightCard: { paddingVertical: space.xs },
   formHead: { flexDirection: 'row', alignItems: 'center', paddingTop: space.s, marginBottom: space.xs },
   formTitle: { fontSize: font.body, fontWeight: '600', color: color.text, marginLeft: space.m, flexShrink: 1 },
-  searchWrap: { paddingHorizontal: space.l, marginBottom: space.s },
+  searchWrap: { paddingHorizontal: space.gutter, marginBottom: space.s },
   qtyRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
   qtyInput: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
@@ -927,7 +927,7 @@ const styles = StyleSheet.create({
   qtyUnit: { fontSize: font.sub, color: color.textSub, marginLeft: space.s, fontWeight: '600' },
   discountHint: {
     fontSize: font.tiny, color: color.textSub,
-    marginHorizontal: space.l, marginTop: space.xs,
+    marginHorizontal: space.gutter, marginTop: space.xs,
   },
   springRow: { flex: 1 },
 });

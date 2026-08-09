@@ -60,6 +60,18 @@ export const radius = {
 
 export const space = {
   xs: 4, s: 6, m: 10, l: 14, xl: 20,
+  /**
+   * The screen gutter — the distance from the screen edge to a card edge, and
+   * the line everything full-width aligns to.
+   *
+   * It is its own token rather than a reuse of `space.l` because it is not a
+   * spacing step: it is one decision about how wide the content column is, and
+   * it has to be changed in exactly one place. Card, OptionBar and
+   * SectionLabel all read it, so a screen that uses those is aligned for free;
+   * anything laid out by hand should use it too rather than picking a step off
+   * the scale that happens to match today.
+   */
+  gutter: 7,
 } as const;
 
 export const shadow = {

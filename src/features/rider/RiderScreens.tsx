@@ -663,9 +663,9 @@ const styles = StyleSheet.create({
   centerPad: { alignItems: 'center', justifyContent: 'center', padding: space.xl },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginTop: space.xs, marginBottom: space.s,
+    marginHorizontal: space.gutter, marginTop: space.xs, marginBottom: space.s,
   },
-  shopTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginHorizontal: space.l },
+  shopTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginHorizontal: space.gutter },
   doneTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginTop: space.s, marginBottom: space.xs },
   big: { fontSize: font.h2, fontWeight: '700', color: color.text },
   qty: { fontSize: font.body, fontWeight: '700', color: color.text },
@@ -681,7 +681,7 @@ const styles = StyleSheet.create({
   flexLabel: { flex: 1, minWidth: 0 },
   valueRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.xs },
-  ctaWrap: { marginHorizontal: space.l, marginVertical: space.s },
+  ctaWrap: { marginHorizontal: space.gutter, marginVertical: space.s },
 
   tightCard: { paddingVertical: space.xs },
   payBlock: { paddingVertical: space.s + 2 },
@@ -699,7 +699,7 @@ const styles = StyleSheet.create({
   oweText: { fontSize: font.sub, fontWeight: '700', color: color.danger, marginTop: space.xs },
   clearText: { fontSize: font.sub, fontWeight: '700', color: color.success, marginTop: space.xs },
 
-  undoRow: { flexDirection: 'row', paddingHorizontal: space.l, marginBottom: space.xs },
+  undoRow: { flexDirection: 'row', paddingHorizontal: space.gutter, marginBottom: space.xs },
   // Capped and wrapping: two Tags side by side ("FROM EARLIER" + "COLLECT
   // KHATA") used to eat the whole row and crop the shop's area line.
   tagRow: {

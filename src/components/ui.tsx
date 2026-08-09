@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
   chipTextSelected: { color: color.onDark },
   chipTextDanger: { color: color.danger },
 
-  segmentedRow: { flexDirection: 'row', gap: 8, marginHorizontal: space.l, marginVertical: space.s },
+  segmentedRow: { flexDirection: 'row', gap: 8, marginHorizontal: space.gutter, marginVertical: space.s },
   segment: {
     flex: 1, borderRadius: radius.pill, borderWidth: 1, borderColor: color.border,
     backgroundColor: color.surface, paddingVertical: 8, alignItems: 'center',
@@ -283,7 +283,8 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: color.surface, borderRadius: radius.card, padding: 12,
-    marginHorizontal: space.l, marginVertical: 5,
+    // The gutter, not a spacing step — see space.gutter.
+    marginHorizontal: space.gutter, marginVertical: 5,
   },
   listRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
   listBody: { flex: 1, minWidth: 0 },
@@ -293,7 +294,7 @@ const styles = StyleSheet.create({
 
   sectionLabel: {
     fontSize: font.tiny + 1, fontWeight: '800', color: color.textSub,
-    marginHorizontal: space.l, marginTop: space.m, marginBottom: 3,
+    marginHorizontal: space.gutter, marginTop: space.m, marginBottom: 3,
     textTransform: 'uppercase', letterSpacing: 0.6,
   },
 

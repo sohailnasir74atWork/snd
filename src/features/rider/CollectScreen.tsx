@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
   centerPad: { alignItems: 'center', justifyContent: 'center', padding: space.xl },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginTop: space.xs, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginTop: space.xs, marginBottom: space.xs,
   },
   tightCard: { paddingVertical: space.xs },
 
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
   flexLabel: { flex: 1, minWidth: 0 },
   valueRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
 
-  ctaWrap: { marginHorizontal: space.l, marginVertical: space.s },
+  ctaWrap: { marginHorizontal: space.gutter, marginVertical: space.s },
 
   doneTitle: { fontSize: font.h1, fontWeight: '800', color: color.text, marginTop: space.s },
   receiptNo: { fontSize: font.h2, fontWeight: '700', color: color.textSub, marginVertical: space.xs },

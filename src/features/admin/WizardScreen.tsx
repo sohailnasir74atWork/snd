@@ -578,7 +578,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
   headerRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginHorizontal: space.l, marginTop: space.s,
+    marginHorizontal: space.gutter, marginTop: space.s,
   },
   dots: { flexDirection: 'row', alignItems: 'center' },
   dot: {
@@ -588,11 +588,11 @@ const styles = StyleSheet.create({
   dotDone: { backgroundColor: color.primary, width: space.l + 4 },
   stepLabel: {
     fontSize: font.sub, fontWeight: '700', color: color.textSub,
-    marginHorizontal: space.l, marginTop: space.s,
+    marginHorizontal: space.gutter, marginTop: space.s,
   },
   skip: { fontSize: font.body, fontWeight: '700', color: color.textSub, padding: space.xs },
-  h1: { fontSize: font.h1, fontWeight: '800', color: color.text, marginHorizontal: space.l, marginTop: space.xs },
-  subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginBottom: space.s, marginTop: 2 },
+  h1: { fontSize: font.h1, fontWeight: '800', color: color.text, marginHorizontal: space.gutter, marginTop: space.xs },
+  subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.gutter, marginBottom: space.s, marginTop: 2 },
 
   cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },
   cardHeadLabel: {
@@ -612,7 +612,7 @@ const styles = StyleSheet.create({
   twoCol: { flexDirection: 'row' },
   col: { flex: 1, minWidth: 0, marginRight: space.s },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginBottom: space.xs },
-  emptyHint: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginTop: space.s },
+  emptyHint: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.gutter, marginTop: space.s },
   moreLink: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s, paddingVertical: space.xs },
   // flex 1 so the wrapped label keeps the chevron on the row rather than
   // pushing it out of the card.
@@ -623,5 +623,5 @@ const styles = StyleSheet.create({
   promptText: { flex: 1, minWidth: 0, marginLeft: space.m },
   promptTitle: { fontSize: font.h2 - 1, fontWeight: '800', color: color.warn },
   promptBody: { fontSize: font.sub, color: color.textSub, marginTop: 2, lineHeight: 17 },
-  footer: { marginHorizontal: space.l, marginTop: space.s, marginBottom: space.l },
+  footer: { marginHorizontal: space.gutter, marginTop: space.s, marginBottom: space.l },
 });

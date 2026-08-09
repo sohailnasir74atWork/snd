@@ -159,7 +159,9 @@ const styles = StyleSheet.create({
   sheet: {
     maxHeight: '70%', backgroundColor: color.bg,
     borderTopLeftRadius: radius.card * 2, borderTopRightRadius: radius.card * 2,
-    padding: space.l, paddingBottom: space.xl,
+    // Horizontal follows the gutter so the sheet's rows sit on the same line
+    // as the cards behind it; vertical keeps the roomier step.
+    paddingHorizontal: space.gutter, paddingTop: space.l, paddingBottom: space.xl,
   },
   sheetHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.m },
   sheetTitle: { flex: 1, minWidth: 0, fontSize: font.h2, fontWeight: '700', color: color.text },

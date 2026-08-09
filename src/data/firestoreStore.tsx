@@ -656,7 +656,12 @@ export function FirestoreStoreProvider({
 
     startRoute() {
       setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
-        ...EMPTY_DAY(day.date), routeStarted: true, staffId: user.uid,
+        // Client clock, not serverTimestamp: this is read straight back on the
+        // rider's own phone to show his day, and a pending server value would
+        // read as "not started" for as long as he has no signal — which is
+        // exactly the morning this matters.
+        ...EMPTY_DAY(day.date), routeStarted: true, routeStartedAt: Date.now(),
+        staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Start route'));
     },
 
@@ -814,7 +819,8 @@ export function FirestoreStoreProvider({
 
     handOver() {
       setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
-        date: day.date, handedOver: true, staffId: user.uid,
+        date: day.date, handedOver: true, handedOverAt: Date.now(),
+        staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Handover'));
     },
 

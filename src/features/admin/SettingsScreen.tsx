@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginBottom: space.xs,
   },
   tightCard: { paddingVertical: space.xs },
 

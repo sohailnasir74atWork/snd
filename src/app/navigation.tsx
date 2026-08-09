@@ -21,6 +21,7 @@ import { AdminActionScreen, AdminDashboardScreen, AdminMoreMenu } from '../featu
 import { ProductsScreen } from '../features/admin/ProductsScreen';
 import { ShopsScreen } from '../features/admin/ShopsScreen';
 import { AreasScreen } from '../features/admin/AreasScreen';
+import { TeamDayScreen } from '../features/admin/TeamDayScreen';
 import { AreaSweepScreen } from '../features/shops/AreaSweepScreen';
 import { EmployeesScreen } from '../features/admin/EmployeesScreen';
 import { SettingsScreen } from '../features/admin/SettingsScreen';
@@ -71,6 +72,7 @@ function AdminMoreStack() {
       <MoreStack.Screen name="Areas" component={AreasScreen} options={{ title: 'Areas' }} />
       <MoreStack.Screen name="Products" component={ProductsScreen} options={{ title: 'Products' }} />
       <MoreStack.Screen name="Employees" component={EmployeesScreen} options={{ title: 'Employees' }} />
+      <MoreStack.Screen name="TeamDay" component={TeamDayScreen} options={{ title: 'Team today' }} />
       <MoreStack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
       <MoreStack.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />
       <MoreStack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />

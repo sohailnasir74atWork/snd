@@ -212,6 +212,17 @@ export interface DayState {
   routeStarted: boolean; // FR-6.2 — [Start route] freezes the load
   handedOver: boolean;
   handoverConfirmed: boolean;
+  /**
+   * When the rider actually pressed the button, not just that he did.
+   *
+   * The booleans alone say a day happened but not when, so the only way to
+   * answer "what time did he start" was to guess from the first delivery —
+   * which is wrong by however long the ride to the first shop took. Optional
+   * because every day written before this existed has neither, and those days
+   * still have to read correctly.
+   */
+  routeStartedAt?: number;
+  handedOverAt?: number;
 }
 
 /** Today as 'YYYY-MM-DD' in the phone's local time (§12.1). */

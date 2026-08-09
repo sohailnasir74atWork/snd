@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginBottom: space.xs,
   },
   tightCard: { paddingVertical: space.xs },
 
@@ -270,7 +270,7 @@ const styles = StyleSheet.create({
   },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, marginHorizontal: -space.xs },
-  ctaWrap: { paddingHorizontal: space.l },
+  ctaWrap: { paddingHorizontal: space.gutter },
   note: {
     fontSize: font.sub, color: color.textSub, textAlign: 'center',
     marginTop: space.m, marginHorizontal: space.xl,

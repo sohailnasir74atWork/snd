@@ -310,5 +310,5 @@ const styles = StyleSheet.create({
   photoRow: { flexDirection: 'row', alignItems: 'center', gap: space.s, marginTop: space.xs },
   photoThumb: { width: 72, height: 72, borderRadius: radius.tile, backgroundColor: color.surfaceAlt },
 
-  ctaWrap: { paddingHorizontal: space.l, marginTop: space.s },
+  ctaWrap: { paddingHorizontal: space.gutter, marginTop: space.s },
 });

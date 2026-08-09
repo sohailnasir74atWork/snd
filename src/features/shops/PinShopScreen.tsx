@@ -167,13 +167,13 @@ export function PinShopScreen({
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center' },
-  header: { padding: space.l, backgroundColor: color.surface },
+  header: { paddingHorizontal: space.gutter, paddingVertical: space.l, backgroundColor: color.surface },
   title: { fontSize: font.h1, fontWeight: '700', color: color.text },
   sub: { fontSize: font.sub, color: color.textSub, marginTop: space.xs, lineHeight: font.sub + 6 },
   // The map takes what is left after the panel, rather than a fixed height:
   // on a short phone a fixed map is what pushes the save button off-screen.
   mapWrap: { flex: 1, backgroundColor: color.surfaceAlt },
-  panel: { padding: space.l, backgroundColor: color.surface, gap: space.s },
+  panel: { paddingHorizontal: space.gutter, paddingVertical: space.l, backgroundColor: color.surface, gap: space.s },
   noteRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.s, marginBottom: space.xs },
   // flex + minWidth 0 so a long message wraps instead of shoving the icon out.
   note: { flex: 1, minWidth: 0, fontSize: font.sub, color: color.textSub, lineHeight: font.sub + 6 },

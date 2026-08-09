@@ -334,6 +334,7 @@ export function AdminMoreMenu({ navigation }: { navigation: { navigate: (r: stri
     ['map-marker-radius-outline', 'Areas', 'the rounds a booker covers', 'Areas'],
     ['bottle-tonic-plus-outline', 'Products', 'prices, stock, activate/deactivate', 'Products'],
     ['account-multiple-outline', 'Employees', 'add by Gmail, roles, remove', 'Employees'],
+    ['account-clock-outline', 'Team today', 'who started, who is still out', 'TeamDay'],
     ['chart-line', 'Reports', 'sales, collections, who owes me', 'Reports'],
     ['receipt', 'Expenses', 'fixed charges + one-off expenses', 'Expenses'],
     ['cog-outline', 'Settings', 'brand, delivery day, discounts, toggles', 'Settings'],
@@ -360,7 +361,7 @@ const styles = StyleSheet.create({
   // The gradient keeps its literal whites (they sit on colour, not on the
   // canvas), but the sizes come down to the tightened type scale.
   hero: {
-    marginHorizontal: space.l, marginTop: space.s, borderRadius: radius.card + 2, padding: space.l + 2,
+    marginHorizontal: space.gutter, marginTop: space.s, borderRadius: radius.card + 2, padding: space.l + 2,
     shadowColor: '#1D4FD7', shadowOpacity: 0.35, shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 }, elevation: 6,
   },
@@ -374,7 +375,7 @@ const styles = StyleSheet.create({
   fill: { flex: 1 },
   screen: { flex: 1, backgroundColor: color.bg },
   content: { paddingTop: space.s, paddingBottom: space.xl },
-  subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.l, marginBottom: space.xs },
+  subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.gutter, marginBottom: space.xs },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: space.s + 2 },
   row: { flexDirection: 'row', alignItems: 'center' },
   // minWidth 0 is what lets a long name wrap instead of shoving the amount

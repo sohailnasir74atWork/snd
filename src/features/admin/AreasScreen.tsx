@@ -233,7 +233,7 @@ export function AreasScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
-  content: { padding: space.l, paddingBottom: 40 },
+  content: { paddingHorizontal: space.gutter, paddingTop: space.l, paddingBottom: 40 },
   subLine: { fontSize: font.sub, color: color.textSub, marginBottom: space.m },
   ctaWrap: { marginBottom: space.m },
   tightCard: { paddingTop: space.m },

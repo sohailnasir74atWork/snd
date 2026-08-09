@@ -349,9 +349,9 @@ const styles = StyleSheet.create({
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginBottom: space.xs,
   },
-  ctaWrap: { paddingHorizontal: space.l },
+  ctaWrap: { paddingHorizontal: space.gutter },
 
   tightCard: { paddingVertical: space.xs },
   formHead: { flexDirection: 'row', alignItems: 'center', paddingTop: space.s, marginBottom: space.xs },
@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
   costHint: { fontSize: font.sub, color: color.textSub, marginRight: space.s },
   noteRow: {
     flexDirection: 'row', alignItems: 'center',
-    marginHorizontal: space.l, marginTop: space.s,
+    marginHorizontal: space.gutter, marginTop: space.s,
   },
   noteText: { fontSize: font.sub, color: color.warn, marginLeft: space.s, flexShrink: 1 },
 });

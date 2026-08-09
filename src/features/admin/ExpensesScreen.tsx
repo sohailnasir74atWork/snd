@@ -344,12 +344,12 @@ const styles = StyleSheet.create({
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginBottom: space.xs,
   },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: space.s + 2 },
   hint: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginTop: 2, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginTop: 2, marginBottom: space.xs,
   },
 
   cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },

@@ -438,9 +438,9 @@ const styles = StyleSheet.create({
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
   subLine: {
     fontSize: font.sub, color: color.textSub,
-    marginHorizontal: space.l, marginBottom: space.xs,
+    marginHorizontal: space.gutter, marginBottom: space.xs,
   },
-  presetWrap: { marginHorizontal: space.l, marginTop: space.s },
+  presetWrap: { marginHorizontal: space.gutter, marginTop: space.s },
   tightCard: { paddingVertical: space.xs },
   exportRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', paddingTop: space.s },
   voidedText: { textDecorationLine: 'line-through', color: color.textFaint },
