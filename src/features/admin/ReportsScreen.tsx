@@ -9,6 +9,7 @@ import { Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, co
 import { useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import { profitFor } from '../../lib/profit';
+import { netOfTax } from '../../lib/order';
 import { shareCsv } from '../../documents/share';
 import type { Order, Payment, Shop } from '../../data/models';
 
@@ -85,7 +86,8 @@ export function ordersInRange(orders: Order[], r: DateRange): Order[] {
 
 /** Sum of billed grand totals across delivered orders. Integer rupees. */
 export function salesTotal(delivered: Order[]): number {
-  return delivered.reduce((sum, o) => sum + (o.billedTotals?.grandTotal ?? 0), 0);
+  // Net of tax — see AdminScreens. Identical for every untaxed bill.
+  return delivered.reduce((sum, o) => sum + netOfTax(o.billedTotals), 0);
 }
 
 export interface ProductLine {

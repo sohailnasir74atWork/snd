@@ -141,6 +141,17 @@ export interface Order {
 export interface Totals {
   subTotal: number;
   discountTotal: number;
+  /**
+   * Sales tax on (subTotal − discountTotal), added on top — exclusive, which
+   * is how a trade invoice in Pakistan is written.
+   *
+   * Absent on every order booked before tax existed, and absent on every order
+   * of a business whose `taxPercent` is 0 — which is the default and was the
+   * only possible value until now. Read it as `?? 0` everywhere; a missing
+   * value and a zero value mean the same thing and always will.
+   */
+  taxTotal?: number;
+  /** What the shop owes: subTotal − discountTotal + taxTotal. */
   grandTotal: number;
 }
 

@@ -136,7 +136,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         shopId: shop.id,
         shopSnapshot: { name: shop.name, phone: shop.phone, area: shop.area },
         items: input.items,
-        orderedTotals: computeTotals(input.items, input.discountPercent),
+        orderedTotals: computeTotals(input.items, input.discountPercent, false, state.settings.taxPercent),
         discountPercent: input.discountPercent,
         status: 'assigned',
         paymentStatus: 'unpaid',
@@ -227,7 +227,7 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         throw new Error('This stop is no longer open. Go back to the route and reopen it.');
       }
       const items = order.items.map(it => ({ ...it, deliveredQty: deliveredQtys[it.productId] ?? it.qty }));
-      const billed = computeTotals(items, order.discountPercent, true);
+      const billed = computeTotals(items, order.discountPercent, true, state.settings.taxPercent);
       const invoiceNo = nextSerial('INV');
 
       let receiptNo: string | undefined;

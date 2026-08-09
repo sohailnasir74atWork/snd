@@ -11,6 +11,7 @@ import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Tile,
   color, font, radius, space,
 } from '../../components/ui';
+import { netOfTax } from '../../lib/order';
 import { useStore } from '../../data/store';
 import { strings } from '../../i18n/strings';
 
@@ -320,7 +321,8 @@ export function AdminDashboardScreen() {
     o.status !== 'cancelled' && o.status !== 'returned'
     && (o.deliveredAt ?? o.bookedAt) >= dayStart.getTime());
   const delivered = todayOrders.filter(o => o.status === 'delivered');
-  const sales = delivered.reduce((s, o) => s + (o.billedTotals?.grandTotal ?? 0), 0);
+  // Net of tax: money held for the government was never this business's sale.
+  const sales = delivered.reduce((s, o) => s + netOfTax(o.billedTotals), 0);
   // Both figures sit under a "TODAY'S SALES" heading, so both are today's.
   // "cash confirmed" was summing every payment ever taken.
   const confirmed = store.payments

@@ -8,7 +8,7 @@
  *
  * All money is integer rupees — formatting goes through src/lib/money only.
  */
-import type { CompanySettings, Order, Payment, Shop } from '../data/models';
+import type { CompanySettings, Order, Payment, Shop, Totals } from '../data/models';
 import { formatAmount, formatMoney } from '../lib/money';
 import { computeTotals } from '../lib/order';
 
@@ -129,6 +129,26 @@ function totalRow(label: string, amount: number, symbol: string, grand = false):
   return `<tr${grand ? ' class="grand"' : ''}><td>${esc(label)}</td><td class="num">${formatMoney(amount, symbol)}</td></tr>`;
 }
 
+/**
+ * The sales-tax line, or nothing at all.
+ *
+ * Emits nothing when the bill carries no tax — which is every bill written
+ * before tax existed and every bill of a business whose rate is 0. A zero-rupee
+ * "Tax (0%)" row on an untaxed invoice is noise that makes the document look
+ * like it is for someone else.
+ *
+ * The rate comes from the TOTALS, not from settings: reprinting a six-month-old
+ * bill must show the tax that was actually charged on it, not whatever the rate
+ * happens to be today.
+ */
+function taxRow(totals: Totals, symbol: string): string {
+  const tax = totals.taxTotal ?? 0;
+  if (tax <= 0) return '';
+  const taxable = totals.subTotal - totals.discountTotal;
+  const rate = taxable > 0 ? Math.round((tax / taxable) * 1000) / 10 : 0;
+  return totalRow(`Sales tax (${rate}%)`, tax, symbol) + '\n';
+}
+
 function metaRow(label: string, value: string): string {
   return `<tr><td class="label">${esc(label)}</td><td>${esc(value)}</td></tr>`;
 }
@@ -171,7 +191,7 @@ ${itemsTable(rows, symbol)}
 <table class="totals">
 ${totalRow('Subtotal', totals.subTotal, symbol)}
 ${totalRow(`Discount (${order.discountPercent}%)`, totals.discountTotal, symbol)}
-${totalRow('TOTAL', totals.grandTotal, symbol, true)}
+${taxRow(totals, symbol)}${totalRow('TOTAL', totals.grandTotal, symbol, true)}
 </table>
 <hr class="rule-soft" />
 <div class="big">Delivery: ${deliveryLabel}</div>
@@ -239,7 +259,7 @@ ${itemsTable(rows, symbol)}
 <table class="totals">
 ${totalRow('Subtotal', totals.subTotal, symbol)}
 ${totalRow(`Discount (${order.discountPercent}%)`, totals.discountTotal, symbol)}
-${totalRow('TOTAL', totals.grandTotal, symbol, true)}
+${taxRow(totals, symbol)}${totalRow('TOTAL', totals.grandTotal, symbol, true)}
 </table>
 <div class="words">${esc(args.amountInWordsLine)}</div>
 <table class="totals">

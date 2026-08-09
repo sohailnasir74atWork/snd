@@ -5,7 +5,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import {
-  Card, IconTile, OptionBar, SectionLabel,
+  Card, IconTile, MoreFields, OptionBar, SectionLabel,
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen } from './AdminScreens';
@@ -24,6 +24,15 @@ function RuleRow({ icon, label, children, last }: {
     </View>
   );
 }
+
+/**
+ * The rates worth one tap. 0 is the default and the only value the app could
+ * hold until now; 17% is the standard Pakistani sales-tax rate and 18% covers
+ * the provincial services rates. A business on some other number can still be
+ * served — the maths takes any percent — but this list keeps the common case
+ * to a single tap instead of a keyboard.
+ */
+const TAX_RATES: number[] = [0, 17, 18];
 
 function Field({ label, value, onChange, placeholder, keyboardType }: {
   label: string; value: string; onChange: (t: string) => void;
@@ -75,6 +84,7 @@ export function SettingsScreen() {
   const [brandName, setBrandName] = React.useState(s.brandName);
   const [address, setAddress] = React.useState(s.address ?? '');
   const [phone, setPhone] = React.useState(s.phone ?? '');
+  const [taxNumber, setTaxNumber] = React.useState(s.taxNumber ?? '');
 
   // Nothing on this screen needs a busy guard: there is no save button, and
   // every control writes the whole value it shows, so a repeated tap writes
@@ -91,6 +101,34 @@ export function SettingsScreen() {
           onChange={t => { setAddress(t); store.updateSettings({ address: t }); }} />
         <Field label="Phone" value={phone} placeholder="03xx-xxxxxxx" keyboardType="phone-pad"
           onChange={t => { setPhone(t); store.updateSettings({ phone: t }); }} />
+        {/*
+          Only ever shown when it is set or when the owner goes looking: a
+          business that is not registered should not be asked for a tax number
+          on the screen it opens to set its brand name. The header block in
+          templates.ts has always printed this line when present — until now
+          there was no way to make it present.
+        */}
+        <MoreFields label="Sales tax registration" count={1}>
+          <Field label="Tax number (NTN / STRN)" value={taxNumber}
+            placeholder="Printed on every bill"
+            onChange={t => { setTaxNumber(t); store.updateSettings({ taxNumber: t }); }} />
+        </MoreFields>
+      </Card>
+      <SectionLabel>Sales tax</SectionLabel>
+      <Card style={styles.tightCard}>
+        <RuleRow icon="receipt-text-outline" label="Sales tax on bills" last>
+          <OptionBar
+            options={TAX_RATES}
+            value={TAX_RATES.includes(s.taxPercent) ? s.taxPercent : 0}
+            render={v => (v === 0 ? 'None' : `${v}%`)}
+            onChange={v => store.updateSettings({ taxPercent: v })}
+          />
+        </RuleRow>
+        <Text style={styles.taxHint}>
+          {s.taxPercent > 0
+            ? `Added on top of the discounted amount and shown as its own line on every bill. Sales in your reports stay net of it — tax you collect is not money you earned.`
+            : 'Off. Leave it off unless you are registered and must charge it — bills stay exactly as they are today.'}
+        </Text>
       </Card>
 
       <SectionLabel>Daily rules</SectionLabel>
@@ -202,6 +240,10 @@ export function SettingsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
+  taxHint: {
+    fontSize: font.sub, color: color.textSub,
+    paddingHorizontal: space.l, paddingBottom: space.m,
+  },
   subLine: {
     fontSize: font.sub, color: color.textSub,
     marginHorizontal: space.gutter, marginBottom: space.xs,

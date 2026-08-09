@@ -806,7 +806,7 @@ export function FirestoreStoreProvider({
         shopId: shop.id,
         shopSnapshot: { name: shop.name, phone: shop.phone, area: shop.area },
         items: input.items,
-        orderedTotals: computeTotals(input.items, input.discountPercent),
+        orderedTotals: computeTotals(input.items, input.discountPercent, false, settings.taxPercent),
         discountPercent: input.discountPercent,
         status: 'assigned',
         paymentStatus: 'unpaid',
@@ -920,7 +920,10 @@ export function FirestoreStoreProvider({
         );
       }
       const items = order.items.map(it => ({ ...it, deliveredQty: deliveredQtys[it.productId] ?? it.qty }));
-      const billed = computeTotals(items, order.discountPercent, true);
+      // Same rate the order was booked under is NOT used on purpose: the bill
+      // is written at the door under today's rate, which is the rate the
+      // shop is actually charged and the one the owner has to remit.
+      const billed = computeTotals(items, order.discountPercent, true, settings.taxPercent);
 
       const inv = await serial('invoice');
       const rcp = paymentAmount > 0 ? await serial('receipt') : null;
