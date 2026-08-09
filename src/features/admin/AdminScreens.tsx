@@ -118,11 +118,57 @@ export function AdminActionScreen() {
   const stillOut = withStaff - pendingTotal; // collected but not yet handed over
   const exceptions = store.payments.filter(p => p.exception && !p.confirmed && !p.voided);
   const claims = store.rewardClaims.filter(c => c.status === 'pending');
+  // Orders no van is carrying. Loud, because a rider's read rule keys on
+  // assignedTo — nobody but the owner can even see these, and until he puts
+  // one on a van it will not be delivered by anyone.
+  const unassigned = store.unassignedOrders;
   const calm = withStaff === 0 && oldCredit.length === 0 && problems.length === 0
-    && exceptions.length === 0 && claims.length === 0;
+    && exceptions.length === 0 && claims.length === 0 && unassigned.length === 0;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      {unassigned.length > 0 && (
+        <Card style={styles.exceptionCard}>
+          <View style={styles.row}>
+            <IconTile name="truck-alert-outline" tint={color.danger} bg={color.dangerSoft} />
+            <View style={styles.rowBody}>
+              <Text style={styles.cardTitle} numberOfLines={2}>
+                {unassigned.length} {unassigned.length === 1 ? 'order has' : 'orders have'} no rider
+              </Text>
+              <Text style={styles.meta} numberOfLines={2}>
+                Nobody can see these but you. Put each one on a van, or set a rider
+                on the round in More → Areas so the next ones address themselves.
+              </Text>
+            </View>
+          </View>
+          {unassigned.slice(0, 8).map(o => (
+            <View key={o.id} style={styles.unassignedRow}>
+              <Text style={styles.meta} numberOfLines={1}>
+                {o.orderNo} • {o.shopSnapshot.name} • {o.shopSnapshot.area || 'no area'}
+              </Text>
+              <View style={styles.rowWrap}>
+                {store.riders.map(r => (
+                  <Chip
+                    key={r.id}
+                    small
+                    label={r.name}
+                    onPress={isBusy(`assign-${o.id}`) ? undefined : () => run(
+                      `assign-${o.id}`, () => store.assignOrder(o.id, r.id),
+                    )}
+                  />
+                ))}
+                {store.riders.length === 0 && (
+                  <Text style={styles.meta}>Add a rider in More → Employees first.</Text>
+                )}
+              </View>
+            </View>
+          ))}
+          {unassigned.length > 8 && (
+            <Text style={styles.meta}>…and {unassigned.length - 8} more.</Text>
+          )}
+        </Card>
+      )}
+
       {/* FR-7.13: the booker took cash — deliberately the loudest card here. */}
       {exceptions.map(p => (
         <Card key={p.id} style={styles.exceptionCard}>
@@ -378,6 +424,13 @@ const styles = StyleSheet.create({
   subLine: { fontSize: font.sub, color: color.textSub, marginHorizontal: space.gutter, marginBottom: space.xs },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: space.s + 2 },
   row: { flexDirection: 'row', alignItems: 'center' },
+  // One unassigned order and the vans it could go on. Divided so a list of
+  // eight does not read as one paragraph of shop names.
+  unassignedRow: {
+    marginTop: space.m, paddingTop: space.s,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
+  },
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.xs },
   // minWidth 0 is what lets a long name wrap instead of shoving the amount
   // beside it off the card.
   rowBody: { flex: 1, minWidth: 0, marginLeft: space.m },

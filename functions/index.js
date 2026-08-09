@@ -59,28 +59,21 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
           removed: false,
         }, { merge: true })
         .catch((e) => console.warn('employeeList mirror', e.message));
-      // Now that the rider has a uid, orders can be addressed to him (FR-6.1).
+      // The FIRST rider a company ever onboards becomes its default, so a
+      // one-van business needs no configuration at all. Every rider after him
+      // is put on a round by the owner (Area.riderId) — this must never fire
+      // again, or rider #4 signing in would quietly inherit the whole company.
+      //
+      // What used to be here also swept every unaddressed order onto whoever
+      // arrived. With one rider that was a fix; with six it silently overrode
+      // the owner's own assignments, so unassigned orders are now surfaced to
+      // the owner in-app instead of being redirected behind his back.
       if (dir.role === 'rider') {
         const sRef = db.doc(`companies/${dir.companyId}/settings/company`);
         const sSnap = await sRef.get();
         const s = sSnap.exists ? sSnap.data() : {};
-        if (!s.autoAssignRiderId || s.autoAssignRiderEmail === email) {
-          await sRef.set({ autoAssignRiderId: uid, autoAssignRiderEmail: email }, { merge: true });
-          // Orders the booker wrote before this rider existed carry
-          // assignedTo: null. The rules key a rider's read on assignedTo, so
-          // those orders are invisible to EVERYONE until they are re-addressed
-          // — hand them to him now, at the one moment we know he has arrived.
-          const orphans = await db
-            .collection(`companies/${dir.companyId}/orders`)
-            .where('assignedTo', '==', null)
-            .where('status', 'in', ['booked', 'assigned'])
-            .limit(400)
-            .get();
-          if (!orphans.empty) {
-            const batch = db.batch();
-            orphans.docs.forEach((d) => batch.update(d.ref, { assignedTo: uid }));
-            await batch.commit().catch((e) => console.warn('orphan reassign', e.message));
-          }
+        if (!s.defaultRiderId && !s.autoAssignRiderId) {
+          await sRef.set({ defaultRiderId: uid }, { merge: true });
         }
       }
       await db.doc(`companies/${dir.companyId}/users/${uid}`).set(
@@ -228,15 +221,9 @@ exports.addEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     removedBy: null,
   });
 
-  // The business has one rider: orders assign themselves to him (FR-6.1).
-  // Recorded here so the booker's phone knows who to assign to.
-  if (role === 'rider') {
-    const settingsRef = db.doc(`companies/${companyId}/settings/company`);
-    const cur = await settingsRef.get();
-    if (!cur.exists || !cur.data().autoAssignRiderEmail) {
-      await settingsRef.set({ autoAssignRiderEmail: email }, { merge: true });
-    }
-  }
+  // Nothing to record here any more. A rider gets his uid at first sign-in
+  // (admitSignIn), and which orders he carries is decided by the rounds the
+  // owner puts him on — not by the order in which he was invited.
   return { status: 'invited', email, role };
 });
 
@@ -296,15 +283,28 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     await getAuth().setCustomUserClaims(target.uid, null);
     await getAuth().revokeRefreshTokens(target.uid); // FR-1.9
   }
-  // If HE was the auto-assign rider, clear the slot so the replacement rider
-  // takes over on join — otherwise new orders keep addressing a ghost
-  // (audit blocker: "replacing the delivery rider silently breaks assignment").
-  const sRef = db.doc(`companies/${companyId}/settings/company`);
-  const sSnap = await sRef.get();
-  if (sSnap.exists) {
-    const s = sSnap.data();
-    if ((target.uid && s.autoAssignRiderId === target.uid) || s.autoAssignRiderEmail === email) {
-      await sRef.set({ autoAssignRiderId: null, autoAssignRiderEmail: null }, { merge: true });
+  // Take him off every round he covered and out of the default slot —
+  // otherwise new orders keep addressing a ghost, and because a rider's read
+  // rule keys on assignedTo they would be invisible to everyone including the
+  // owner (audit blocker: "replacing the delivery rider silently breaks
+  // assignment"). The rounds simply become unassigned, which the owner sees.
+  if (target.uid) {
+    const sRef = db.doc(`companies/${companyId}/settings/company`);
+    const sSnap = await sRef.get();
+    if (sSnap.exists) {
+      const s = sSnap.data();
+      if (s.defaultRiderId === target.uid || s.autoAssignRiderId === target.uid) {
+        await sRef.set({ defaultRiderId: null, autoAssignRiderId: null }, { merge: true });
+      }
+    }
+    const rounds = await db
+      .collection(`companies/${companyId}/areas`)
+      .where('riderId', '==', target.uid)
+      .get();
+    if (!rounds.empty) {
+      const batch = db.batch();
+      rounds.docs.forEach((d) => batch.update(d.ref, { riderId: FieldValue.delete() }));
+      await batch.commit().catch((e) => console.warn('clear rounds on removal', e.message));
     }
   }
   return { status: 'removed', email };

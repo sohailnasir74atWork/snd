@@ -420,6 +420,15 @@ export function NewOrderScreen() {
     setDiscount(s.standingDiscountPercent ?? 0);
   }, []);
 
+  /**
+   * Is the van THIS shop's order would ride on already loaded?
+   *
+   * Asked per shop, not per company: a business with several rounds has
+   * several vans, and one rider leaving the depot must not push every other
+   * round's bookings to tomorrow. No shop picked yet means no van to ask about.
+   */
+  const vanLoaded = shop ? store.riderRouteStarted(store.riderForShop(shop.id)) : false;
+
   // "Book order" tapped on a Route card — arrive with the shop preselected.
   useFocusEffect(React.useCallback(() => {
     const id = consumePendingOrderShop();
@@ -675,10 +684,10 @@ export function NewOrderScreen() {
 
         <SectionLabel>Deliver</SectionLabel>
         <View style={styles.chipRow}>
-          <Chip label={strings.common.today} selected={deliveryDay === 'today' && !store.riderRouteStarted()}
-            onPress={store.riderRouteStarted() ? undefined : () => setDeliveryDay('today')} />
-          <Chip label={store.riderRouteStarted() ? strings.delivery.vanLoadedDeliverTomorrow : strings.common.tomorrow}
-            selected={deliveryDay === 'tomorrow' || store.riderRouteStarted()}
+          <Chip label={strings.common.today} selected={deliveryDay === 'today' && !vanLoaded}
+            onPress={vanLoaded ? undefined : () => setDeliveryDay('today')} />
+          <Chip label={vanLoaded ? strings.delivery.vanLoadedDeliverTomorrow : strings.common.tomorrow}
+            selected={deliveryDay === 'tomorrow' || vanLoaded}
             onPress={() => setDeliveryDay('tomorrow')} />
         </View>
 

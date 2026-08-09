@@ -84,6 +84,21 @@ export interface StoreApi {
   staffDays: DayState[];
   /** uid → display name for handover cards — admin only (others get {}). */
   staffNames: Record<string, string>;
+  /**
+   * Everyone who can be put on a round — admin only (others get []).
+   * A company has as many riders as it has vans; nothing here assumes one.
+   */
+  riders: { id: string; name: string }[];
+  /**
+   * Booked orders no van is carrying: the round has no rider on it, or the
+   * rider it was addressed to has been removed. Admin only (others get []).
+   *
+   * The rider read rule keys on `assignedTo == uid`, so these are invisible
+   * to every rider and visible only to the owner — which is the point. They
+   * used to be swept onto "the" rider automatically; with several vans that
+   * silently overrode the owner's own assignments.
+   */
+  unassignedOrders: Order[];
   settings: CompanySettings;
   employees: Employee[];
   expenses: Expense[];
@@ -118,8 +133,16 @@ export interface StoreApi {
   startRoute(): void;
   /** Tapped too early — allowed until the first close-out of the day. */
   undoStartRoute(): void;
-  /** Has THE RIDER started his route? (the van freeze — FR-6.2, cross-phone). */
-  riderRouteStarted(): boolean;
+  /**
+   * Has THAT rider started his route? (the van freeze — FR-6.2, cross-phone).
+   *
+   * Takes the rider being asked about: with several vans out, freezing every
+   * booker's afternoon because one rider across town has loaded up is wrong.
+   * Called on a rider's own phone the argument is ignored — it is his day.
+   */
+  riderRouteStarted(riderId?: string | null): boolean;
+  /** Which van a shop's orders go to: its round's rider, else the default. */
+  riderForShop(shopId: string): string | null;
   closeOutStop(input: CloseOutInput): Promise<{ invoiceNo: string; receiptNo?: string }> | { invoiceNo: string; receiptNo?: string };
   /** Money collected without a delivery — the khata visit (FR-7.4). */
   collect(input: CollectionInput): Promise<{ receiptNo: string }> | { receiptNo: string };
@@ -150,6 +173,13 @@ export interface StoreApi {
   /** Renames the area AND every shop still filed under the old name. */
   renameArea(id: string, name: string): void;
   setAreaActive(id: string, active: boolean): void;
+  /**
+   * Put a rider on a round, or take him off it (null). Future bookings only —
+   * orders already written keep the van they were booked to.
+   */
+  setAreaRider(id: string, riderId: string | null): void;
+  /** Hand ONE order to a van. The owner's answer to `unassignedOrders`. */
+  assignOrder(orderId: string, riderId: string): void;
   /** Manual khata correction (returns, bounced cheques, paper-era fixes). */
   adjustShopBalance(shopId: string, delta: number, note: string): void;
   /**

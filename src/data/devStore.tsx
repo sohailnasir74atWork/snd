@@ -114,6 +114,10 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     // Preview stand-ins: the demo's single rider is the only staff member.
     staffDays: state.day.handedOver ? [{ ...state.day, staffId: 'rider' }] : [],
     staffNames: { rider: 'Delivery Rider (demo)', booker: 'Order Booker (demo)' },
+    riders: [{ id: 'rider', name: 'Delivery Rider (demo)' }],
+    // The demo books everything to its one rider, so nothing is ever orphaned.
+    unassignedOrders: [],
+    riderForShop() { return 'rider'; },
 
     bookOrder(input: BookOrderInput): Order {
       const shop = state.shops.find(s => s.id === input.shopId)!;
@@ -400,6 +404,20 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       setState(st => ({
         ...st,
         areas: st.areas.map(a => (a.id === id ? { ...a, active } : a)),
+      }));
+    },
+
+    setAreaRider(id, riderId) {
+      setState(st => ({
+        ...st,
+        areas: st.areas.map(a => (a.id === id ? { ...a, riderId: riderId ?? undefined } : a)),
+      }));
+    },
+
+    assignOrder(orderId, riderId) {
+      setState(st => ({
+        ...st,
+        orders: st.orders.map(o => (o.id === orderId ? { ...o, assignedTo: riderId } : o)),
       }));
     },
 

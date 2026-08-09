@@ -38,6 +38,7 @@ import {
 import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
 import { mergeById, windowStartDate, windowStartKey } from '../lib/window';
+import { riderForShop, unassignedOf } from '../lib/assignment';
 import { formatSerial, nextLocalRef, type SerialKind } from '../lib/serials';
 import { uploadPhotoBase64 } from '../lib/storage';
 import type { Role, SessionUser } from '../app/types';
@@ -195,6 +196,7 @@ export function FirestoreStoreProvider({
   const [settings, setSettings] = React.useState<CompanySettings>(DEFAULT_SETTINGS);
   const [employees, setEmployees] = React.useState<Employee[]>([]);
   const [staffNames, setStaffNames] = React.useState<Record<string, string>>({});
+  const [staffRoles, setStaffRoles] = React.useState<Record<string, Role>>({});
   const [staffDays, setStaffDays] = React.useState<DayState[]>([]);
   const [expenses, setExpenses] = React.useState<Expense[]>([]);
   const [fixedCharges, setFixedCharges] = React.useState<FixedCharge[]>([]);
@@ -481,11 +483,18 @@ export function FirestoreStoreProvider({
         // which is also what flags their stranded orders for reassignment.
         onSnapshot(collection(db, `${base}/users`), s => {
           const m: Record<string, string> = {};
+          // Role rides along so the owner can be offered his RIDERS when
+          // putting someone on a round, rather than every name in the company.
+          const r: Record<string, Role> = {};
           s.docs.forEach(d => {
-            const data = d.data() as { name?: string; active?: boolean };
-            if (data.active !== false) m[d.id] = data.name || '';
+            const data = d.data() as { name?: string; active?: boolean; role?: Role };
+            if (data.active !== false) {
+              m[d.id] = data.name || '';
+              if (data.role) r[d.id] = data.role;
+            }
           });
           setStaffNames(m);
+          setStaffRoles(r);
         }, warn('users')),
         onSnapshot(collection(db, `${base}/expenses`), s =>
           setExpenses(s.docs.map(d => {
@@ -568,28 +577,61 @@ export function FirestoreStoreProvider({
     }
   }
 
-  // Orders addressed to nobody (booked before the rider joined) or to a
-  // REMOVED rider would sit invisible forever — the owner's phone quietly
-  // re-addresses them to the current rider (audit blocker).
-  React.useEffect(() => {
-    if (!isAdmin) return;
-    const riderId = settings.autoAssignRiderId;
-    if (!riderId || Object.keys(staffNames).length === 0) return;
-    const orphans = orders.filter(o =>
-      (o.status === 'booked' || o.status === 'assigned') &&
-      o.assignedTo !== riderId &&
-      (!o.assignedTo || staffNames[o.assignedTo] === undefined));
-    if (orphans.length === 0) return;
-    const batch = writeBatch(db);
-    orphans.slice(0, 200).forEach(o =>
-      batch.update(doc(db, `${base}/orders/${o.id}`), { assignedTo: riderId }));
-    batch.commit().catch(e => console.warn('[snd] order reassignment', e));
-  }, [isAdmin, orders, settings.autoAssignRiderId, staffNames]); // eslint-disable-line react-hooks/exhaustive-deps
+  /**
+   * Orders no van is carrying — booked into a round with no rider on it, or
+   * addressed to someone who has since been removed.
+   *
+   * This used to be an effect that silently re-addressed them to "the" rider
+   * in a 200-document batch. With one rider that was invisible and roughly
+   * right. With six it is a data-corruption engine: every order the owner had
+   * deliberately given to Ali gets swept to whoever the settings document
+   * happened to name, on the owner's phone, with no record and no undo.
+   *
+   * So it reports instead of acting. The rider read rule keys on
+   * `assignedTo == uid`, which means an unassigned order is invisible to
+   * every rider but fully visible to the owner — exactly the person who
+   * should decide whose van it goes on.
+   */
+  const unassignedOrders = React.useMemo(
+    () => (isAdmin ? unassignedOf(orders, staffNames) : []),
+    [isAdmin, orders, staffNames],
+  );
 
-  /** The van freeze is the RIDER's lock, read from HIS day doc (FR-6.2). */
-  const riderRouteStartedNow = (): boolean => {
+  /** Everyone who can be put on a round, newest name wins. Admin-only. */
+  const riders = React.useMemo(
+    () => Object.entries(staffRoles)
+      .filter(([, role]) => role === 'rider')
+      .map(([id]) => ({ id, name: staffNames[id] || 'Rider' }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [staffRoles, staffNames],
+  );
+
+  /**
+   * Which van an order belongs to.
+   *
+   * The ladder, most specific first: the round the shop sits on, then the
+   * company default, then nobody. `settings.autoAssignRiderId` is read last
+   * as a migration shim so a company created under the one-rider model keeps
+   * delivering with no intervention (see CompanySettings).
+   *
+   * Areas are matched by NAME because that is what a shop stores — the same
+   * deliberate choice that lets an area be renamed without touching orders,
+   * which carry a frozen `shopSnapshot.area`.
+   */
+  const riderFor = (shop: Shop | undefined): string | null =>
+    riderForShop(shop, areas, settings);
+
+  /**
+   * The van freeze is the RIDER's lock, read from HIS day doc (FR-6.2).
+   *
+   * Takes the rider it is asking about, because with several vans out there
+   * is no such thing as "the" rider: freezing every booker's afternoon
+   * because one rider on the other side of town has started his round is the
+   * bug this parameter exists to prevent. No rider (an unassigned round)
+   * cannot be frozen — there is no van to be late for.
+   */
+  const riderRouteStartedNow = (riderId?: string | null): boolean => {
     if (isRider) return day.routeStarted;
-    const riderId = settings.autoAssignRiderId;
     if (!riderId) return false;
     const d = openDayFor(riderId);
     return !!d && d.routeStarted;
@@ -663,7 +705,12 @@ export function FirestoreStoreProvider({
     products: productsView, shops, areas, orders, payments, settings, employees,
     staffDays, staffNames, expenses, fixedCharges,
     rewardStaff, rewardClaims, floatMovements, day, ready,
+    riders, unassignedOrders,
     pendingWrites: pendingOrders + pendingPayments,
+
+    riderForShop(shopId) {
+      return riderFor(shops.find(s => s.id === shopId));
+    },
 
     async flushPendingWrites(timeoutMs = 6000) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -683,13 +730,16 @@ export function FirestoreStoreProvider({
       const shop = shops.find(s => s.id === input.shopId)!;
       const { value: orderNo, provisional } = await serial('order');
       const orderRef = doc(collection(db, `${base}/orders`));
-      // The load list is frozen once THE RIDER starts — his lock, not ours.
-      const deliveryDay = riderRouteStartedNow() ? 'tomorrow' : input.deliveryDay;
+      // Which van this belongs to, from the shop's round (FR-6.1).
+      const assignedTo = riderFor(shop);
+      // The load list is frozen once THAT rider starts — his lock, not ours,
+      // and not the lock of whichever other rider happens to be out today.
+      const deliveryDay = riderRouteStartedNow(assignedTo) ? 'tomorrow' : input.deliveryDay;
       const order: Omit<Order, 'id'> = {
         orderNo,
         provisional,
         bookedBy: user.uid,
-        assignedTo: settings.autoAssignRiderId ?? null as unknown as string,
+        assignedTo: assignedTo as unknown as string,
         deliveryDate: deliveryDay === 'today' ? todayKey() : tomorrowKey(),
         shopId: shop.id,
         shopSnapshot: { name: shop.name, phone: shop.phone, area: shop.area },
@@ -1087,6 +1137,25 @@ export function FirestoreStoreProvider({
     setAreaActive(id, active) {
       updateDoc(doc(db, `${base}/areas/${id}`), { active })
         .catch(writeRejected('Area update'));
+    },
+
+    /**
+     * Put a rider on a round, or take him off it (null).
+     *
+     * Only future bookings follow — orders already written carry the rider
+     * they were booked to, and rewriting them here would move a stop out from
+     * under a van that may already be halfway to it. Moving an existing order
+     * is `assignOrder`, one at a time, deliberately.
+     */
+    setAreaRider(id, riderId) {
+      updateDoc(doc(db, `${base}/areas/${id}`), { riderId: riderId ?? deleteField() })
+        .catch(writeRejected('Round rider'));
+    },
+
+    /** Hand ONE order to a van — the owner's answer to the unassigned list. */
+    assignOrder(orderId, riderId) {
+      updateDoc(doc(db, `${base}/orders/${orderId}`), { assignedTo: riderId })
+        .catch(writeRejected('Assign order'));
     },
 
     /** Manual khata correction — returns, bounced cheques, paper-era fixes. */

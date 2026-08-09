@@ -32,6 +32,20 @@ export interface Area {
   name: string;
   /** Retired areas stay on old shops but disappear from every picker. */
   active: boolean;
+  /**
+   * The rider who covers this round — how an order finds its van (FR-6.1).
+   *
+   * The area is the right place for this because it is already the unit the
+   * business plans by: a round is a set of shops one person drives. Booking
+   * resolves the shop's area to a rider here, and falls back to
+   * `settings.defaultRiderId` when a round has nobody on it yet.
+   *
+   * Unset is a legitimate state, not an error — a new area has no rider until
+   * the owner puts one on it, and orders booked into it land in the owner's
+   * "Unassigned" list rather than being silently handed to whoever happens to
+   * be first in the employee table.
+   */
+  riderId?: string;
 }
 
 /**
@@ -288,7 +302,22 @@ export interface CompanySettings {
   acceptCheques: boolean;
   sendConfirmations: boolean;
   visibility: VisibilitySettings;
-  /** The only rider — orders assign themselves to him (FR-6.1). */
+  /**
+   * Who gets an order booked into an area that has no rider on it (FR-6.1).
+   *
+   * This is the floor of the assignment ladder, not the whole of it — see
+   * `Area.riderId`. A one-rider business sets this once and never touches
+   * areas; a six-van business leaves it empty and assigns per round.
+   */
+  defaultRiderId?: string;
+  /**
+   * @deprecated Superseded by `defaultRiderId` + `Area.riderId`.
+   *
+   * The old model: ONE rider per company, captured by whichever rider signed
+   * in first (functions/index.js) and stamped on every order with no UI to
+   * change it. Read as a fallback so companies created before the change keep
+   * delivering without a migration; nothing writes it any more.
+   */
   autoAssignRiderId?: string;
   receiptFooter?: string;
   logoUrl?: string;

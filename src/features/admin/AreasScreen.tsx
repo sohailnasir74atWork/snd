@@ -30,6 +30,21 @@ export function AreasScreen() {
   const countIn = (areaName: string) => store.shops.filter(s => s.area === areaName).length;
 
   /**
+   * Who delivers this round, in the row subtitle.
+   *
+   * Says "company default" rather than nothing when a round has no rider of
+   * its own, because that is the difference between "these orders go
+   * somewhere sensible" and "these orders go nowhere" — and the owner cannot
+   * tell those apart from a blank.
+   */
+  const riderLabel = (area: Area): string => {
+    if (area.riderId) return store.riders.find(r => r.id === area.riderId)?.name ?? 'Removed rider';
+    const fallback = store.settings.defaultRiderId ?? store.settings.autoAssignRiderId;
+    if (!fallback) return 'no rider';
+    return `${store.riders.find(r => r.id === fallback)?.name ?? 'default rider'} (default)`;
+  };
+
+  /**
    * Names sitting on shops that no area doc claims.
    *
    * Every shop that existed before this screen carries a typed name, and none
@@ -174,8 +189,37 @@ export function AreasScreen() {
               <ListRow
                 icon="map-marker-radius-outline"
                 title={area.name}
-                sub={`${countIn(area.name)} ${countIn(area.name) === 1 ? 'shop' : 'shops'}`}
+                sub={`${countIn(area.name)} ${countIn(area.name) === 1 ? 'shop' : 'shops'} • ${riderLabel(area)}`}
               />
+              {/*
+                Who drives this round. Only shown once there is a real choice
+                to make — a one-van business never sees it and its orders keep
+                going where they always did, through the company default.
+              */}
+              {area.active && store.riders.length > 1 && (
+                <>
+                  <Text style={styles.fieldLabel}>Delivered by</Text>
+                  <View style={styles.rowWrap}>
+                    {store.riders.map(r => (
+                      <Chip
+                        key={r.id}
+                        small
+                        label={r.name}
+                        selected={area.riderId === r.id}
+                        onPress={isBusy(`rider-${area.id}`) ? undefined : () => run(
+                          `rider-${area.id}`,
+                          () => store.setAreaRider(area.id, area.riderId === r.id ? null : r.id),
+                        )}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.hint}>
+                    {area.riderId
+                      ? 'New orders for shops on this round go to him. Orders already booked keep the van they were booked to.'
+                      : 'Nobody on this round yet — new orders here wait in Unassigned on your Action screen.'}
+                  </Text>
+                </>
+              )}
               <View style={styles.rowWrap}>
                 {!area.active && <Tag label="RETIRED" tone="warn" />}
                 <Chip
