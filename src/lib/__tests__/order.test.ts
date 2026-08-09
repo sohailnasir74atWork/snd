@@ -1,4 +1,6 @@
-import { computeTotals, netOfTax } from '../order';
+import {
+  computeTotals, discountPercentForPrice, formatDiscountPercent, lowestPrice, netOfTax,
+} from '../order';
 
 const items = [
   { productId: 'p1', name: 'Face Wash', qty: 6, unitPrice: 900, deliveredQty: 6 },
@@ -68,5 +70,57 @@ describe('sales tax (exclusive, on the discounted subtotal)', () => {
     const plain = computeTotals(items, 0);
     expect(netOfTax(plain)).toBe(plain.grandTotal);
     expect(netOfTax(undefined)).toBe(0);
+  });
+});
+
+describe('negotiating in rupees — the booker types a price, the order stores a rate', () => {
+  const sub = 14400; // the fixture cart at full price
+
+  test('the price typed is the price charged, to the rupee', () => {
+    // The property the whole feature rests on: whatever the booker agreed at
+    // the counter is exactly what the shop is asked for.
+    for (const price of [14399, 13680, 13000, 12960, 12961, 1, 0]) {
+      const pct = discountPercentForPrice(sub, price, 100);
+      expect(computeTotals(items, pct).grandTotal).toBe(price);
+    }
+  });
+
+  test('a price that needs an awkward rate still lands exactly', () => {
+    // 13,333 off 14,400 is 7.4097222…% — a percent no chip could offer and
+    // no two-decimal rounding could reproduce.
+    const pct = discountPercentForPrice(sub, 13333, 100);
+    expect(pct).not.toBe(Math.round(pct * 100) / 100);
+    expect(computeTotals(items, pct).grandTotal).toBe(13333);
+  });
+
+  test("the owner's cap is a floor under the price, not a warning", () => {
+    const pct = discountPercentForPrice(sub, 5000, 10);
+    expect(pct).toBe(10);
+    expect(computeTotals(items, pct).grandTotal).toBe(lowestPrice(sub, 10));
+    expect(lowestPrice(sub, 10)).toBe(12960);
+  });
+
+  test('nobody can charge above list price by typing a bigger number', () => {
+    expect(discountPercentForPrice(sub, 99999, 10)).toBe(0);
+  });
+
+  test('an empty cart cannot be divided by', () => {
+    expect(discountPercentForPrice(0, 500, 10)).toBe(0);
+    expect(lowestPrice(0, 10)).toBe(0);
+  });
+
+  test('the rate scales to a short delivery — why a rate is stored at all', () => {
+    // Agreed 13,680 for twelve; half the sunblock never made it off the van.
+    const pct = discountPercentForPrice(sub, 13680, 10);
+    const billed = computeTotals(items, pct, true);
+    expect(billed.subTotal).toBe(9900);
+    // The concession follows the goods that arrived, not the goods ordered.
+    expect(billed.grandTotal).toBe(9900 - Math.round(9900 * 0.05));
+  });
+
+  test('a stored rate reads as a human number on the bill', () => {
+    expect(formatDiscountPercent(discountPercentForPrice(sub, 13333, 100))).toBe('7.4');
+    expect(formatDiscountPercent(5)).toBe('5');
+    expect(formatDiscountPercent(0)).toBe('0');
   });
 });

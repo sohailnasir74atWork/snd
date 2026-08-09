@@ -10,7 +10,7 @@
  */
 import type { CompanySettings, Order, Payment, Shop, Totals } from '../data/models';
 import { formatAmount, formatMoney } from '../lib/money';
-import { computeTotals } from '../lib/order';
+import { computeTotals, formatDiscountPercent } from '../lib/order';
 
 // ---------------------------------------------------------------- helpers
 
@@ -190,7 +190,7 @@ ${metaRow('Area', shop.area)}
 ${itemsTable(rows, symbol)}
 <table class="totals">
 ${totalRow('Subtotal', totals.subTotal, symbol)}
-${totalRow(`Discount (${order.discountPercent}%)`, totals.discountTotal, symbol)}
+${totalRow(`Discount (${formatDiscountPercent(order.discountPercent)}%)`, totals.discountTotal, symbol)}
 ${taxRow(totals, symbol)}${totalRow('TOTAL', totals.grandTotal, symbol, true)}
 </table>
 <hr class="rule-soft" />
@@ -258,7 +258,7 @@ ${metaRow('Area', shop.area)}
 ${itemsTable(rows, symbol)}
 <table class="totals">
 ${totalRow('Subtotal', totals.subTotal, symbol)}
-${totalRow(`Discount (${order.discountPercent}%)`, totals.discountTotal, symbol)}
+${totalRow(`Discount (${formatDiscountPercent(order.discountPercent)}%)`, totals.discountTotal, symbol)}
 ${taxRow(totals, symbol)}${totalRow('TOTAL', totals.grandTotal, symbol, true)}
 </table>
 <div class="words">${esc(args.amountInWordsLine)}</div>
