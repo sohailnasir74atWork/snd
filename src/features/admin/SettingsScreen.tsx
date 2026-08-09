@@ -5,34 +5,64 @@
 import React from 'react';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import {
-  Card, IconTile, MoreFields, OptionBar, SectionLabel,
+  Card, IconTile, MoreFields, SectionLabel,
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen } from './AdminScreens';
 import { useStore } from '../../data/store';
 
-function RuleRow({ icon, label, children, last }: {
-  icon: string; label: string; children: React.ReactNode; last?: boolean;
+/**
+ * A number the owner TYPES, in place of a row of chips.
+ *
+ * Every rate on this screen used to be three or four fixed options, and the
+ * fixed options were always somebody else's numbers: a business paying Rs 25 a
+ * piece had to pick 20 or 40. A list of choices is only kind when the choices
+ * are exhaustive, and none of these ever were.
+ *
+ * It still saves on its own — every keystroke that parses to a number is
+ * written, and blur puts a valid value back in the box. The empty field is
+ * allowed WHILE typing (you cannot retype 20 as 25 without passing through
+ * nothing) but never committed, so no rate is ever stored as zero by accident.
+ */
+function NumberRow({ icon, label, value, prefix, suffix, min, max, onCommit, last }: {
+  icon: string; label: string; value: number;
+  prefix?: string; suffix?: string; min: number; max: number;
+  onCommit: (n: number) => void; last?: boolean;
 }) {
+  const [text, setText] = React.useState(String(value));
+  const clamp = (n: number) => Math.min(Math.max(n, min), max);
+
   return (
     <View style={[styles.ruleRow, !last && styles.ruleDivider]}>
       <View style={styles.ruleHead}>
         <IconTile name={icon} size={34} />
         <Text style={styles.ruleLabel} numberOfLines={2}>{label}</Text>
       </View>
-      {children}
+      <View style={styles.numberRow}>
+        {prefix ? <Text style={styles.numberAffix}>{prefix}</Text> : null}
+        <TextInput
+          style={styles.numberInput}
+          value={text}
+          onChangeText={t => {
+            const digits = t.replace(/[^0-9]/g, '');
+            setText(digits);
+            if (digits === '') return;
+            const n = clamp(Number.parseInt(digits, 10));
+            if (n !== value) onCommit(n);
+          }}
+          onBlur={() => {
+            const n = Number.parseInt(text, 10);
+            setText(String(Number.isFinite(n) ? clamp(n) : value));
+          }}
+          keyboardType="number-pad"
+          maxLength={6}
+          selectTextOnFocus
+        />
+        {suffix ? <Text style={styles.numberAffix}>{suffix}</Text> : null}
+      </View>
     </View>
   );
 }
-
-/**
- * The rates worth one tap. 0 is the default and the only value the app could
- * hold until now; 17% is the standard Pakistani sales-tax rate and 18% covers
- * the provincial services rates. A business on some other number can still be
- * served — the maths takes any percent — but this list keeps the common case
- * to a single tap instead of a keyboard.
- */
-const TAX_RATES: number[] = [0, 17, 18];
 
 function Field({ label, value, onChange, placeholder, keyboardType }: {
   label: string; value: string; onChange: (t: string) => void;
@@ -116,14 +146,11 @@ export function SettingsScreen() {
       </Card>
       <SectionLabel>Sales tax</SectionLabel>
       <Card style={styles.tightCard}>
-        <RuleRow icon="receipt-text-outline" label="Sales tax on bills" last>
-          <OptionBar
-            options={TAX_RATES}
-            value={TAX_RATES.includes(s.taxPercent) ? s.taxPercent : 0}
-            render={v => (v === 0 ? 'None' : `${v}%`)}
-            onChange={v => store.updateSettings({ taxPercent: v })}
-          />
-        </RuleRow>
+        <NumberRow
+          icon="receipt-text-outline" label="Sales tax on bills" last
+          value={s.taxPercent} suffix="%" min={0} max={100}
+          onCommit={v => store.updateSettings({ taxPercent: v })}
+        />
         <Text style={styles.taxHint}>
           {s.taxPercent > 0
             ? `Added on top of the discounted amount and shown as its own line on every bill. Sales in your reports stay net of it — tax you collect is not money you earned.`
@@ -133,46 +160,34 @@ export function SettingsScreen() {
 
       <SectionLabel>Daily rules</SectionLabel>
       <Card style={styles.tightCard}>
-        <RuleRow icon="calendar-today" label="Default delivery day">
-          <OptionBar
-            options={['today', 'tomorrow'] as const}
-            value={s.defaultDeliveryDay}
-            render={v => (v === 'today' ? 'Today' : 'Tomorrow')}
-            onChange={v => store.updateSettings({ defaultDeliveryDay: v })}
-          />
-        </RuleRow>
-        <RuleRow icon="storefront-outline" label="Shops per day">
-          <OptionBar
-            options={[10, 15, 20, 30]}
-            value={s.shopsPerDay}
-            onChange={v => store.updateSettings({ shopsPerDay: v })}
-          />
-        </RuleRow>
-        <RuleRow icon="percent-outline" label="Max discount">
-          <OptionBar
-            options={[5, 10, 15]}
-            value={s.maxDiscountPercent}
-            render={v => `${v}%`}
-            onChange={v => store.updateSettings({ maxDiscountPercent: v })}
-          />
-        </RuleRow>
-        <RuleRow icon="gift-outline" label="Reward approval limit">
-          <OptionBar
-            options={[500, 1000, 2000]}
-            value={s.rewardApprovalLimit}
-            render={v => `Rs ${v.toLocaleString()}`}
-            onChange={v => store.updateSettings({ rewardApprovalLimit: v })}
-          />
-        </RuleRow>
-        <RuleRow icon="hand-coin-outline" label="Reward per piece" last>
-          <OptionBar
-            options={[20, 40, 60]}
-            value={s.rewardPerPiece}
-            render={v => `Rs ${v}`}
-            onChange={v => store.updateSettings({ rewardPerPiece: v })}
-          />
-        </RuleRow>
+        {/* "Default delivery day" used to sit here. Booking now always starts
+            on Tomorrow — an order taken at a counter rides a van that has
+            usually left, and the store rewrites "today" to tomorrow anyway
+            once the rider starts his route, so Today as a default was a
+            promise the round could not keep. The booker can still tap Today
+            per order. `settings.defaultDeliveryDay` is left on the model
+            rather than migrated off every existing company; nothing reads it. */}
+        <NumberRow
+          icon="storefront-outline" label="Shops per day"
+          value={s.shopsPerDay} suffix="shops" min={1} max={500}
+          onCommit={v => store.updateSettings({ shopsPerDay: v })}
+        />
+        {/* "Max discount" and "Reward approval limit" used to sit between
+            these two. Both are gone from the screen, not from the app: the
+            discount cap still floors the price a booker can agree, and a
+            reward claim over the limit still reaches the owner marked for a
+            closer look. They run on the value already stored (10% and
+            Rs 1,000) and are no longer his to fiddle with. */}
+        <NumberRow
+          icon="hand-coin-outline" label="Reward per piece — counter staff" last
+          value={s.rewardPerPiece} prefix="Rs" min={0} max={100000}
+          onCommit={v => store.updateSettings({ rewardPerPiece: v })}
+        />
       </Card>
+      <Text style={styles.taxHint}>
+        What the shop's own salesman earns for every piece he moves. The booker
+        claims it for him; you approve it.
+      </Text>
 
       <SectionLabel>Switches</SectionLabel>
       <Card style={styles.tightCard}>
@@ -265,6 +280,17 @@ const styles = StyleSheet.create({
   ruleLabel: {
     flex: 1, minWidth: 0, fontSize: font.body, fontWeight: '600',
     color: color.text, marginLeft: space.m,
+  },
+
+  // The typed rate: a short box, not a full-width field. A number that is
+  // never more than a few digits should not look like an address line.
+  numberRow: { flexDirection: 'row', alignItems: 'center' },
+  numberAffix: { fontSize: font.body, fontWeight: '700', color: color.textSub, marginHorizontal: space.s },
+  numberInput: {
+    backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
+    borderWidth: 1, borderColor: color.border,
+    paddingHorizontal: space.m, paddingVertical: 0, height: 42, minWidth: 96,
+    fontSize: font.h2, fontWeight: '700', color: color.text, textAlign: 'center',
   },
 
   // 38pt icon tile + 6pt top and bottom keeps the row a 50pt tap target.

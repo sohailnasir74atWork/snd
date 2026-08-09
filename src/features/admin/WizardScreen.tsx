@@ -347,12 +347,16 @@ function ShopsStep({ onNext }: { onNext: () => void }) {
   ].filter(a => a.trim().length > 0))];
   const [name, setName] = React.useState('');
   const [phone, setPhone] = React.useState('');
-  const [area, setArea] = React.useState(() => existingAreas[0] ?? 'Main area');
+  // No "Main area" fallback any more. That default is where the shops nobody
+  // can find came from: it filed a real shop under a placeholder round the
+  // owner never made, and the only way to notice was to go looking for it.
+  const [area, setArea] = React.useState(() => existingAreas[0] ?? '');
   const [showMore, setShowMore] = React.useState(false);
 
   const disabledReason =
     name.trim() === '' ? 'Type the shop name first'
     : digitsOnly(phone).length < 10 ? "Enter the shop's mobile number"
+    : area.trim() === '' ? 'Name the area this shop is in'
     : undefined;
 
   // Same as the product step: the guard is what stops a duplicate shop.
@@ -364,7 +368,7 @@ function ShopsStep({ onNext }: { onNext: () => void }) {
   // screen and every shop unfileable.
   const add = () => {
     run('shop', () => {
-      const areaName = area.trim() === '' ? 'Main area' : area.trim();
+      const areaName = area.trim();
       store.addArea(areaName); // no-ops when it already exists
       store.addShop({ name: name.trim(), phone: phone.trim(), area: areaName });
       setName(''); setPhone('');
@@ -396,7 +400,11 @@ function ShopsStep({ onNext }: { onNext: () => void }) {
             keyboardType="phone-pad"
           />
         </View>
-        {!showMore ? (
+        {/* Collapsed only once an area is actually set. On the very first run
+            there is nothing to collapse TO — a link reading "area:" with
+            nothing after it, above a button that will not save, is the worst
+            of both. */}
+        {!showMore && area.trim() !== '' ? (
           <Pressable onPress={() => setShowMore(true)} hitSlop={8}>
             <View style={styles.moreLink}>
               {/* A typed area name can be long — it wraps, the chevron stays put. */}

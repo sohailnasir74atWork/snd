@@ -50,6 +50,45 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
   const khataDelta = toRupees(khataText);
   const payAmount = Math.min(toRupees(payText), shop.outstanding);
 
+  const remove = () => run('delete', () => { store.deleteShop(shop.id); onClose(); });
+
+  /**
+   * Deleting is permanent, so the alert has to say what is actually lost —
+   * and a shop that owes money gets asked twice.
+   *
+   * The second prompt is not ceremony. Orders keep a frozen `shopSnapshot`, so
+   * the history survives; the live khata lives on THIS document and does not.
+   * Deleting a debtor is therefore the one press here that quietly destroys
+   * money the business is owed, and it should not share a single "OK" with
+   * clearing up a test row.
+   */
+  const confirmDelete = () => {
+    const owes = shop.outstanding > 0;
+    Alert.alert(
+      `Delete ${shop.name}?`,
+      owes
+        ? `This cannot be undone. ${shop.name} still owes Rs ${shop.outstanding.toLocaleString()} — deleting the shop deletes that balance with it. Past bills keep their record; the khata does not.\n\nTo keep the balance, close this and use Deactivate instead.`
+        : 'This cannot be undone. The shop disappears from every round and every map. Bills already issued keep their own record of it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        owes
+          ? {
+            text: 'Delete anyway',
+            style: 'destructive',
+            onPress: () => Alert.alert(
+              'Delete the balance too?',
+              `Rs ${shop.outstanding.toLocaleString()} owed by ${shop.name} will no longer be counted anywhere.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete the shop', style: 'destructive', onPress: remove },
+              ],
+            ),
+          }
+          : { text: 'Delete', style: 'destructive', onPress: remove },
+      ],
+    );
+  };
+
   return (
     <Card style={styles.tightCard}>
       <View style={styles.formHead}>
@@ -73,8 +112,14 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
       </View>
       <PrimaryButton
         label="Save details" icon="check-circle-outline"
-        disabled={name.trim().length === 0 || phone.trim().length === 0}
-        disabledReason="Name and mobile first"
+        // Editing cannot strip an area off a shop either — that would take a
+        // shop already on a round and quietly retire it from every screen.
+        disabled={name.trim().length === 0 || phone.trim().length === 0 || area.trim().length === 0}
+        disabledReason={
+          name.trim().length === 0 || phone.trim().length === 0
+            ? 'Name and mobile first'
+            : 'Pick the area first'
+        }
         busy={isBusy('details')}
         onPress={() => run('details', () => {
           store.updateShop(shop.id, {
@@ -168,6 +213,8 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
           onPress={isBusy('active') ? undefined : () => run('active', () => {
             store.updateShop(shop.id, { active: !shop.active }); onClose();
           })} />
+        <Chip small danger label="Delete shop"
+          onPress={isBusy('delete') ? undefined : confirmDelete} />
         <Chip small label="Close" onPress={onClose} />
       </View>
     </Card>
@@ -215,7 +262,12 @@ export function ShopsScreen() {
   const [openingText, setOpeningText] = React.useState('');
   const [editingId, setEditingId] = React.useState<string | null>(null);
 
-  const canSave = name.trim().length > 0 && phone.trim().length > 0;
+  // Area is required. A shop without one is on no round and no map — see the
+  // note on the booker's form; this is the same rule from the owner's side.
+  const canSave = name.trim().length > 0 && phone.trim().length > 0 && area.trim().length > 0;
+  const saveBlockedBy = name.trim().length === 0 || phone.trim().length === 0
+    ? 'Name and mobile first'
+    : 'Pick the area first';
 
   const reset = () => {
     setName(''); setPhone(''); setArea(''); setOwnerName(''); setAddress('');
@@ -271,19 +323,23 @@ export function ShopsScreen() {
           <Field label="Mobile number" value={phone} onChange={setPhone}
             placeholder="03xx xxxxxxx" keyboardType="phone-pad" />
 
+          {/* Area sits with name and mobile, not under "More". It became a
+              required field, and a required field hidden behind a disclosure
+              link is a form that refuses to save for a reason the person
+              cannot see. */}
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Area</Text>
+            <AreaSelect value={area} onChange={setArea} />
+          </View>
+
           {!showMore && (
             <Pressable onPress={() => setShowMore(true)} style={styles.moreLink}>
-              <Text style={styles.moreLinkText}>More — area, owner, address, discount</Text>
+              <Text style={styles.moreLinkText}>More — owner, address, discount</Text>
             </Pressable>
           )}
 
           {showMore && (
             <View>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Area</Text>
-                <AreaSelect value={area} onChange={setArea} />
-              </View>
-
               <Field label="Owner's name" value={ownerName} onChange={setOwnerName}
                 placeholder="Who runs the shop" />
               <Field label="Address" value={address} onChange={setAddress}
@@ -310,7 +366,7 @@ export function ShopsScreen() {
             variant="cta"
             icon="check-circle-outline"
             disabled={!canSave}
-            disabledReason="Name and mobile first"
+            disabledReason={saveBlockedBy}
             busy={isBusy('add')}
             onPress={save}
           />
