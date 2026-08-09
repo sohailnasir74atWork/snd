@@ -11,25 +11,54 @@
 |---|---|
 | Branch | `main`, pushed to `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 13` / `versionName "1.8"` — **not yet rebuilt for the multi-tenant work below** |
+| Version | `versionCode 14` / `versionName "1.9"` |
 | TypeScript | 0 errors |
-| ESLint | 0 errors (81 warnings, all pre-existing house style: `no-void`, inline styles) |
-| Tests | **97 / 97**, 10 suites |
-| Builds | release JS bundle builds; `bundleRelease` not re-run since the SaaS round |
-| Device | not re-driven by hand since the SaaS round — **do this before uploading** |
+| ESLint | 0 errors (86 warnings, all pre-existing house style: `no-void`, inline styles) |
+| Unit tests | **97 / 97**, 10 suites |
+| Rules tests | **240 / 240**, 2 suites — `npm run test:rules` |
+| CI | green on every push — [Actions](https://github.com/sohailnasir74atWork/snd/actions) |
+| Device | ❗ **NOT driven by hand since the SaaS round** — see §4.1 before publishing |
 
-Live company: **Evolver Skin Care**, `companies/e1Wt5vq2zzcFCBUlnUb2`, owner
-`sohailnasir74business@gmail.com`, Firebase project `saleforec-10ce7` (region `asia-south1`).
+> **There is no production.** The app is not on a public track and there is no
+> real customer data anywhere. "Evolver Skin Care"
+> (`companies/e1Wt5vq2zzcFCBUlnUb2`) in `saleforec-10ce7` is TEST data and can
+> be deleted at any time. Every warning in this file about protecting live
+> data is about the day that stops being true, not today.
 
-### Already released to production
+Firebase project `saleforec-10ce7`. Owner `sohailnasir74business@gmail.com`.
+
+### Regions — check before you assume
+
+| | |
+|---|---|
+| Firestore database | **`nam5` — United States multi-region** |
+| Cloud Functions | `asia-south1` (Mumbai) |
+
+This surprised everyone, including three rounds of documentation that said
+"Mumbai". The functions region was read off `firebase.json` and the database
+was assumed to match; it does not. Consequences: every Firestore call from
+Pakistan crosses the Pacific (~250 ms vs ~50 ms), every function trigger
+round-trips from Mumbai to the US, and multi-region costs more per read, write
+and stored GB than a regional location — so any cost estimate computed at
+`asia-south1` rates is **too low**.
+
+A Firestore database's location can never be changed. With no real data the
+fix is free (delete and recreate, or a new named database); the day a customer
+signs up it becomes permanent. The owner has been told and has chosen to
+stay on `nam5` for now — that is a decision, not an oversight.
+
+### Deployed to `saleforec-10ce7`
 
 - **Cloud Functions** — all 8, redeployed in the SaaS round
-- **`firestore.rules`** — including the `days` tenant fix (see §7)
+- **`firestore.rules`** — including the `days` tenant fix (§1a)
 - **`firestore.indexes.json`** — 3 new composite indexes, all `READY`
+- **Billing budget** `snd-manager-guard` — $25/month, scoped to this project
+  only (the `blox_fruit` billing account carries other projects), alerting at
+  50/90/100/150%
 
 > The backend is AHEAD of the installed app, deliberately and safely: every
-> change is backward-compatible with `versionCode 13` in the field. Evolver
-> keeps delivering through the `autoAssignRiderId` shim.
+> change is backward-compatible with `versionCode 13` in the field, which is
+> what makes it safe to deploy the backend before the app is device-tested.
 
 ---
 
@@ -186,23 +215,42 @@ two shops visited, because marking one puts the next under the same button.
 
 ## 4. What is NOT done
 
-1. **The app has not been rebuilt or hand-driven since the SaaS round.** The
-   backend is deployed and the JS bundles, but nobody has put the multi-rider,
-   territory, windowed-listener or tax changes on a real phone. **Do that
-   before `bundleRelease`.** Specifically worth driving: a second rider seeing
-   his own round, a booker whose territory is set, a collection against a bill
-   older than 90 days (the open-slice path), and a bill with tax switched on.
+1. **`versionCode 14` HAS NOT BEEN DRIVEN ON A PHONE.** ❗
+
+   The AAB is built and signed. Nobody has run it. The SaaS round replaced
+   four load-bearing assumptions and `firestoreStore.tsx` still has no unit
+   coverage, so 97 green tests and a green CI say the code is internally
+   consistent — not that a rider's phone behaves correctly on a market street.
+
+   **Do these four before publishing to any track that reaches a real user.**
+   Roughly 30 minutes with `./gradlew installDebug`:
+
+   | # | Check | What it proves |
+   |---|---|---|
+   | 1 | Deliver an order, pay part of it, then Collect the rest at that shop | The open-slice listener. **Highest risk in the round** — if this is wrong, cash allocates to nothing and is booked as `unallocated`. |
+   | 2 | Turn wifi and mobile data off, book an order | The window keys on `deliveryDate` precisely so this cannot break. If the order vanishes from the booker's own list, the window is wrong. |
+   | 3 | Add a second rider, put him on a round in More → Areas, book into it | Multi-rider assignment. Before this round every order went to one rider regardless. |
+   | 4 | Settings → Sales tax → 17%, deliver, open the bill PDF; then set it back to None | The tax line, and that sales in Reports stay net of it. |
+
+   If all four behave, the round is safe to publish. If one misbehaves, that
+   is the bug — start there, not in the rules.
 2. **Untested at volume.** Nobody has seeded a tenant with 40,000 orders and
    opened every screen on a 3GB device. Until that passes, the memory claim
    behind the windowing work is reasoning, not measurement.
-3. **Blockers still open before selling to strangers** — from the audit:
-   no Firebase App Check; no rules emulator suite (`firestore.rules` is the
-   only thing between tenants and no machine has ever tested it); the Bunny
-   storage-zone write key is still returned to every client by `uploadUrl`
-   (**rotate it — it has shipped to production phones**); `admitSignIn` still
-   allows unlimited free workspace creation; no billing or entitlement gate;
-   no privacy policy, terms, or account-deletion path (all three are hard Play
-   requirements); no GCP budget alert.
+3. **Blockers still open before selling to strangers.**
+
+   | Blocker | Note |
+   |---|---|
+   | No Firebase App Check | Not a dependency, not initialised. `google-services.json` ships in every APK, so without it the rules are reachable from `curl` with a real Google account. Register Play Integrity in the console, then wire the SDK. |
+   | `uploadUrl` hands the Bunny storage-zone **write key** to every signed-in client | `functions/index.js:350` → `src/lib/storage.ts:28`. Zone-wide read/write/**delete**, no path scoping available. Rotating alone is a reset, not a fix — the new key ships to every phone within minutes. The fix is a proxy (`uploadPhoto` callable that does the PUT server-side) or moving to Firebase Storage with rules keyed on the `companyId` claim. Owner has deliberately deferred this while there is no real data. |
+   | `admitSignIn` allows unlimited free workspace creation | No rate limit, no verification. A direct, unmetered cost attack — and the repo is public, so the fact is discoverable. The $25 budget alert is the current backstop, not a fix. |
+   | No billing or entitlement gate | Nothing in the codebase can stop a non-paying company from using it. |
+   | No privacy policy, terms, or account-deletion path | All three are hard Play requirements for an app that creates accounts. Deletion must be server-side: the rules deny `delete` on essentially every collection. |
+   | Play Data Safety form | The draft in `PROGRESS.md` says "email address and name". The app also collects precise location, photos, third-party phone numbers, financial data and crash logs, and Bunny CDN makes "not shared with third parties" false. Misdeclaring risks suspension, and this keystore signs the whole Apptech portfolio. |
+
+   Closed since the audit: the rules emulator suite now exists (240
+   assertions, `npm run test:rules`), CI runs it on every push, Crashlytics
+   identifies the tenant, and a $25 budget alert is live.
 4. **Still not generic**, in rough order of what a distributor asks for first:
    per-van stock (one global `stockQty` pool today), cartons/units, returns
    *after* delivery, price lists, trade schemes, credit limits, batch/expiry,
@@ -234,10 +282,53 @@ two shops visited, because marking one puts the next under the same button.
 
 ## 5. How to run it
 
+Everything, the way CI runs it:
+
 ```bash
 cd /Volumes/Sohail/AI_Projects/testing/FieldSales
-npx tsc --noEmit && npx eslint . && npm test
+npx tsc --noEmit && npx eslint . && npm test && npm run test:rules
 ```
+
+### The rules suite — `npm run test:rules`
+
+240 assertions against a local Firestore emulator, ~7 seconds. **This is the
+only thing that checks the boundary between two businesses**, so treat a red
+run as a release blocker, not a flaky test.
+
+- `firestore-tests/tenant-isolation.test.js` — every collection under
+  `companies/{id}`, tried for read, write AND list, by company B's admin,
+  booker and rider, a signed-in stranger with no claims, and an anonymous
+  caller. Plus a named regression test for the `days` hole.
+- `firestore-tests/money-integrity.test.js` — company A's *own* booker and
+  rider, which is the likelier theft. Maps one-to-one onto `PROGRESS.md` §4.
+
+Three things about it that will otherwise cost someone an afternoon:
+
+1. **`JAVA_HOME` is defaulted, not hardcoded.** firebase-tools refuses Java
+   below 21; Gradle wants 17 for the Android build. The npm script honours an
+   existing `JAVA_HOME` (CI's `setup-java` supplies 21) and falls back to the
+   Homebrew JDK on this Mac, where `JAVA_HOME` is unset. Do not "fix" this by
+   setting a system-wide `JAVA_HOME` — you will break the other one.
+2. **Each test gets its own pair of company ids** (`co()` / `cob()`), and
+   there is no `clearFirestore()` between tests. Sharing one company and
+   wiping between tests was quietly flaky: the wipe races the clients'
+   caches, failures moved between runs, and every one passed in isolation.
+3. **Use `patch()`, not `.update()`.** `update()` carries a client-side
+   "document must exist" precondition that a cached client trips over.
+   `patch()` is a merging set — an `update` to the rules, no precondition.
+
+**The suite is verified to fail.** Reintroduce the missing `inCompany()` on
+`days` and exactly three tests go red. If you ever substantially change it,
+re-do that check: a green suite proves nothing until you have watched it go
+red.
+
+### CI
+
+`.github/workflows/ci.yml` runs all of the above plus a real Metro bundle on
+every push and PR. The bundle step catches what `tsc` cannot — an import
+cycle or missing asset that only appears when Metro resolves the graph.
+**Do not delete the rules step to make a build go green.** That step is the
+difference between a multi-tenant product and one that looks like one.
 
 Emulator (AVD `Pixel9_API35_ARM`), with Metro running (`npx react-native start`):
 
@@ -256,6 +347,29 @@ Release bundle for Play:
 
 ```bash
 cd android && ./gradlew bundleRelease
+```
+
+### The current build
+
+| | |
+|---|---|
+| Version | `versionCode 14` / `versionName "1.9"` |
+| File | `builds/SnD-Manager-v1.9-build14.aab` (62 MB, outside the repo — AABs are not committed) |
+| Also at | `android/app/build/outputs/bundle/release/app-release.aab` |
+| Signature | `jar verified` |
+| Signer | `CN=sohail, OU=solana, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3 |
+| Built | 2026-08-09, from `main` |
+
+**Not published, and not yet safe to publish.** See §4.1 — the four device
+checks have not been run. Building the file is safe; putting it on a track
+that reaches a real user is not, until they pass.
+
+Verify any future AAB the same way rather than trusting `BUILD SUCCESSFUL`,
+which says nothing about which key signed it:
+
+```bash
+jarsigner -verify android/app/build/outputs/bundle/release/app-release.aab
+unzip -p android/app/build/outputs/bundle/release/app-release.aab "META-INF/SOLANALA.RSA" | keytool -printcert
 ```
 
 **Before any build that shows a map**, `android/local.properties` (git-ignored) must carry:
