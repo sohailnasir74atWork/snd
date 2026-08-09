@@ -34,6 +34,13 @@ export const color = {
 
   // lines
   border: '#E2E8F0',
+  /**
+   * The card's own edge — a shade lighter than `border`, sitting between the
+   * canvas and the surface so it defines the card without drawing a box round
+   * it. This is what carries a card's depth now that the Android drop shadow
+   * is off; see `shadow.card`.
+   */
+  cardEdge: '#E7EDF6',
 } as const;
 
 /**
@@ -75,12 +82,23 @@ export const space = {
 } as const;
 
 export const shadow = {
+  /**
+   * A card should look SET INTO the canvas, not dropped on top of it.
+   *
+   * `elevation` is the only one of these Android reads, and at 2 it drew the
+   * hard grey Material drop shadow under every card on the screen — on a list
+   * of a hundred shops that is a hundred grey bars, which is what made a
+   * simple screen feel heavy. It is off now: depth comes from the hairline
+   * edge on `card` (see ui.tsx) plus a wide, almost invisible iOS shadow.
+   * Wider and fainter reads as light falling on a surface; tight and dark
+   * reads as a sticker.
+   */
   card: {
     shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
+    shadowOpacity: 0.035,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 0,
   },
   fab: {
     shadowColor: '#E11D48',

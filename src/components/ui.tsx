@@ -359,6 +359,8 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: color.surface, borderRadius: radius.card, padding: 12,
+    // The hairline that replaced the Android drop shadow — see shadow.card.
+    borderWidth: StyleSheet.hairlineWidth, borderColor: color.cardEdge,
     // The gutter, not a spacing step — see space.gutter.
     marginHorizontal: space.gutter, marginVertical: 5,
   },
