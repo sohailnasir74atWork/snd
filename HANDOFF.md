@@ -9,24 +9,80 @@
 
 | | |
 |---|---|
-| Branch | `shop-mapping-and-round8` — **not** `main`, and never pushed |
-| Last commit | `5346f05` "Round 8, the UX pass, and shop mapping" (48 files, +5,781 / −1,552) |
-| Baseline before it | `dfd6b38` "Round 7" — `main` still points here, so `git checkout main` is the way back |
-| Uncommitted | the 7px gutter, the day timestamps, and Team today (25 files) |
-| Version | `versionCode 13` / `versionName "1.8"` |
+| Branch | `main`, pushed to `github.com/sohailnasir74atWork/snd` (**public**) |
+| Uncommitted | none |
+| Version | `versionCode 13` / `versionName "1.8"` — **not yet rebuilt for the multi-tenant work below** |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (81 warnings, all pre-existing house style: `no-void`, inline styles) |
-| Tests | **66 / 66**, 8 suites |
-| Builds | `assembleDebug`, `assembleRelease`, `bundleRelease` all BUILD SUCCESSFUL |
-| Device | driven by hand on a Pixel 9 emulator and on the owner's phone |
+| Tests | **97 / 97**, 10 suites |
+| Builds | release JS bundle builds; `bundleRelease` not re-run since the SaaS round |
+| Device | not re-driven by hand since the SaaS round — **do this before uploading** |
 
 Live company: **Evolver Skin Care**, `companies/e1Wt5vq2zzcFCBUlnUb2`, owner
 `sohailnasir74business@gmail.com`, Firebase project `saleforec-10ce7` (region `asia-south1`).
 
 ### Already released to production
 
-- **Cloud Functions** `admitSignIn` and `removeEmployee`
-- **`firestore.rules`** twice — the rider's shop-pin clause, then the `areas` collection
+- **Cloud Functions** — all 8, redeployed in the SaaS round
+- **`firestore.rules`** — including the `days` tenant fix (see §7)
+- **`firestore.indexes.json`** — 3 new composite indexes, all `READY`
+
+> The backend is AHEAD of the installed app, deliberately and safely: every
+> change is backward-compatible with `versionCode 13` in the field. Evolver
+> keeps delivering through the `autoAssignRiderId` shim.
+
+---
+
+## 1a. The SaaS round — what changed and why
+
+Read this before touching the store or the rules; four load-bearing
+assumptions were replaced.
+
+**Many riders.** `settings.autoAssignRiderId` was one uid stamped on every
+order with no UI, so riders 2..n saw a permanently empty app — and it was a
+race, whichever rider signed in first captured the whole company. Assignment
+is now a ladder: `Area.riderId` → `settings.defaultRiderId` →
+`autoAssignRiderId` (migration shim, read never written) → nobody. Nobody is a
+legitimate outcome; those orders appear on the owner's Action screen as
+**Unassigned**. Logic in `src/lib/assignment.ts`, tested.
+
+**Many bookers.** `Area.bookerId` gives a round a territory. `store.routeShops`
+is what a booker's screens read. Three cases: nothing configured → everyone
+sees everything (so a one-booker business is unchanged); he has rounds → only
+his; others have rounds and he does not → the rounds nobody covers, never an
+empty screen. Territory is a CLIENT scope, not a rule — covering a colleague's
+patch is normal, and the shop picker searches company-wide on purpose.
+
+**The 100-day visit cycle.** `cycleDays = shops / shopsPerDay` was fed every
+shop in the company: 2,000 shops at 20/day meant a shop was "due" once a
+quarter and the booker's morning screen was empty. Same formula, measured over
+his territory now.
+
+**Bounded listeners.** Orders and payments were whole-collection subscriptions
+with no limit — ~80MB of heap at 40k orders, held three times over. Each is now
+two listeners merged behind the same array: a 90-day window plus an **open
+slice with no age limit** (`paymentStatus in [unpaid,partial]`,
+`confirmed == false`). The open slice is not optional: a shop that owed money
+four months ago is what a collection visit is FOR, and a naive window would
+have made `collect()` allocate that cash to nothing. See `src/lib/window.ts`.
+
+> **The window keys on `deliveryDate`, never `bookedAt`.** `deliveryDate` is a
+> client-written string; `bookedAt` is a `serverTimestamp()`, and a range
+> filter on an unresolved server timestamp does not match locally — booking
+> with no signal would drop the order out of the booker's own list as he wrote
+> it. Same reason the owner's unsynced-payment count comes from the
+> `confirmed == false` listener.
+
+**Lazy collections.** `expenses`, `fixedCharges`, `employeeList`,
+`floatMovements`, `rewardStaff` sync only once a screen calls `useNeed(...)`.
+Once started they never detach — Firestore re-bills a listener disconnected
+over 30 minutes as a new query. **The failure mode is silent:** read one
+without declaring it and you get a confident zero, not an error.
+
+**Sales tax.** `computeTotals(items, discount, useDelivered, taxPercent)`.
+At rate 0 it returns exactly what it always did, no `taxTotal` key — asserted
+by a test. Sales figures use `netOfTax()`; profit needed nothing because
+`profitFor` works per line from `unitPrice`.
 
 The app builds are **not** all uploaded. The owner uploaded `versionCode 8`; 9 through 13
 were handed over as AABs and may or may not have been published.
@@ -130,23 +186,47 @@ two shops visited, because marking one puts the next under the same button.
 
 ## 4. What is NOT done
 
-1. **Nothing is pushed, and 25 files are uncommitted.** `main` is still on `dfd6b38`.
-2. **Node 20 for Cloud Functions is decommissioned 2026-10-30** — after that, deploys fail
+1. **The app has not been rebuilt or hand-driven since the SaaS round.** The
+   backend is deployed and the JS bundles, but nobody has put the multi-rider,
+   territory, windowed-listener or tax changes on a real phone. **Do that
+   before `bundleRelease`.** Specifically worth driving: a second rider seeing
+   his own round, a booker whose territory is set, a collection against a bill
+   older than 90 days (the open-slice path), and a bill with tax switched on.
+2. **Untested at volume.** Nobody has seeded a tenant with 40,000 orders and
+   opened every screen on a 3GB device. Until that passes, the memory claim
+   behind the windowing work is reasoning, not measurement.
+3. **Blockers still open before selling to strangers** — from the audit:
+   no Firebase App Check; no rules emulator suite (`firestore.rules` is the
+   only thing between tenants and no machine has ever tested it); the Bunny
+   storage-zone write key is still returned to every client by `uploadUrl`
+   (**rotate it — it has shipped to production phones**); `admitSignIn` still
+   allows unlimited free workspace creation; no billing or entitlement gate;
+   no privacy policy, terms, or account-deletion path (all three are hard Play
+   requirements); no GCP budget alert.
+4. **Still not generic**, in rough order of what a distributor asks for first:
+   per-van stock (one global `stockQty` pool today), cartons/units, returns
+   *after* delivery, price lists, trade schemes, credit limits, batch/expiry,
+   PJP/beat plans, Excel import, roles beyond the three.
+   > Note: pre-delivery "send back" is CORRECT as written — `stockQty` only
+   > moves at close-out by `deliveredQty`, so a returned order releasing only
+   > `committedQty` is right. An audit flagged this as a bug; it is not. Do
+   > not "fix" it or you will inflate stock on every return.
+5. **Node 20 for Cloud Functions is decommissioned 2026-10-30** — after that, deploys fail
    until the runtime is upgraded. `firebase-functions` is also a major version behind, and
    that upgrade has breaking changes worth testing rather than firing off.
-3. **In-app updates never interrupt.** `updates.ts` forces an update at Play priority ≥ 4,
+6. **In-app updates never interrupt.** `updates.ts` forces an update at Play priority ≥ 4,
    but **update priority cannot be set in the Play Console at all** — only through the Play
    Developer Publishing API. Published from the Console, every release is priority 0, so
    the forced path is unreachable and only the quiet flexible flow runs. The fix is to
    trigger on `clientVersionStalenessDays` instead, which Play does report; agreed in
    principle, not built.
-4. **`Chip` has no `busy`/`disabled` prop.** Chip-fired writes fall back to a label swap
+7. **`Chip` has no `busy`/`disabled` prop.** Chip-fired writes fall back to a label swap
    plus `onPress={undefined}`.
-5. **No component-level tests.** `orderByNearest`, `computeWorkday` and the money/serial
+8. **No component-level tests.** `orderByNearest`, `computeWorkday` and the money/serial
    libraries are tested; not one screen is.
-6. **Not re-audited.** Nobody has run a fresh adversarial scan since Round 8. The largest
+9. **Not re-audited.** Nobody has run a fresh adversarial scan since Round 8. The largest
    new surfaces are the sweep, the areas migration path, and the workday derivation.
-7. Two shops in the live database sit under "Main area" (the wizard's fallback) and two
+10. Two shops in the live database sit under "Main area" (the wizard's fallback) and two
    have no area at all, so they are invisible to every round. Fixable from
    More → Areas → *Found on shops, not on this list*.
 
