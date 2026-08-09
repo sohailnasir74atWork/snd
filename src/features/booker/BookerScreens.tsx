@@ -350,12 +350,20 @@ export function BookerRouteScreen() {
             <TextInput style={styles.input} value={newPhone} onChangeText={setNewPhone}
               placeholder="03xx xxxxxxx" placeholderTextColor={color.textFaint} keyboardType="phone-pad" />
             <Text style={styles.fieldLabel}>Area</Text>
-            {/* Pick only — a booker cannot invent an area any more. Typing was
-                how one round became "Saddar", "saddar" and "Sadar ", which
-                split the round three ways and left the map unable to say what
-                "the area" was. The owner defines them in More → Areas.
-                Never a blocker either: with no areas yet the shop still saves
-                and shows under "No area yet" for the owner to place. */}
+            {/* Pick, or create when nothing matches — this is the ONLY screen
+                a booker can open a round from, because it is the only one he
+                has: his tabs are Route, Area map, New order and My day, and
+                the shop editor lives in the owner's More stack.
+
+                Free typing was how one round became "Saddar", "saddar" and
+                "Sadar ", which split it three ways and left the map unable to
+                say what "the area" was. The sheet only offers to create when
+                the typed name matches nothing case-insensitively, so that
+                cannot come back while a booker in an unworked street can still
+                register the shop in front of him.
+
+                Never a blocker either: with no area at all the shop still
+                saves and shows under "No area yet" for the owner to place. */}
             <AreaSelect value={newArea} onChange={setNewArea} />
             <Text style={styles.fieldLabel}>The place itself (both optional)</Text>
             <NewShopPlaceChips
