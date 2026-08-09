@@ -1,7 +1,9 @@
 # Handoff — SnD Manager
 
 **Written:** 2026-08-09
-**Read this first**, then `OPEN-BUGS.md` (empty) and `PROGRESS.md` (the SRS-facing plan).
+**Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
+outstanding, but the "before the next scan" note at the bottom is still live)
+and `PROGRESS.md` (the SRS-facing plan).
 
 ---
 
@@ -9,15 +11,16 @@
 
 | | |
 |---|---|
-| Branch | `main`, pushed to `github.com/sohailnasir74atWork/snd` (**public**) |
+| Branch | **`booker-screens-pass`**, 5 commits ahead of `main` and **not merged or pushed** — see §1b |
+| Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 15` / `versionName "2.0"` |
+| Version | `versionCode 16` / `versionName "2.1"` |
 | TypeScript | 0 errors |
-| ESLint | 0 errors (86 warnings, all pre-existing house style: `no-void`, inline styles) |
-| Unit tests | **97 / 97**, 10 suites |
-| Rules tests | **235 / 235**, 2 suites — `npm run test:rules` |
-| CI | green on every push — [Actions](https://github.com/sohailnasir74atWork/snd/actions) |
-| Device | ❗ **NOT driven by hand since the SaaS round** — see §4.1 before publishing |
+| ESLint | 0 errors (88 warnings, all pre-existing house style: `no-void`, `no-bitwise`, inline styles) |
+| Unit tests | **104 / 104**, 10 suites |
+| Rules tests | **240 / 240**, 2 suites — `npm run test:rules` |
+| CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
+| Device | debug build driven on the emulator (§1b); ❗ **no release build driven by hand since the SaaS round** — see §4.1 before publishing |
 
 > **There is no production.** The app is not on a public track and there is no
 > real customer data anywhere. "Evolver Skin Care"
@@ -35,8 +38,10 @@ Firebase project `saleforec-10ce7`. Owner `sohailnasir74business@gmail.com`.
 | Cloud Functions | `asia-south1` (Mumbai) |
 
 This surprised everyone, including three rounds of documentation that said
-"Mumbai". The functions region was read off `firebase.json` and the database
-was assumed to match; it does not. Consequences: every Firestore call from
+"Mumbai". The functions region is set per-function in `functions/index.js`
+(all eight carry `region: 'asia-south1'`; `firebase.json` names no region at
+all), and the database was assumed to match it. It does not. Consequences:
+every Firestore call from
 Pakistan crosses the Pacific (~250 ms vs ~50 ms), every function trigger
 round-trips from Mumbai to the US, and multi-region costs more per read, write
 and stored GB than a regional location — so any cost estimate computed at
@@ -50,7 +55,10 @@ stay on `nam5` for now — that is a decision, not an oversight.
 ### Deployed to `saleforec-10ce7`
 
 - **Cloud Functions** — all 8, redeployed in the SaaS round
-- **`firestore.rules`** — including the `days` tenant fix (§1a)
+- **`firestore.rules`** — including the `days` tenant fix (§1a) and, deployed
+  **2026-08-09 ahead of the branch that needs it**, `allow delete` on shops for
+  an admin (§1b). The live project therefore permits shop deletion whether or
+  not `booker-screens-pass` ever ships. Nothing in the installed app calls it.
 - **`firestore.indexes.json`** — 3 new composite indexes, all `READY`
 - **Billing budget** `snd-manager-guard` — $25/month, scoped to this project
   only (the `blox_fruit` billing account carries other projects), alerting at
@@ -115,6 +123,110 @@ by a test. Sales figures use `netOfTax()`; profit needed nothing because
 
 The app builds are **not** all uploaded. The owner uploaded `versionCode 8`; 9 through 13
 were handed over as AABs and may or may not have been published.
+
+---
+
+## 1b. The booker round — `booker-screens-pass`, five commits, NOT MERGED
+
+Everything below is on that branch. `main` is still at `77ac64e`. It is green
+locally (0 / 0 / 104 / 240) but has never been through CI, and CI is the only
+thing that runs a real Metro bundle — see §5.
+
+```
+655e5dd  One shop list: the round, and everything else behind a magnifier
+8f4bc33  Owner screens: type the rate, require the area, delete the shop
+475b6ad  The owner may delete a shop, and booking starts on Tomorrow
+a816124  Cards sit in the canvas rather than on top of it
+f30b0ad  Negotiate an order in rupees, not in percent chips
+```
+
+**The discount is a typed price now.** The row of `0% 2% 5% 10%` chips on New
+Order is gone — it sat at eye level on a phone the shopkeeper was looking at
+across his own counter and announced there was money on the table before the
+booker had decided to put it there. In its place, a chevron on the TOTAL row
+opens a **Discounted price** field in rupees. Closed, nothing on the card
+mentions a discount at all.
+
+`discountPercentForPrice(subTotal, price, maxPercent)` in `lib/order.ts`
+inverts it, and the percent it returns is **deliberately unrounded**:
+`computeTotals` rounds the rupee amount, so an exact percent lands on exactly
+the price that was typed. The order still STORES a rate, because the rider
+re-bills against delivered quantities and a rate survives a short delivery
+where a fixed rupee concession would not. Documents round it for display.
+
+> Changing any quantity CLEARS the typed price. A price is agreed for a
+> basket; keeping it while the basket changes turns "700" for one face wash
+> into 700 for eleven of them. The owner's cap is a floor under the price,
+> and a second confirmation is not involved — it simply clamps.
+
+**New Order also shows tax now.** It computed its TOTAL without `taxPercent`
+while `bookOrder` stored the order WITH it. Identical at rate 0, which is why
+nobody saw it; wrong the moment a rate is set, and the new field's meaning
+depends on it.
+
+**Booking always starts on Tomorrow**, hardcoded. The `defaultDeliveryDay`
+setting is off the Settings screen and nothing reads it; the field stays on
+the model rather than migrating every company. The live company doc still
+stores `"today"` — harmless, and left alone deliberately.
+
+**Route was rebuilt.** It rendered the whole territory into a `ScrollView`, so
+every card was mounted — seven areas at a hundred shops is 700 cards on a 3GB
+phone. Now:
+
+- **One area at a time, always.** A chip row with due counts, no "All" chip and
+  no unfiltered state. It falls through to the first area with work rather than
+  trusting the stored name, so an area renamed or retired under the booker's
+  feet leaves him on a real round.
+- **One line per shop** — name, owed, `Book`, chevron. The other five actions
+  (Edit details, Shelf count, pin, photo, and the two money ones) live under the
+  chevron, one card open at a time.
+- **Capped at `shopsPerDay`** with `Show N more`. The *visited recently* toggle
+  is capped as hard — it was quietly the worse offender, since most of a
+  territory is not due.
+
+**"New order" is no longer a tab.** Three tabs: `Route · Map · My Day`. A tab
+has to stand on its own, so New Order opened on a picker listing his whole
+round grouped by area — the Route screen drawn a second time from the same
+shops, with none of the capping. Booking is now something you do TO a shop:
+Route → `Book` → the order form, pushed onto a stack. The shop that is not due
+today lives behind the **magnifier in the Route header** — `ShopSearchScreen`,
+company-wide, capped at 40 results.
+
+> `BookerRouteStack` in `navigation.tsx` carries `onSwitchRole` explicitly:
+> the tab's own header is gone, so the account switch lives on the stack
+> header beside the search. Losing it there would strand a two-role user.
+
+**An area is required to save a shop** — booker form, owner form, shop editor
+and the wizard. The wizard's silent `'Main area'` fallback is DELETED; that
+default is where §4.10's invisible shops came from. Area also moved out from
+behind "More" on the owner's form, because a required field behind a
+disclosure link is a form that refuses to save for an invisible reason.
+
+**The owner can delete a shop** (`isAdmin` only, rules-enforced). One alert
+normally; a shop that owes money is asked twice, because orders keep a frozen
+`shopSnapshot` but the live khata lives on the document being deleted.
+
+**A booker can edit a shop's detail from the round.** The rules always let him
+write a shop — everything except `outstanding` — and only the screen was
+missing. The balance is deliberately absent from that form.
+
+**Settings rates are typed, not picked.** Sales tax, shops per day and the
+counter staff's reward per piece. `Max discount` and `Reward approval limit`
+are off the screen but still ENFORCED on their stored values (10% and
+Rs 1,000) — the controls went, the behaviour did not.
+
+**Card shadows.** `elevation` is 0; depth is a hairline `color.cardEdge` plus a
+wide, faint iOS shadow. At 2 it drew a grey Material bar under every card,
+which on a hundred-shop round is a hundred grey bars.
+
+### What was actually driven on a device
+
+A debug build on the emulator (`Pixel9_API35_ARM`), signed in as a real booker
+against `saleforec-10ce7`: the area chips and one-area list, the collapsed
+row and its chevron, `Edit details` opening prefilled, the TOTAL-row chevron on
+New Order, `Tomorrow` selected by default, three tabs, and the magnifier
+opening `Find a shop`. **Not** driven: delete shop, the area-required guards,
+the typed settings rows, and anything at all in a release build.
 
 ---
 
@@ -222,12 +334,15 @@ two shops visited, because marking one puts the next under the same button.
 
 ## 4. What is NOT done
 
-1. **`versionCode 14` HAS NOT BEEN DRIVEN ON A PHONE.** ❗
+1. **`versionCode 16` HAS NOT BEEN DRIVEN ON A PHONE.** ❗
 
    The AAB is built and signed. Nobody has run it. The SaaS round replaced
-   four load-bearing assumptions and `firestoreStore.tsx` still has no unit
-   coverage, so 97 green tests and a green CI say the code is internally
-   consistent — not that a rider's phone behaves correctly on a market street.
+   four load-bearing assumptions, the booker round (§1b) then rebuilt three
+   screens and removed a tab, and `firestoreStore.tsx` still has no unit
+   coverage — so 104 green tests say the code is internally consistent, not
+   that a rider's phone behaves correctly on a market street. The emulator
+   pass in §1b covers the new SCREENS; it covers none of the four checks
+   below, which are about money.
 
    **Do these four before publishing to any track that reaches a real user.**
    Roughly 30 minutes with `./gradlew installDebug`:
@@ -237,7 +352,8 @@ two shops visited, because marking one puts the next under the same button.
    | 1 | Deliver an order, pay part of it, then Collect the rest at that shop | The open-slice listener. **Highest risk in the round** — if this is wrong, cash allocates to nothing and is booked as `unallocated`. |
    | 2 | Turn wifi and mobile data off, book an order | The window keys on `deliveryDate` precisely so this cannot break. If the order vanishes from the booker's own list, the window is wrong. |
    | 3 | Add a second rider, put him on a round in More → Areas, book into it | Multi-rider assignment. Before this round every order went to one rider regardless. |
-   | 4 | Settings → Sales tax → 17%, deliver, open the bill PDF; then set it back to None | The tax line, and that sales in Reports stay net of it. |
+   | 4 | Settings → Sales tax → 17%, deliver, open the bill PDF; then set it back to None | The tax line, and that sales in Reports stay net of it. New Order now shows the tax too, so the booker's TOTAL and the stored order must agree. |
+   | 5 | Open the price chevron, type a price below the cap, book | The typed-price field (§1b). At the cap it clamps; the bill must charge the price on screen. |
 
    If all four behave, the round is safe to publish. If one misbehaves, that
    is the bug — start there, not in the rules.
@@ -279,11 +395,31 @@ two shops visited, because marking one puts the next under the same button.
    plus `onPress={undefined}`.
 8. **No component-level tests.** `orderByNearest`, `computeWorkday` and the money/serial
    libraries are tested; not one screen is.
-9. **Not re-audited.** Nobody has run a fresh adversarial scan since Round 8. The largest
-   new surfaces are the sweep, the areas migration path, and the workday derivation.
+9. **Not re-audited.** Nobody has run a fresh adversarial scan since Round 8. The
+   largest new surfaces are the sweep, the areas migration path, the workday
+   derivation, and now the whole booker round in §1b — the typed price in
+   particular, because it is the one new control that moves money.
 10. Two shops in the live database sit under "Main area" (the wizard's fallback) and two
    have no area at all, so they are invisible to every round. Fixable from
-   More → Areas → *Found on shops, not on this list*.
+   More → Areas → *Found on shops, not on this list*. The wizard can no longer
+   CREATE this state (§1b), but it does not clean up what it already made.
+11. **Route and My Day still look alike**, and they are not the same thing: Route
+   lists shops still to visit, My Day lists orders already booked. They never
+   overlap — booking stamps `lastVisitAt`, so a shop leaves one screen exactly as
+   it arrives on the other — but both lead with a bold shop name and a number on
+   the right. Agreed fix, not built: lead a My Day row with the order number and
+   status instead.
+12. **The Map tab is not scoped like Route.** The sweep reads `store.shops`, so a
+   booker sees every area in the company rather than his own, and it walks ALL
+   active shops in an area rather than the ones that are due — at a hundred shops
+   on a 35-day cycle that is 100 stops to reach about 3. Raised and deliberately
+   deferred by the owner; unpinned shops staying listed-but-not-routed at the
+   bottom is the behaviour he wants.
+13. **The shop lists are still not virtualised.** Route, the sweep and
+   `ShopSearchScreen` are all capped (a page of `shopsPerDay`, 40 results) which
+   keeps a normal morning under twenty mounted cards — but a booker who taps
+   *Show more* five times is back to a hundred. `FlatList` is the real fix and is
+   now a small change, because each list is a single flat capped array.
 
 ---
 
@@ -305,7 +441,9 @@ run as a release blocker, not a flaky test.
 - `firestore-tests/tenant-isolation.test.js` — every collection under
   `companies/{id}`, tried for read, write AND list, by company B's admin,
   booker and rider, a signed-in stranger with no claims, and an anonymous
-  caller. Plus a named regression test for the `days` hole.
+  caller. Plus a named regression test for the `days` hole, and a DELETE
+  group for shops — the one collection that permits it, which makes "which
+  company's admin" load-bearing for the first time.
 - `firestore-tests/money-integrity.test.js` — company A's *own* booker and
   rider, which is the likelier theft. Maps one-to-one onto `PROGRESS.md` §4.
 
@@ -360,13 +498,13 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 15` / `versionName "2.0"` |
-| File | `builds/SnD-Manager-v1.9-build14.aab` (62 MB, outside the repo — AABs are not committed) |
+| Version | `versionCode 16` / `versionName "2.1"` |
+| File | `builds/SnD-Manager-v2.1-build16.aab` (65 MB, outside the repo — AABs are not committed) |
 | Also at | `android/app/build/outputs/bundle/release/app-release.aab` |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3 |
-| Built | 2026-08-09, from `main` |
-| Needs | the rules deployed — done; the booker-creates-area path 403s without them |
+| Built | 2026-08-09, from `booker-screens-pass` — **not from `main`** |
+| Needs | the rules deployed — done, including the shops `delete` rule |
 
 **Not published, and not yet safe to publish.** See §4.1 — the four device
 checks have not been run. Building the file is safe; putting it on a track
@@ -411,9 +549,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "https://firestore.googleapis.com/v1/p
 | `src/lib/location.ts` | the GPS fix and the watch. The only continuous sensor in the app |
 | `src/lib/workday.ts` | what counts as a person's working day |
 | `src/features/shops/` | pin screen, sweep screen, the shared photo/pin chips, sweep progress (MMKV) |
-| `src/components/AreaSelect.tsx` | the only way to set a shop's area |
-| `src/components/theme.ts` | every colour, size and space — including `space.gutter` |
-| `firestore.rules` | identity rides in the token; rules never do lookups |
+| `src/components/AreaSelect.tsx` | the only way to set a shop's area — and an area is now required on every path that creates one |
+| `src/components/theme.ts` | every colour, size and space — including `space.gutter`, `color.cardEdge` and `shadow.card` |
+| `src/lib/order.ts` | all order money: `computeTotals`, `discountPercentForPrice`, `lowestPrice`, `netOfTax`. Screens never do arithmetic |
+| `src/app/navigation.tsx` | `BookerRouteStack` is where Route, the order form and the shop search live; the booker has three tabs |
+| `firestore.rules` | identity rides in the token; rules never do lookups. Shops are the ONLY collection with a live `delete` |
 | `functions/index.js` | `admitSignIn` is the only door into the app |
 
 Firestore layout is `companies/{companyId}/…` for everything except `employeeDirectory`,
@@ -428,3 +568,9 @@ The chronological record of Round 8 (18 bugs), the design pass, the Welcome-scre
 and the shop-mapping build is in the message of commit `5346f05` and in `OPEN-BUGS.md`.
 Every fix is also commented at the site it was made, explaining what the failure actually
 was — grep for the wording rather than reconstructing it from the diff.
+
+The booker round is the five commits in §1b, and the same rule applies: each one
+says in its message what the old behaviour was and why it was wrong. Read those
+before changing anything on Route or New Order — several of the decisions there
+(the frozen sweep order, the cleared price on a quantity change, the missing
+"All" chip) look like omissions and are not.
