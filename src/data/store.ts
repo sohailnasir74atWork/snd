@@ -190,6 +190,17 @@ export interface StoreApi {
   addShop(s: ShopInput): void;
   updateShop(id: string, patch: Partial<Shop>): void;
   /**
+   * Remove a shop for good — owner only, and the rules enforce that.
+   *
+   * Deactivating is still the right move for a shop that has traded: its
+   * orders and payments stay behind and keep pointing at a shop that no
+   * longer exists, and the live khata on the document goes with it. This is
+   * for the wrong entries and the test rows, which every real account
+   * collects and could not previously get rid of. The confirmation — twice
+   * over when money is owed — belongs to the screen.
+   */
+  deleteShop(id: string): void;
+  /**
    * Pin an existing shop. Separate from updateShop because the store is what
    * knows who is standing there — and because the rules let a RIDER write
    * exactly these two keys and nothing else, so the call sites must not be

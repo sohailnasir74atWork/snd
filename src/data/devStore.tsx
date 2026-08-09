@@ -61,7 +61,7 @@ const seedSettings: CompanySettings = {
   countryCode: '92',
   taxPercent: 0,
   maxDiscountPercent: 10,
-  defaultDeliveryDay: 'today',
+  defaultDeliveryDay: 'tomorrow',
   shopsPerDay: 20,
   rewardApprovalLimit: 1000,
   rewardPerPiece: 40,
@@ -367,6 +367,10 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         ...st,
         shops: st.shops.map(s => (s.id === id ? { ...s, ...patch } : s)),
       }));
+    },
+
+    deleteShop(id) {
+      setState(st => ({ ...st, shops: st.shops.filter(s => s.id !== id) }));
     },
 
     setShopLocation(shopId, fix) {

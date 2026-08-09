@@ -46,7 +46,7 @@ import type { Role, SessionUser } from '../app/types';
 
 const DEFAULT_SETTINGS: CompanySettings = {
   brandName: '', currencySymbol: 'Rs', countryCode: '92', taxPercent: 0,
-  maxDiscountPercent: 10, defaultDeliveryDay: 'today', shopsPerDay: 20,
+  maxDiscountPercent: 10, defaultDeliveryDay: 'tomorrow', shopsPerDay: 20,
   rewardApprovalLimit: 1000, rewardPerPiece: 40,
   acceptCheques: false, sendConfirmations: true,
   visibility: DEFAULT_VISIBILITY,
@@ -1151,6 +1151,10 @@ export function FirestoreStoreProvider({
     updateShop(id, patch) {
       updateDoc(doc(db, `${base}/shops/${id}`), stripUndefined(patch) as Record<string, unknown>)
         .catch(writeRejected('Shop update'));
+    },
+
+    deleteShop(id) {
+      deleteDoc(doc(db, `${base}/shops/${id}`)).catch(writeRejected('Shop delete'));
     },
 
     // The pin and the photo are the only two shop keys a RIDER may write, and

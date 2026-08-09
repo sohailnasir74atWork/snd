@@ -93,6 +93,19 @@ describe('cross-tenant LIST is refused', () => {
   }
 });
 
+describe('cross-tenant DELETE — shops, the one collection that permits it', () => {
+  // Every other collection denies delete outright, so the default rule carries
+  // them. Shops now allow it for an ADMIN, which makes "which company's admin"
+  // load-bearing for the first time: `isAdmin()` reads the companyId off the
+  // caller's own token, and this is the test that says so.
+  for (const [who, ctx] of OUTSIDERS) {
+    test(`${who} cannot delete a shop of company A`, async () => {
+      await seed(db => db.doc(`companies/${co()}/shops/doc1`).set(COLLECTIONS.shops));
+      await assertFails(ctx().doc(`companies/${co()}/shops/doc1`).delete());
+    });
+  }
+});
+
 describe('the company document itself', () => {
   test('its own member reads it', async () => {
     await seed(db => db.doc(`companies/${co()}`).set({ businessName: 'A' }));

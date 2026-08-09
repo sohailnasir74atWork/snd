@@ -146,7 +146,22 @@ service cloud.firestore {
                               || (isRider(companyId)
                                   && request.resource.data.diff(resource.data)
                                        .affectedKeys().hasOnly(['location', 'photoUrl']));
-        allow delete: if false; // deactivate, never delete
+        // The OWNER may delete a shop; nobody else ever can.
+        //
+        // This was `if false` — deactivate, never delete — and for a shop that
+        // has traded that is still the right answer: orders keep a frozen
+        // `shopSnapshot`, so history survives a deletion, but the live khata
+        // on this document does not. What the old rule could not do is let an
+        // owner clear up the wrong entries and the test rows that every real
+        // account collects in its first week, and an INACTIVE tag on a shop
+        // that never existed is clutter he cannot get rid of.
+        //
+        // The balance is guarded in the app, not here: the editor makes an
+        // owner confirm a second time before deleting a shop that owes money.
+        // A rule cannot see that confirmation, and one that refused on
+        // `outstanding > 0` would strand every shop with a rounding error in
+        // its khata forever.
+        allow delete: if isAdmin(companyId);
       }
 
       match /products/{productId} {

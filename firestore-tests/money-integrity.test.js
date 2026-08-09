@@ -164,9 +164,13 @@ describe('the shop khata — a booker never moves a balance (FR-7.10)', () => {
     await assertFails(admin().doc(`companies/${co()}/rewardStaff/x`).set({ name: 'Salman', active: true }));
   });
 
-  test('shops are deactivated, never deleted', async () => {
-    await assertFails(admin().doc(`companies/${co()}/shops/s1`).delete());
+  test('only the owner may delete a shop', async () => {
+    // Staff never delete. A booker who could would be one tap from erasing a
+    // debtor off the round he is standing on.
+    await assertFails(booker().doc(`companies/${co()}/shops/s1`).delete());
+    await assertFails(rider().doc(`companies/${co()}/shops/s1`).delete());
     await assertSucceeds(patch(admin().doc(`companies/${co()}/shops/s1`), { active: false }));
+    await assertSucceeds(admin().doc(`companies/${co()}/shops/s1`).delete());
   });
 });
 
