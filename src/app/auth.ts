@@ -291,7 +291,9 @@ export type SignInResult =
         /** Staff lane: the code, the ID or the PIN is wrong — we cannot say which. */
         | 'bad_credentials'
         /** Too many wrong PINs. Firebase locked this address for a while. */
-        | 'locked';
+        | 'locked'
+        /** Email/Password is switched off in the console. A setup fault, not a bad PIN. */
+        | 'not_enabled';
       message: string;
       /** The address that was refused — the caller words its own refusal. */
       email?: string;
@@ -427,6 +429,14 @@ export async function signInWithStaffId(
     }
     if (/too-many-requests/.test(code2)) {
       return { ok: false, reason: 'locked', message: strings.signIn.pinLocked };
+    }
+    // The Email/Password provider is off in the Firebase console. Nothing about
+    // the code, the ID or the PIN is wrong — the account exists and is correct,
+    // and Firebase refuses before it ever looks at it. This used to fall
+    // through to `throw`, which put a raw SDK string in front of a rider and
+    // read as "your PIN is broken" when the fix is one switch the OWNER holds.
+    if (/operation-not-allowed/.test(code2)) {
+      return { ok: false, reason: 'not_enabled', message: strings.signIn.staffLoginsOff };
     }
     // Firebase collapses "no such account" and "wrong PIN" into one code when
     // email-enumeration protection is on, and that is the right answer to give

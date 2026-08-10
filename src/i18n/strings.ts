@@ -59,6 +59,13 @@ export const strings = {
       'Business code, login ID or PIN is wrong. Check the slip your owner gave you — or ask him to reset your PIN.',
     pinLocked:
       'Too many wrong tries. Wait a few minutes and try again, or ask your owner to reset your PIN.',
+    // Says the PIN is fine FIRST, because the man holding the slip will
+    // otherwise spend the morning retyping six digits that were always right.
+    // The bracket is for whoever is setting the business up — it is the only
+    // string in the app that names a console, and it earns it: this error has
+    // exactly one cause and exactly one fix.
+    staffLoginsOff:
+      'Staff logins are not switched on for this app yet — your PIN is fine. The owner needs to finish setup (Firebase Console → Authentication → Sign-in method → enable Email/Password).',
     // The account authenticated but its directory row is gone — a broken
     // record, not an uninvited guest, so it must not read like a rejection.
     staffNotOnList:
