@@ -16,5 +16,26 @@
  * record for. Firestore's own on-disk queue owns unsent writes.
  */
 import { createMMKV } from 'react-native-mmkv';
+import { localRef, type SerialKind } from './serials';
 
 export const kv = createMMKV({ id: 'snd' });
+
+const LOCAL_SERIAL_KEY = 'snd.localSerialCounter';
+
+/**
+ * Monotonic per-device counter so two offline documents never collide.
+ *
+ * Synchronous on purpose: read and write happen in one tick, so two documents
+ * created back to back with no signal cannot both read the counter before
+ * either has incremented it.
+ *
+ * It lives here rather than in `./serials` because it is the only part of
+ * serial numbering that touches the device — keeping it out of that module is
+ * what lets `src/documents` import `isProvisional` without pulling MMKV into a
+ * pure HTML generator.
+ */
+export function nextLocalRef(kind: SerialKind): string {
+  const n = (kv.getNumber(LOCAL_SERIAL_KEY) ?? 0) + 1;
+  kv.set(LOCAL_SERIAL_KEY, n);
+  return localRef(kind, n);
+}

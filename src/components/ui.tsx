@@ -301,7 +301,25 @@ export function EmptyState({ icon, title, hint }: { icon: string; title: string;
   );
 }
 
-/** Small status tag — the green "SALE" style label. */
+/**
+ * Small status tag — the green "SALE" style label.
+ *
+ * NO `alignSelf`, deliberately. It used to carry `alignSelf: 'flex-start'`,
+ * and alignSelf beats the parent's alignItems — so a pill overruled every
+ * container it was dropped into, from in here, silently:
+ *
+ *   - in a ROW next to a Chip it pinned itself to the top, and NO PIN sat
+ *     visibly above the button beside it;
+ *   - in a right-aligned COLUMN (`tagCol` on Employees, `listRight`) it
+ *     left-aligned instead, so RIDER / INVITED stacked with a ragged edge
+ *     while the container had explicitly asked for flush right.
+ *
+ * A shared pill cannot know which axis it is on — only its parent can. So the
+ * parent decides now, and every container holding one states an alignment.
+ * The one place that wants neither is a tag alone in a column, which wraps
+ * itself in a `flex-start` View (`tagWrap` in CollectScreen, RiderScreens)
+ * rather than pushing the problem back in here.
+ */
 export function Tag({ label, tone = 'success' }: { label: string; tone?: 'success' | 'warn' | 'danger' | 'primary' }) {
   const map = {
     success: [color.successSoft, color.success],
@@ -311,8 +329,31 @@ export function Tag({ label, tone = 'success' }: { label: string; tone?: 'succes
   } as const;
   const [bg, fg] = map[tone];
   return (
-    <View style={{ backgroundColor: bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start' }}>
+    <View style={{ backgroundColor: bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
       <Text style={{ color: fg, fontSize: font.tiny, fontWeight: '800', letterSpacing: 0.4 }} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+}
+
+/**
+ * The mark on a document number the phone issued itself, offline.
+ *
+ * Every confirmation screen shows its serial in `font.h1` and hands it to a
+ * shopkeeper, so an unmarked `LOCAL-RCP-7` reads exactly like a real serial.
+ * The wording lives here rather than at the four call sites so the screen and
+ * the printed sheet (src/documents/templates.ts) cannot drift apart — and it
+ * promises no replacement number, because nothing issues one (HANDOFF §4.14).
+ *
+ * The `isProvisional()` test stays at the call site on purpose: this file must
+ * not pull the MMKV-backed serial module into every screen that imports a Card.
+ */
+export function ProvisionalNote() {
+  return (
+    <View style={{ alignItems: 'center', gap: 4, marginBottom: space.xs }}>
+      <Tag label="PROVISIONAL" tone="warn" />
+      <Text style={{ fontSize: font.tiny, color: color.textSub, textAlign: 'center' }}>
+        Written with no internet — this number came from the phone, not the company's list.
+      </Text>
     </View>
   );
 }

@@ -173,7 +173,10 @@ const styles = StyleSheet.create({
   name: { fontSize: font.h2, fontWeight: '700', color: color.text },
   times: { fontSize: font.sub, color: color.textSub, marginTop: 2 },
   duration: { fontSize: font.stat, fontWeight: '800', color: color.primary },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s, marginTop: space.s },
+  tagRow: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+    gap: space.s, marginTop: space.s,
+  },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: space.l, marginTop: space.m },
   stat: { alignItems: 'flex-start' },
   statValue: { fontSize: font.h2, fontWeight: '700', color: color.text },

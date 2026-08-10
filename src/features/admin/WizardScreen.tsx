@@ -16,6 +16,7 @@ import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useNeed, useStore } from '../../data/store';
 import type { Employee, Product } from '../../data/models';
 import { digitsOnly } from '../../lib/phone';
+import { LogoPicker } from './LogoPicker';
 
 const STEP_COUNT = 4;
 
@@ -111,7 +112,8 @@ function CompanyStep({ onNext }: { onNext: () => void }) {
           them in and no reason at all to face them before you have typed who
           you are. The very first screen of the app asks one question.
         */}
-        <MoreFields label="Add address & phone for your bills" count={2}>
+        <MoreFields label="Add logo, address & phone for your bills" count={3}>
+          <LogoPicker />
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Address</Text>
             <TextInput

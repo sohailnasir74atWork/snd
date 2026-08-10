@@ -142,6 +142,23 @@ describe('the shop khata — a booker never moves a balance (FR-7.10)', () => {
     await assertFails(patch(booker().doc(`companies/${co()}/shops/s1`), { outstanding: 0 }));
   });
 
+  test('a booker cannot RENAME a shop — identity is the owner\'s', async () => {
+    // Every order freezes a shopSnapshot.name at booking, so a rename under a
+    // report makes this month disagree with last month for reasons nobody can
+    // reconstruct. The app also hides the field, but hiding is not a rule.
+    await assertFails(patch(booker().doc(`companies/${co()}/shops/s1`), { name: 'Beauty Corner 2' }));
+  });
+
+  test('...and cannot smuggle the rename in beside a legal edit', async () => {
+    await assertFails(patch(booker().doc(`companies/${co()}/shops/s1`), {
+      phone: '923001234567', name: 'Beauty Corner 2',
+    }));
+  });
+
+  test('the OWNER renames it freely', async () => {
+    await assertSucceeds(patch(admin().doc(`companies/${co()}/shops/s1`), { name: 'Beauty Corner 2' }));
+  });
+
   test('a booker may sign up a counter person — they live ON the shop now', async () => {
     // Counter staff moved out of their own collection and onto the shop, so
     // the shops rules are what governs them. The booker is the one standing at

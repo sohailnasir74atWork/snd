@@ -1,5 +1,6 @@
 import {
-  computeTotals, discountPercentForPrice, formatDiscountPercent, lowestPrice, netOfTax,
+  computeTotals, discountPercentForPrice, discountPercentForTotal,
+  formatDiscountPercent, lowestPrice, netOfTax, totalWithTax,
 } from '../order';
 
 const items = [
@@ -122,5 +123,84 @@ describe('negotiating in rupees — the booker types a price, the order stores a
     expect(formatDiscountPercent(discountPercentForPrice(sub, 13333, 100))).toBe('7.4');
     expect(formatDiscountPercent(5)).toBe('5');
     expect(formatDiscountPercent(0)).toBe('0');
+  });
+});
+
+/**
+ * The owner's `priceIncludesTax` mode: the booker types the figure the shop
+ * actually hands over, and the tax is split back out of it.
+ */
+describe('a typed price with the sales tax already inside it', () => {
+  const sub = 14400;
+  const RATE = 17;
+
+  test('the shop is never asked for more than the figure that was typed', () => {
+    // The property the mode rests on. Exact wherever the rupee allows it, and
+    // never above — see the gap case below.
+    for (const total of [16848, 16000, 15000, 14000, 13000, 12345, 1]) {
+      const pct = discountPercentForTotal(sub, total, 100, RATE);
+      const charged = computeTotals(items, pct, false, RATE).grandTotal;
+      expect(charged).toBeLessThanOrEqual(Math.max(total, totalWithTax(0, RATE)));
+      expect(total - charged).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('a total the tax rounding cannot produce rounds DOWN, never up', () => {
+    // At 17% the tax on 12,820 rounds to 2,179 and on 12,821 to 2,180, so a
+    // bill is 14,999 or 15,001 and 15,000 does not exist. The booker said
+    // 15,000; the shop must not be handed a bill for 15,001.
+    expect(totalWithTax(12820, RATE)).toBe(14999);
+    expect(totalWithTax(12821, RATE)).toBe(15001);
+    const pct = discountPercentForTotal(sub, 15000, 100, RATE);
+    expect(computeTotals(items, pct, false, RATE).grandTotal).toBe(14999);
+  });
+
+  test('700-style split: the tax comes OUT of the figure, not on top of it', () => {
+    const small = [{ productId: 'p1', name: 'Face Wash', qty: 1, unitPrice: 900 }];
+    const pct = discountPercentForTotal(900, 700, 100, RATE);
+    const t = computeTotals(small, pct, false, RATE);
+    expect(t.grandTotal).toBe(700);           // the shop pays 700
+    expect(t.taxTotal).toBe(102);             // of which this is tax
+    expect(netOfTax(t)).toBe(598);            // and this is the goods
+    expect(t.taxTotal! + netOfTax(t)).toBe(700);
+  });
+
+  test('the same 700 in the OLD mode still charges 819 — the default is untouched', () => {
+    const small = [{ productId: 'p1', name: 'Face Wash', qty: 1, unitPrice: 900 }];
+    const pct = discountPercentForPrice(900, 700, 100);
+    expect(computeTotals(small, pct, false, RATE).grandTotal).toBe(819);
+  });
+
+  test('the cap and full price are both measured WITH tax', () => {
+    // Full price for the booker is now 16,848, not 14,400.
+    expect(totalWithTax(sub, RATE)).toBe(16848);
+    expect(discountPercentForTotal(sub, 99999, 10, RATE)).toBe(0);
+    const capped = discountPercentForTotal(sub, 1, 10, RATE);
+    expect(capped).toBe(10);
+    expect(computeTotals(items, capped, false, RATE).grandTotal)
+      .toBe(totalWithTax(lowestPrice(sub, 10), RATE));
+  });
+
+  test('at rate 0 it agrees with the exclusive mode, to the rupee', () => {
+    // Nothing changes for the businesses that never set a rate.
+    for (const price of [14399, 13680, 12960, 1]) {
+      expect(discountPercentForTotal(sub, price, 100, 0))
+        .toBeCloseTo(discountPercentForPrice(sub, price, 100), 10);
+    }
+    expect(totalWithTax(14400, 0)).toBe(14400);
+  });
+
+  test('an empty cart cannot be divided by', () => {
+    expect(discountPercentForTotal(0, 700, 10, RATE)).toBe(0);
+  });
+
+  test('the rate still scales to a short delivery', () => {
+    // Agreed 16,000 all-in for twelve; half the sunblock never arrived. The
+    // stored rate re-bills the goods that landed and taxes those.
+    const pct = discountPercentForTotal(sub, 16000, 100, RATE);
+    const billed = computeTotals(items, pct, true, RATE);
+    expect(billed.subTotal).toBe(9900);
+    expect(billed.grandTotal).toBeLessThan(16000);
+    expect(billed.taxTotal).toBe(Math.round((billed.subTotal - billed.discountTotal) * RATE / 100));
   });
 });

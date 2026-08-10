@@ -183,5 +183,8 @@ const styles = StyleSheet.create({
     borderColor: color.border, padding: space.m, minHeight: 44,
     fontSize: font.body + 1, marginBottom: space.m, color: color.text,
   },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s, marginTop: space.s },
+  rowWrap: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+    gap: space.s, marginTop: space.s,
+  },
 });

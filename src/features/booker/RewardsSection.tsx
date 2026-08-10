@@ -27,12 +27,6 @@ export function RewardsSection() {
   const store = useStore();
   useNeed('floatMovements');
 
-  // ---- register form ----
-  const [registering, setRegistering] = React.useState(false);
-  const [name, setName] = React.useState('');
-  const [phone, setPhone] = React.useState('');
-  const [shopId, setShopId] = React.useState<string | null>(null);
-
   // ---- claim form ----
   const [claimStaffId, setClaimStaffId] = React.useState<string | null>(null);
   const [piecesText, setPiecesText] = React.useState('');
@@ -40,11 +34,6 @@ export function RewardsSection() {
   const [photo, setPhoto] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [photoBusy, setPhotoBusy] = React.useState(false);
-  // addRewardStaff writes a NEW document every call and returns void — there is
-  // nothing to await, so the second tap is stopped here. Reset when the form
-  // reopens so the next person can still be registered.
-  const savingStaffRef = React.useRef(false);
-
   // A booker's float listener only carries his own rows, so the sum IS his balance.
   const float = store.floatMovements
     .reduce((s, f) => s + (f.kind === 'issue' ? f.amount : -f.amount), 0);
@@ -52,7 +41,6 @@ export function RewardsSection() {
   const pieces = toInt(piecesText);
   const amount = pieces * perPiece;
   const claimStaff = claimStaffId ? store.rewardStaff.find(r => r.id === claimStaffId) : null;
-  const canRegister = name.trim().length > 0 && phone.trim().length >= 7 && !!shopId;
   const canClaim = pieces > 0 && shelfText !== '' && !!photo;
 
   const resetClaim = () => {
@@ -92,13 +80,6 @@ export function RewardsSection() {
     } finally {
       setPhotoBusy(false);
     }
-  };
-
-  const registerStaff = () => {
-    if (savingStaffRef.current) return;
-    savingStaffRef.current = true;
-    store.addRewardStaff({ name: name.trim(), phone: phone.trim(), shopId: shopId! });
-    setName(''); setPhone(''); setShopId(null); setRegistering(false);
   };
 
   return (
@@ -203,55 +184,27 @@ export function RewardsSection() {
               />
             </Card>
           ))}
-          {store.rewardStaff.filter(r => r.active).length === 0 && !registering && (
+          {store.rewardStaff.filter(r => r.active).length === 0 && (
             <EmptyState
               icon="account-star-outline"
               title="No counter staff yet"
-              hint="Register a shop's counter person to start the per-piece reward."
+              hint="Add one on the shop itself — Route, then Edit details. They are part of the shop, not of your day."
             />
           )}
         </>
       )}
 
-      {/* ---- register counter staff ---- */}
-      {!claimStaff && !registering && (
-        <View style={styles.ctaWrap}>
-          <PrimaryButton icon="account-plus-outline" variant="quiet" label="Register counter staff"
-            onPress={() => { savingStaffRef.current = false; setRegistering(true); }} />
-        </View>
-      )}
-      {!claimStaff && registering && (
-        <Card style={styles.tightCard}>
-          <View style={styles.formHead}>
-            <IconTile name="account-plus-outline" size={34} />
-            <Text style={styles.formTitle}>New counter person</Text>
-          </View>
-          <Text style={styles.fieldLabel}>Name</Text>
-          <TextInput style={styles.input} value={name} onChangeText={setName}
-            placeholder="Their name" placeholderTextColor={color.textFaint} />
-          <Text style={styles.fieldLabel}>Phone</Text>
-          <TextInput style={styles.input} value={phone} onChangeText={setPhone}
-            placeholder="03xx xxxxxxx" placeholderTextColor={color.textFaint} keyboardType="phone-pad" />
-          <Text style={styles.fieldLabel}>Which shop does he work at?</Text>
-          <View style={styles.rowWrap}>
-            {store.shops.filter(s => s.active).map(s => (
-              <Chip key={s.id} small label={s.name} selected={shopId === s.id}
-                onPress={() => setShopId(s.id)} />
-            ))}
-          </View>
-          <PrimaryButton
-            icon="check"
-            label="Register"
-            disabled={!canRegister}
-            disabledReason="Name, phone and shop first"
-            onPress={registerStaff}
-          />
-          <View style={styles.rowWrap}>
-            <Chip small label="Cancel" onPress={() => setRegistering(false)} />
-          </View>
-        </Card>
-      )}
+      {/*
+        There is no "Register counter staff" button here any more.
 
+        A counter person belongs to a SHOP — `shop.counterStaff` — and this tab
+        is My Day, a list of what the booker has booked. Registering one from
+        here meant a form whose third field was "which shop does he work at?",
+        answered from a chip row of the whole territory, by someone who was
+        standing in the shop at the time. It is done on the shop now: on the
+        Add-shop form when he is registering the counter, and behind
+        `Edit details` on Route any time after.
+      */}
       {/* ---- my claims ---- */}
       {store.rewardClaims.length > 0 && (
         <>

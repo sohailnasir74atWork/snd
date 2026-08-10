@@ -27,6 +27,22 @@ export function utf8ToBase64(text: string): string {
   return out;
 }
 
+/**
+ * Raw bytes → base64 (the logo is fetched from the CDN once and embedded in
+ * every bill, so a rider with no signal still prints it).
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i], b1 = bytes[i + 1], b2 = bytes[i + 2];
+    out += ALPHABET[b0 >> 2];
+    out += ALPHABET[((b0 & 3) << 4) | (b1 === undefined ? 0 : b1 >> 4)];
+    out += b1 === undefined ? '=' : ALPHABET[((b1 & 15) << 2) | (b2 === undefined ? 0 : b2 >> 6)];
+    out += b2 === undefined ? '=' : ALPHABET[b2 & 63];
+  }
+  return out;
+}
+
 /** base64 → raw bytes (photo uploads PUT the decoded JPEG). */
 export function base64ToBytes(b64: string): Uint8Array {
   const clean = b64.replace(/[^A-Za-z0-9+/]/g, '');

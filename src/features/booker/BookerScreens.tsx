@@ -8,25 +8,31 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
-  color, font, radius, space,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, ProvisionalNote,
+  SectionLabel, Tag, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { CollectionInput } from '../../data/store';
 import type { Order, OrderItem, Shop } from '../../data/models';
 import { todayKey } from '../../data/models';
-import { computeTotals, discountPercentForPrice, lowestPrice, netOfTax } from '../../lib/order';
+import {
+  computeTotals, discountPercentForPrice, discountPercentForTotal,
+  lowestPrice, netOfTax, totalWithTax,
+} from '../../lib/order';
 import { formatAmount } from '../../lib/money';
 import { visitCycleDays } from '../../lib/assignment';
+import { isProvisional } from '../../lib/serials';
 import { strings } from '../../i18n/strings';
 import { orderConfirmationHtml } from '../../documents/templates';
 import { sharePdf } from '../../documents/share';
+import { documentLogo } from '../../lib/logoCache';
 import { RewardsSection } from './RewardsSection';
 import { consumePendingOrderShop, setPendingOrderShop } from '../../app/orderIntent';
 import { PinShopScreen } from '../shops/PinShopScreen';
 import { NewShopPlaceChips, ShopPlaceChips } from '../shops/ShopPlace';
 import type { GeoFix } from '../../lib/geo';
 import { AreaSelect } from '../../components/AreaSelect';
+import { CounterStaffSection } from '../admin/CounterStaffSection';
 
 /** Stands in for a shop id while the shop it belongs to does not exist yet. */
 const NEW_SHOP = '__new__';
@@ -76,6 +82,7 @@ function ExceptionCashScreen({ shop, onDone }: { shop: Shop; onDone: () => void 
       <View style={[styles.screen, styles.center]}>
         <Icon name="alert-decagram" size={64} color={color.warn} />
         <Text style={styles.orderNo}>Receipt {done.receiptNo}</Text>
+        {isProvisional(done.receiptNo) && <ProvisionalNote />}
         <Money amount={done.amount} size={font.h1} bold />
         <Text style={styles.centerSub}>
           Recorded as an EXCEPTION — the owner has been told. Hand this cash
@@ -225,7 +232,6 @@ export function BookerRouteScreen() {
    * payments are for); it was the screen that had no way in.
    */
   const [editShopId, setEditShopId] = React.useState<string | null>(null);
-  const [editName, setEditName] = React.useState('');
   const [editPhone, setEditPhone] = React.useState('');
   const [editOwner, setEditOwner] = React.useState('');
   const [editArea, setEditArea] = React.useState('');
@@ -238,6 +244,13 @@ export function BookerRouteScreen() {
   // Held locally until the shop document exists to carry them.
   const [newLocation, setNewLocation] = React.useState<GeoFix | null>(null);
   const [newPhotoUrl, setNewPhotoUrl] = React.useState<string | null>(null);
+  // Counter staff typed before the shop document exists to hold them, exactly
+  // like the pin and the photo above. Optional: most counters have nobody on
+  // the reward scheme on day one, and `CounterStaffSection` on Edit details is
+  // the other door for when somebody agrees to it later.
+  const [newStaff, setNewStaff] = React.useState<{ name: string; phone?: string }[]>([]);
+  const [newStaffName, setNewStaffName] = React.useState('');
+  const [newStaffPhone, setNewStaffPhone] = React.useState('');
   // Which shop is being pinned right now: an id for one that exists, or the
   // sentinel for the shop being registered on this screen.
   const [pinning, setPinning] = React.useState<string | null>(null);
@@ -303,7 +316,6 @@ export function BookerRouteScreen() {
     savingEditRef.current = false;
     if (editShopId === shop.id) { setEditShopId(null); return; }
     setEditShopId(shop.id);
-    setEditName(shop.name);
     setEditPhone(shop.phone);
     setEditOwner(shop.ownerName ?? '');
     setEditArea(shop.area);
@@ -313,7 +325,7 @@ export function BookerRouteScreen() {
     if (savingEditRef.current) return;
     savingEditRef.current = true;
     store.updateShop(shopId, {
-      name: editName.trim(),
+      // No `name`: owner-only, and the rules reject it from a booker.
       phone: editPhone.trim(),
       // Empty string rather than undefined: undefined is stripped before the
       // write, so clearing a wrong owner name would silently keep the old one.
@@ -332,9 +344,11 @@ export function BookerRouteScreen() {
       // GPS still becomes a shop, and gets its pin on the next visit.
       location: newLocation ?? undefined,
       photoUrl: newPhotoUrl ?? undefined,
+      counterStaff: newStaff.length ? newStaff : undefined,
     });
     setNewName(''); setNewPhone(''); setNewArea('');
     setNewLocation(null); setNewPhotoUrl(null); setAddingShop(false);
+    setNewStaff([]); setNewStaffName(''); setNewStaffPhone('');
   };
 
   const startOrder = (shopId: string) => {
@@ -384,7 +398,13 @@ export function BookerRouteScreen() {
                 {seesBalances && shop.outstanding > 0 && !shop.collectionFlagged && !flagged[shop.id] && (
                   <Chip small danger label={strings.order.tellTheRider} onPress={() => flagShop(shop.id)} />
                 )}
-                <Chip small label="Edit details" onPress={() => openEdit(shop)} />
+                {/* The owner may keep shop edits to himself (Settings). This
+                    is a CLIENT scope — the rules still permit the write, in the
+                    same way territory is a client scope — so it tidies the
+                    booker's screen rather than locking a door. */}
+                {store.settings.bookerEditsShops !== false && (
+                  <Chip small label="Edit details" onPress={() => openEdit(shop)} />
+                )}
                 <Chip small label="Shelf count" onPress={() => openShelf(shop.id)} />
                 <ShopPlaceChips
                   shop={shop}
@@ -398,9 +418,15 @@ export function BookerRouteScreen() {
               )}
               {editShopId === shop.id && (
                 <View style={styles.shelfEditor}>
+                  {/* The name is shown, not edited. A shop that changes name is
+                      a different shop to everyone reading a report, and the
+                      booker standing in front of it is the person most likely
+                      to "correct" it to whatever the board outside says this
+                      month. Owner-only, and enforced in firestore.rules — not
+                      merely hidden here. */}
                   <Text style={styles.fieldLabel}>Shop name</Text>
-                  <TextInput style={styles.input} value={editName} onChangeText={setEditName}
-                    placeholder="Shop name" placeholderTextColor={color.textFaint} />
+                  <Text style={styles.readOnlyValue}>{shop.name}</Text>
+                  <Text style={styles.priceHint}>Only the owner can change a shop's name.</Text>
                   <Text style={styles.fieldLabel}>Mobile number</Text>
                   <TextInput style={styles.input} value={editPhone} onChangeText={setEditPhone}
                     placeholder="03xx xxxxxxx" placeholderTextColor={color.textFaint}
@@ -415,14 +441,14 @@ export function BookerRouteScreen() {
                   <View style={styles.rowWrap}>
                     <Chip
                       small
-                      selected={editName.trim() !== '' && editPhone.trim().length >= 7 && editArea.trim() !== ''}
+                      selected={editPhone.trim().length >= 7 && editArea.trim() !== ''}
                       label={
-                        editName.trim() === '' || editPhone.trim().length < 7 ? 'Name and mobile first'
+                        editPhone.trim().length < 7 ? 'Mobile number first'
                         : editArea.trim() === '' ? 'Pick the area first'
                         : 'Save details'
                       }
                       onPress={
-                        editName.trim() === '' || editPhone.trim().length < 7 || editArea.trim() === ''
+                        editPhone.trim().length < 7 || editArea.trim() === ''
                           ? undefined
                           : () => saveEdit(shop.id)
                       }
@@ -432,6 +458,10 @@ export function BookerRouteScreen() {
                   {/* The balance is deliberately absent: a booker moves money
                       through payments, never by editing a number on a shop —
                       and the rules refuse the write if he tries. */}
+                  {/* Counter staff, on the shop they stand in. This used to be
+                      a form on My Day whose third question was "which shop
+                      does he work at?", asked of a man who was inside it. */}
+                  <CounterStaffSection shop={shop} />
                 </View>
               )}
               {shelfShopId === shop.id && (
@@ -539,6 +569,38 @@ export function BookerRouteScreen() {
                 Never a blocker either: with no area at all the shop still
                 saves and shows under "No area yet" for the owner to place. */}
             <AreaSelect value={newArea} onChange={setNewArea} />
+            {/* Whoever is already behind this counter, if anyone. A name is
+                the whole requirement — plenty of counter staff are known by
+                face and first name only, and refusing to register one because
+                nobody has his number just means he goes unpaid. */}
+            <Text style={styles.fieldLabel}>Counter staff (optional)</Text>
+            {newStaff.map((c, i) => (
+              <View key={`${c.name}-${i}`} style={styles.rowBetween}>
+                <Text style={[styles.shopMeta, styles.flexLabel]} numberOfLines={1}>
+                  {c.name}{c.phone ? ` • ${c.phone}` : ''}
+                </Text>
+                <Chip small danger label="Remove"
+                  onPress={() => setNewStaff(list => list.filter((_, j) => j !== i))} />
+              </View>
+            ))}
+            <TextInput style={styles.input} value={newStaffName} onChangeText={setNewStaffName}
+              placeholder="Their name" placeholderTextColor={color.textFaint} />
+            <TextInput style={styles.input} value={newStaffPhone} onChangeText={setNewStaffPhone}
+              placeholder="Their phone (optional)" placeholderTextColor={color.textFaint}
+              keyboardType="phone-pad" />
+            <View style={styles.rowWrap}>
+              <Chip
+                small
+                label="Add this person"
+                onPress={newStaffName.trim() === '' ? undefined : () => {
+                  setNewStaff(list => [...list, {
+                    name: newStaffName.trim(),
+                    phone: newStaffPhone.trim() || undefined,
+                  }]);
+                  setNewStaffName(''); setNewStaffPhone('');
+                }}
+              />
+            </View>
             <Text style={styles.fieldLabel}>The place itself (both optional)</Text>
             <NewShopPlaceChips
               hasLocation={!!newLocation}
@@ -809,19 +871,39 @@ export function NewOrderScreen() {
 
   const maxDiscount = store.settings.maxDiscountPercent;
   const subTotal = items.reduce((sum, it) => sum + it.qty * it.unitPrice, 0);
-  // The shop's standing rate, still capped by the owner's maximum — a rate set
-  // before the cap was lowered must not outlive it.
-  const standing = Math.min(shop?.standingDiscountPercent ?? 0, maxDiscount);
+  // No standing rate any more: an order starts at full price and stays there
+  // until somebody types a lower one. `Shop.standingDiscountPercent` used to be
+  // read here and quietly took money off every bill for that shop — invisible
+  // on the order screen, on the confirmation and on the bill. It is the same
+  // objection that removed the percent chips: a discount nobody decided to give
+  // is not a negotiation, and the booker could not see it to argue with it.
   const typedPrice = priceText.trim() === '' ? null : toInt(priceText);
+  const taxPercent = store.settings.taxPercent;
+  // What the number in the box MEANS — the owner's choice (§Settings → Sales
+  // tax). Inclusive: he typed the figure the shop hands over, tax already in
+  // it. Exclusive: he typed the goods and tax goes on top. Only relevant once
+  // a rate is set; at 0 the two are the same number.
+  const priceIsFinal = taxPercent > 0 && !!store.settings.priceIncludesTax;
   const discount = typedPrice === null
-    ? standing
-    : discountPercentForPrice(subTotal, typedPrice, maxDiscount);
+    ? 0
+    : priceIsFinal
+      ? discountPercentForTotal(subTotal, typedPrice, maxDiscount, taxPercent)
+      : discountPercentForPrice(subTotal, typedPrice, maxDiscount);
   // Tax rides along here as well as in the store: the booker's TOTAL and the
   // number that gets written must be the same number.
   const totals = computeTotals(items, discount, false, store.settings.taxPercent);
-  /** What the price field controls — the goods, before any tax on top. */
-  const goodsTotal = netOfTax(totals);
-  const priceFloor = lowestPrice(subTotal, maxDiscount);
+  /**
+   * The two numbers the booker is negotiating BETWEEN, quoted on the same
+   * basis as the box he is typing into. Inclusive mode compares tax-in
+   * figures, exclusive mode compares goods — mixing the two is how a hint
+   * ends up telling him 700 is above full price when it is not.
+   */
+  const priceCeiling = priceIsFinal ? totalWithTax(subTotal, taxPercent) : subTotal;
+  const priceFloor = priceIsFinal
+    ? totalWithTax(lowestPrice(subTotal, maxDiscount), taxPercent)
+    : lowestPrice(subTotal, maxDiscount);
+  /** What an empty box means: leave it alone and the shop pays this. */
+  const pricePlaceholder = priceIsFinal ? totals.grandTotal : netOfTax(totals);
 
   /**
    * One line under the field, and it always says what the limits are rather
@@ -830,14 +912,14 @@ export function NewOrderScreen() {
    */
   const priceHint = subTotal === 0
     ? 'Add a quantity first.'
-    : typedPrice !== null && typedPrice > subTotal
-      ? `Full price is Rs ${formatAmount(subTotal)} — you cannot charge above it.`
+    : typedPrice !== null && typedPrice > priceCeiling
+      ? `Full price is Rs ${formatAmount(priceCeiling)} — you cannot charge above it.`
       : typedPrice !== null && typedPrice < priceFloor
         ? `Owner's cap is ${maxDiscount}% — the lowest you can go is Rs ${formatAmount(priceFloor)}.`
-        : typedPrice === null && standing > 0
-          ? `${shop?.name}'s standing rate is already applied. Leave it blank to keep it.`
-          : `Full price Rs ${formatAmount(subTotal)} · lowest Rs ${formatAmount(priceFloor)}${
-            totals.taxTotal ? ' · sales tax is added on top' : ''}`;
+        : `Full price Rs ${formatAmount(priceCeiling)} · lowest Rs ${formatAmount(priceFloor)}${
+          totals.taxTotal
+            ? priceIsFinal ? ' · sales tax is inside this' : ' · sales tax is added on top'
+            : ''}`;
 
   const reset = () => {
     setShop(null); setQtys({}); setQtyTexts({}); setConfirmed(null);
@@ -870,11 +952,16 @@ export function NewOrderScreen() {
     try {
       const html = orderConfirmationHtml({
         settings: store.settings, order: confirmed.order, shop: confirmed.shop,
+        logo: await documentLogo(store.settings.logoUrl),
       });
       await sharePdf(
         html,
         confirmed.order.orderNo,
         `Order ${confirmed.order.orderNo} — Rs ${confirmed.order.orderedTotals.grandTotal.toLocaleString()}. Your bill comes with the delivery.`,
+        // Straight into THIS shopkeeper's chat. He is standing at the counter
+        // while the booker does it; hunting for him in a contact list is the
+        // slowest part of the whole booking.
+        { phone: confirmed.shop.phone, countryCode: store.settings.countryCode },
       );
     } catch (e) {
       Alert.alert('Could not share', e instanceof Error ? e.message : String(e));
@@ -891,6 +978,7 @@ export function NewOrderScreen() {
           <Icon name="check-circle" size={44} color={color.success} />
         </View>
         <Text style={styles.orderNo}>{confirmed.order.orderNo}</Text>
+        {isProvisional(confirmed.order.orderNo) && <ProvisionalNote />}
         <Text style={styles.centerSub}>Order confirmation ready — this is not a bill.</Text>
         <Money amount={total} size={font.h1} bold />
         <View style={styles.ctaWrapWide}>
@@ -1054,7 +1142,13 @@ export function NewOrderScreen() {
 
           {priceOpen && (
             <View style={styles.priceEditor}>
-              <Text style={styles.fieldLabel}>Discounted price</Text>
+              {/* The label has to say WHICH number he is typing. In inclusive
+                  mode the figure he agrees across the counter is the one the
+                  shop hands over, and the card above splits the tax back out
+                  of it line by line. */}
+              <Text style={styles.fieldLabel}>
+                {priceIsFinal ? 'Final price — sales tax included' : 'Discounted price'}
+              </Text>
               <TextInput
                 style={styles.input}
                 value={priceText}
@@ -1062,7 +1156,7 @@ export function NewOrderScreen() {
                 keyboardType="number-pad"
                 // The placeholder is the live total, so an empty field is
                 // visibly "no change" rather than "nothing decided".
-                placeholder={String(goodsTotal)}
+                placeholder={String(pricePlaceholder)}
                 placeholderTextColor={color.textFaint}
                 maxLength={9}
                 selectTextOnFocus
@@ -1310,6 +1404,7 @@ const styles = StyleSheet.create({
     marginTop: space.s, paddingTop: space.xs,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
   },
+  readOnlyValue: { fontSize: font.body, fontWeight: '700', color: color.text, marginTop: 2 },
   priceHint: { fontSize: font.tiny, color: color.textSub, marginTop: space.xs, lineHeight: font.tiny + 5 },
 
   ctaWrap: { paddingHorizontal: space.gutter, marginTop: space.s },

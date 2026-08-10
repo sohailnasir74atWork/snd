@@ -131,7 +131,9 @@ export function AdminActionScreen() {
       {unassigned.length > 0 && (
         <Card style={styles.exceptionCard}>
           <View style={styles.row}>
-            <IconTile name="truck-alert-outline" tint={color.danger} bg={color.dangerSoft} />
+            {/* Not `truck-alert-outline` — the bundled font has no such glyph
+                and it drew a "?" on the owner's Action screen. */}
+            <IconTile name="truck-outline" tint={color.danger} bg={color.dangerSoft} />
             <View style={styles.rowBody}>
               <Text style={styles.cardTitle} numberOfLines={2}>
                 {unassigned.length} {unassigned.length === 1 ? 'order has' : 'orders have'} no rider
@@ -441,7 +443,7 @@ const styles = StyleSheet.create({
   meta: { fontSize: font.sub, color: color.textSub, marginTop: 2 },
 
   exceptionCard: { borderWidth: 1, borderColor: color.danger },
-  tagRow: { flexDirection: 'row', marginTop: space.s },
+  tagRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
   proofPhoto: {
     height: 140, borderRadius: radius.tile, marginTop: space.s,
     backgroundColor: color.surfaceAlt,

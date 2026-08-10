@@ -12,8 +12,13 @@
  * A provisional document is flagged so every screen and every printed page can
  * say "Provisional" honestly, and the shop is never shown two different
  * "final" numbers.
+ *
+ * PURE ON PURPOSE — no MMKV, no React, no native import. `src/documents` is
+ * held to "no native deps" so a bill can be rendered in a plain Node test, and
+ * it needs `isProvisional` to mark an offline number on the printed page. The
+ * one function that does touch the device counter, `nextLocalRef`, therefore
+ * lives in `./kv` alongside the storage it depends on.
  */
-import { kv } from './kv';
 
 export type SerialKind = 'order' | 'invoice' | 'receipt' | 'reward';
 
@@ -21,19 +26,8 @@ const PREFIX: Record<SerialKind, string> = {
   order: 'ORD', invoice: 'INV', receipt: 'RCP', reward: 'RWD',
 };
 
-const LOCAL_KEY = 'snd.localSerialCounter';
-
-/**
- * Monotonic per-device counter so two offline documents never collide.
- *
- * Synchronous on purpose: read and write now happen in one tick, so two
- * documents created back to back with no signal cannot both read the counter
- * before either has incremented it.
- */
-export function nextLocalRef(kind: SerialKind): string {
-  const n = (kv.getNumber(LOCAL_KEY) ?? 0) + 1;
-  kv.set(LOCAL_KEY, n);
-  // Device-scoped, obviously-temporary shape: LOCAL-ORD-7
+/** Device-scoped, obviously-temporary shape: LOCAL-ORD-7. */
+export function localRef(kind: SerialKind, n: number): string {
   return `LOCAL-${PREFIX[kind]}-${n}`;
 }
 

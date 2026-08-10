@@ -17,6 +17,7 @@ import {
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Area } from '../../data/models';
+import { bookersOf } from '../../lib/assignment';
 
 export function AreasScreen() {
   const store = useStore();
@@ -47,8 +48,13 @@ export function AreasScreen() {
   /** Whose territory, appended only once the company has more than one booker. */
   const bookerLabel = (area: Area): string => {
     if (store.bookers.length < 2) return '';
-    if (!area.bookerId) return ' • unclaimed';
-    return ` • ${store.bookers.find(b => b.id === area.bookerId)?.name ?? 'removed booker'}`;
+    const ids = bookersOf(area);
+    if (!ids.length) return ' • unclaimed';
+    // Two names fit a row; past that the count reads better than a truncated list.
+    if (ids.length > 2) return ` • ${ids.length} bookers`;
+    return ` • ${ids
+      .map(id => store.bookers.find(b => b.id === id)?.name ?? 'removed booker')
+      .join(', ')}`;
   };
 
   /**
@@ -235,24 +241,39 @@ export function AreasScreen() {
               {area.active && store.bookers.length > 1 && (
                 <>
                   <Text style={styles.fieldLabel}>Booked by</Text>
+                  {/*
+                    Several bookers on one round is allowed: tapping a name adds
+                    or removes that man, it does not replace whoever was there.
+                    A dense bazaar worked by two people on the same morning is a
+                    real round, and the owner is the one who decides it.
+                  */}
                   <View style={styles.rowWrap}>
-                    {store.bookers.map(b => (
-                      <Chip
-                        key={b.id}
-                        small
-                        label={b.name}
-                        selected={area.bookerId === b.id}
-                        onPress={isBusy(`booker-${area.id}`) ? undefined : () => run(
-                          `booker-${area.id}`,
-                          () => store.setAreaBooker(area.id, area.bookerId === b.id ? null : b.id),
-                        )}
-                      />
-                    ))}
+                    {store.bookers.map(b => {
+                      const current = bookersOf(area);
+                      const on = current.includes(b.id);
+                      return (
+                        <Chip
+                          key={b.id}
+                          small
+                          label={b.name}
+                          selected={on}
+                          onPress={isBusy(`booker-${area.id}`) ? undefined : () => run(
+                            `booker-${area.id}`,
+                            () => store.setAreaBooker(
+                              area.id,
+                              on ? current.filter(id => id !== b.id) : [...current, b.id],
+                            ),
+                          )}
+                        />
+                      );
+                    })}
                   </View>
                   <Text style={styles.hint}>
-                    {area.bookerId
-                      ? 'This round is on his route screen, and his visit cycle is measured over it.'
-                      : 'Unclaimed — it shows up for any booker who has no round of his own.'}
+                    {bookersOf(area).length > 1
+                      ? 'All of them see this round, and each one\'s visit cycle is measured over the rounds he is on. They will not be shown who has already been to a shop, so split the street between them yourself.'
+                      : bookersOf(area).length === 1
+                        ? 'This round is on his route screen, and his visit cycle is measured over it. Tap another name to put a second booker on it as well.'
+                        : 'Unclaimed — it shows up for any booker who has no round of his own.'}
                   </Text>
                 </>
               )}
@@ -326,5 +347,8 @@ const styles = StyleSheet.create({
     fontSize: font.body + 1, marginBottom: space.m, color: color.text,
   },
   hint: { fontSize: font.sub, color: color.textSub, lineHeight: font.sub + 6, marginBottom: space.m },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.s, marginTop: space.s },
+  rowWrap: {
+    flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+    gap: space.s, marginTop: space.s,
+  },
 });

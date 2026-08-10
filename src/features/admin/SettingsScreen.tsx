@@ -10,6 +10,7 @@ import {
 } from '../../components/ui';
 import { KeyboardScreen } from './AdminScreens';
 import { useStore } from '../../data/store';
+import { LogoPicker } from './LogoPicker';
 
 /**
  * A number the owner TYPES, in place of a row of chips.
@@ -131,6 +132,7 @@ export function SettingsScreen() {
           onChange={t => { setAddress(t); store.updateSettings({ address: t }); }} />
         <Field label="Phone" value={phone} placeholder="03xx-xxxxxxx" keyboardType="phone-pad"
           onChange={t => { setPhone(t); store.updateSettings({ phone: t }); }} />
+        <LogoPicker />
         {/*
           Only ever shown when it is set or when the owner goes looking: a
           business that is not registered should not be asked for a tax number
@@ -147,15 +149,45 @@ export function SettingsScreen() {
       <SectionLabel>Sales tax</SectionLabel>
       <Card style={styles.tightCard}>
         <NumberRow
-          icon="receipt-text-outline" label="Sales tax on bills" last
+          // `receipt-text-outline` is not in the bundled MaterialCommunityIcons
+          // font — a name the font does not carry renders as "?", silently, on
+          // the device only. Check `glyphmaps/MaterialCommunityIcons.json`
+          // before using an icon name rather than trusting the MDI website,
+          // which lists icons newer than this package ships.
+          icon="percent-outline" label="Sales tax on bills"
           value={s.taxPercent} suffix="%" min={0} max={100}
           onCommit={v => store.updateSettings({ taxPercent: v })}
         />
         <Text style={styles.taxHint}>
           {s.taxPercent > 0
-            ? `Added on top of the discounted amount and shown as its own line on every bill. Sales in your reports stay net of it — tax you collect is not money you earned.`
+            ? 'Shown as its own line on every bill. Sales in your reports stay net of it — tax you collect is not money you earned.'
             : 'Off. Leave it off unless you are registered and must charge it — bills stay exactly as they are today.'}
         </Text>
+        {/*
+          Only worth asking once a rate is set: at 0% the two answers are the
+          same number, and a switch with one possible outcome is a question the
+          owner has to think about for nothing.
+        */}
+        {s.taxPercent > 0 && (
+          <>
+            <SwitchRow
+              icon="cash-multiple"
+              title="Booker types the final price"
+              sub={s.priceIncludesTax
+                ? `Tax is taken out of what he types — 700 means the shop pays 700`
+                : `Tax goes on top of what he types — 700 means the shop pays ${
+                  Math.round(700 * (1 + s.taxPercent / 100))}`}
+              value={!!s.priceIncludesTax}
+              onToggle={() => store.updateSettings({ priceIncludesTax: !s.priceIncludesTax })}
+              last
+            />
+            <Text style={styles.taxHint}>
+              {s.priceIncludesTax
+                ? `When your booker agrees a price across the counter, that is the whole figure — the bill splits Rs ${s.taxPercent}% of it back out as sales tax and shows both lines. Use this if you quote shops one number.`
+                : 'When your booker agrees a price, sales tax is added to it afterwards, so the shop pays more than the figure they discussed. This is how a trade invoice is normally written.'}
+            </Text>
+          </>
+        )}
       </Card>
 
       <SectionLabel>Daily rules</SectionLabel>
@@ -197,6 +229,21 @@ export function SettingsScreen() {
           sub="The shop gets the order PDF at booking"
           value={s.sendConfirmations}
           onToggle={() => store.updateSettings({ sendConfirmations: !s.sendConfirmations })}
+        />
+        {/*
+          Default ON, and absent means ON: the booker is the only person who
+          ever stands in the shop, so he is the only one who finds out the
+          number is wrong. An owner who wants those edits to himself turns it
+          off. The shop's NAME is never his either way.
+        */}
+        <SwitchRow
+          icon="storefront-outline"
+          title="Booker can edit shop details"
+          sub={s.bookerEditsShops === false
+            ? 'Off — only you change a shop. He can still register a new one.'
+            : 'Phone, owner\'s name, area and counter staff. Never the name or the balance.'}
+          value={s.bookerEditsShops !== false}
+          onToggle={() => store.updateSettings({ bookerEditsShops: s.bookerEditsShops === false })}
         />
         <SwitchRow
           icon="bank-outline"

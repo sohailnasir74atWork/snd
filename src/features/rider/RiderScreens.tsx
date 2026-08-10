@@ -9,7 +9,7 @@ import {
   Alert, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, ProvisionalNote,
   SectionLabel, Tag, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
@@ -17,9 +17,11 @@ import type { Order } from '../../data/models';
 import { todayKey } from '../../data/models';
 import { computeTotals } from '../../lib/order';
 import { amountInWordsLine } from '../../lib/money';
+import { isProvisional } from '../../lib/serials';
 import { strings } from '../../i18n/strings';
 import { billHtml } from '../../documents/templates';
 import { sharePdf } from '../../documents/share';
+import { documentLogo } from '../../lib/logoCache';
 import { PinShopScreen } from '../shops/PinShopScreen';
 import { ShopPlaceChips } from '../shops/ShopPlace';
 
@@ -183,7 +185,6 @@ type PayChoice = 'full' | 'khata' | 'part' | 'none';
 /** Matches CloseOutInput['mode'] — the shape the store already stores. */
 type PayMode = 'cash' | 'transfer' | 'cheque';
 
-const QUICK_ADDS = [500, 1000, 2000, 5000] as const;
 
 /** Whole rupees only, never negative, never more than the shop actually owes. */
 function clampMoney(value: number, max: number): number {
@@ -259,9 +260,6 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
   const mode: PayMode = modeOptions.includes(modeChoice) ? modeChoice : 'cash';
   const modeLabel = (v: PayMode) => (v === 'cash' ? 'Cash' : v === 'transfer' ? 'Bank transfer' : 'Cheque');
 
-  const addToPart = (add: number) =>
-    setPartText(String(clampMoney(partAmount + add, maxPayable)));
-
   const closeOut = async () => {
     // The invoice and receipt numbers need a server round-trip. A second tap
     // billed the shop twice AND banked the same cash twice.
@@ -306,6 +304,7 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
     if (sharing) return;
     setSharing(true);
     try {
+      const logo = await documentLogo(store.settings.logoUrl);
       const billedOrder: Order = {
         ...order, items, billedTotals: billed, invoiceNo,
         deliveredAt: Date.now(), status: 'delivered',
@@ -314,6 +313,7 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
         settings: store.settings,
         order: billedOrder,
         shop,
+        logo,
         amountInWordsLine: amountInWordsLine(billed.grandTotal),
         received: Math.min(payAmount, billed.grandTotal),
         previousBalance,
@@ -326,6 +326,7 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
         html,
         invoiceNo,
         `Bill ${invoiceNo} — Rs ${billed.grandTotal.toLocaleString()}.`,
+        { phone: shop?.phone ?? order.shopSnapshot.phone, countryCode: store.settings.countryCode },
       );
     } catch (e) {
       Alert.alert('Could not share', e instanceof Error ? e.message : String(e));
@@ -341,6 +342,7 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
         <Text style={styles.doneTitle}>Delivered</Text>
         <Text style={styles.big}>Bill {result.invoiceNo}</Text>
         {result.receiptNo && <Text style={styles.big}>Receipt {result.receiptNo}</Text>}
+        {(isProvisional(result.invoiceNo) || isProvisional(result.receiptNo)) && <ProvisionalNote />}
         <Money amount={billed.grandTotal} size={font.h1} bold />
         <Text style={styles.hint}>The bill covers exactly what was delivered — the ledger says the same number.</Text>
         <PrimaryButton
@@ -437,13 +439,11 @@ function CloseOutScreen({ order, onDone }: { order: Order; onDone: () => void })
               <Text style={styles.fieldHint}>
                 Everything he owes today is Rs {maxPayable.toLocaleString()}
               </Text>
-              <View style={styles.rowWrap}>
-                <Chip small label="+ half" onPress={() => addToPart(Math.floor(maxPayable / 2))} />
-                {QUICK_ADDS.map(v => (
-                  <Chip key={v} small label={`+ ${v.toLocaleString()}`} onPress={() => addToPart(v)} />
-                ))}
-                {partText ? <Chip small label="Clear" danger onPress={() => setPartText('')} /> : null}
-              </View>
+              {/* The "+ half / + 500 / + 1,000 …" row is gone. The rider is
+                  holding the notes he was just handed and knows the number; a
+                  ladder of buttons that ADDS to whatever is already in the box
+                  is slower than typing it and, tapped one too many times, banks
+                  a figure nobody counted. The field takes the amount directly. */}
             </View>
           )}
 
@@ -536,6 +536,7 @@ export function RiderHistoryScreen() {
         settings: store.settings,
         order: o,
         shop,
+        logo: await documentLogo(store.settings.logoUrl),
         amountInWordsLine: amountInWordsLine(o.billedTotals.grandTotal),
         received: o.amountPaid,
         previousBalance: 0, // history re-send: today's balance is not that day's
@@ -543,6 +544,7 @@ export function RiderHistoryScreen() {
       await sharePdf(
         html, o.invoiceNo,
         `Bill ${o.invoiceNo} — Rs ${o.billedTotals.grandTotal.toLocaleString()}.`,
+        { phone: shop.phone, countryCode: store.settings.countryCode },
       );
     } catch (e) {
       Alert.alert('Could not share', e instanceof Error ? e.message : String(e));
@@ -639,10 +641,15 @@ export function RiderHandoverScreen() {
         </View>
       ) : (
         <Card>
-          <Tag
-            label={store.day.handoverConfirmed ? 'CONFIRMED' : 'WAITING'}
-            tone={store.day.handoverConfirmed ? 'success' : 'warn'}
-          />
+          {/* The one tag in the app inside a COLUMN — without this wrapper it
+              would centre itself across the card instead of sitting above the
+              line it labels. */}
+          <View style={styles.tagWrap}>
+            <Tag
+              label={store.day.handoverConfirmed ? 'CONFIRMED' : 'WAITING'}
+              tone={store.day.handoverConfirmed ? 'success' : 'warn'}
+            />
+          </View>
           <Text style={styles.statusText}>
             {store.day.handoverConfirmed
               ? 'Confirmed by the owner — cash is company money now.'
@@ -671,6 +678,7 @@ const styles = StyleSheet.create({
   qty: { fontSize: font.body, fontWeight: '700', color: color.text },
   meta: { fontSize: font.sub, color: color.textSub },
   hint: { fontSize: font.sub, color: color.textSub, marginTop: space.s, textAlign: 'center' },
+  tagWrap: { alignSelf: 'flex-start' },
   statusText: { fontSize: font.sub, color: color.textSub, marginTop: space.s },
   rowBetween: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.xs,

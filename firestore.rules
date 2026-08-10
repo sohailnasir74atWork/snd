@@ -124,12 +124,21 @@ service cloud.firestore {
       match /shops/{shopId} {
         allow read: if inCompany(companyId);
         allow create: if isAdmin(companyId) || isBooker(companyId);
-        // A booker may keep shop details and flag a collection — but he can
-        // never move the balance; that is what payments are for (FR-7.10).
+        // A booker may keep shop details and flag a collection — but never the
+        // balance (that is what payments are for, FR-7.10) and never the NAME.
+        //
+        // The name is the shop's identity everywhere it is read: every order
+        // freezes a `shopSnapshot.name` at booking, so a shop renamed under a
+        // report makes today's rows disagree with last month's for reasons
+        // nobody can reconstruct. The booker is also the person most likely to
+        // "fix" it to whatever the board outside says this month. Owner-only,
+        // and enforced HERE rather than only hidden on his screen — the app
+        // has a Settings switch for shop edits, but a switch a rule cannot
+        // read is a preference, and identity is a right.
         allow update: if isAdmin(companyId)
                       || (isBooker(companyId)
                           && !request.resource.data.diff(resource.data)
-                                .affectedKeys().hasAny(['outstanding']))
+                                .affectedKeys().hasAny(['outstanding', 'name']))
                               // rider may only clear/set collection flags in transactions
                               || (isRider(companyId)
                                   && request.resource.data.diff(resource.data)

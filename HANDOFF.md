@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09
+**Written:** 2026-08-09 · **Last updated:** 2026-08-10
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -11,16 +11,16 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 5 commits ahead of `main` and **not merged or pushed** — see §1b |
+| Branch | **`booker-screens-pass`**, 7 commits ahead of `main` and **not merged or pushed** — see §1b, §1c |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 16` / `versionName "2.1"` |
+| Version | `versionCode 16` / `versionName "2.1"` — the AAB predates §1c, so it does **not** contain it |
 | TypeScript | 0 errors |
-| ESLint | 0 errors (88 warnings, all pre-existing house style: `no-void`, `no-bitwise`, inline styles) |
-| Unit tests | **104 / 104**, 10 suites |
-| Rules tests | **240 / 240**, 2 suites — `npm run test:rules` |
+| ESLint | 0 errors (101 warnings, all house style: `no-void`, `no-bitwise`, inline styles) |
+| Unit tests | **132 / 132**, 11 suites |
+| Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
-| Device | debug build driven on the emulator (§1b); ❗ **no release build driven by hand since the SaaS round** — see §4.1 before publishing |
+| Device | debug build driven on the emulator (§1b); ❗ **nothing in §1c has been driven anywhere but the emulator, and no release build by hand since the SaaS round** — see §4.1 before publishing |
 
 > **There is no production.** The app is not on a public track and there is no
 > real customer data anywhere. "Evolver Skin Care"
@@ -59,14 +59,22 @@ stay on `nam5` for now — that is a decision, not an oversight.
   **2026-08-09 ahead of the branch that needs it**, `allow delete` on shops for
   an admin (§1b). The live project therefore permits shop deletion whether or
   not `booker-screens-pass` ever ships. Nothing in the installed app calls it.
+  - **2026-08-10 — a booker may no longer write `shops.name`.** Owner-only, on
+    the same clause that already refused `outstanding`. ⚠️ This is the ONE
+    backend change of the round that is **not** backward-compatible: it takes a
+    permission away, so any older build that lets a booker rename a shop now
+    fails that write. Deployed deliberately, with the owner's say-so, because
+    there is no production and he is the only user. Covered by 3 rules tests.
 - **`firestore.indexes.json`** — 3 new composite indexes, all `READY`
 - **Billing budget** `snd-manager-guard` — $25/month, scoped to this project
   only (the `blox_fruit` billing account carries other projects), alerting at
   50/90/100/150%
 
-> The backend is AHEAD of the installed app, deliberately and safely: every
-> change is backward-compatible with `versionCode 13` in the field, which is
-> what makes it safe to deploy the backend before the app is device-tested.
+> The backend is AHEAD of the installed app, deliberately: every change is
+> backward-compatible with `versionCode 13` in the field **except the shops
+> `name` restriction above**, which is what makes it safe to deploy the backend
+> before the app is device-tested. Check that assumption before the next deploy
+> rather than inheriting it — it stopped being free on 2026-08-10.
 
 ---
 
@@ -83,12 +91,25 @@ is now a ladder: `Area.riderId` → `settings.defaultRiderId` →
 legitimate outcome; those orders appear on the owner's Action screen as
 **Unassigned**. Logic in `src/lib/assignment.ts`, tested.
 
-**Many bookers.** `Area.bookerId` gives a round a territory. `store.routeShops`
-is what a booker's screens read. Three cases: nothing configured → everyone
-sees everything (so a one-booker business is unchanged); he has rounds → only
-his; others have rounds and he does not → the rounds nobody covers, never an
-empty screen. Territory is a CLIENT scope, not a rule — covering a colleague's
-patch is normal, and the shop picker searches company-wide on purpose.
+**Many bookers.** `Area.bookerIds` gives a round its territory.
+`store.routeShops` is what a booker's screens read. Three cases: nothing
+configured → everyone sees everything (so a one-booker business is unchanged);
+he has rounds → only his; others have rounds and he does not → the rounds
+nobody covers, never an empty screen. Territory is a CLIENT scope, not a rule —
+covering a colleague's patch is normal, and the shop picker searches
+company-wide on purpose.
+
+> **A round may name SEVERAL bookers** (2026-08-10, owner's decision), so two
+> men can work one bazaar on the same morning and both see it. Read it only
+> through `bookersOf(area)` in `lib/assignment.ts` — that is the one place that
+> knows the single `Area.bookerId` it replaced still exists. The old field is
+> read, never written: `setAreaBooker(id, bookerIds[])` writes the whole array
+> and deletes the legacy key in the SAME write, because `bookersOf` prefers the
+> array and two writes would blink the old booker off his own round in between.
+> Nothing splits the street between them — both see every shop on the round,
+> and the screen says so. `removeEmployee` pulls one uid out of the array
+> rather than deleting the field, or removing one man would take the round off
+> his colleagues' screens too.
 
 **The 100-day visit cycle.** `cycleDays = shops / shopsPerDay` was fed every
 shop in the company: 2,000 shops at 20/day meant a shop was "due" once a
@@ -121,18 +142,99 @@ At rate 0 it returns exactly what it always did, no `taxTotal` key — asserted
 by a test. Sales figures use `netOfTax()`; profit needed nothing because
 `profitFor` works per line from `unitPrice`.
 
+> **`settings.priceIncludesTax`** (2026-08-10, owner's decision) decides what a
+> price the booker TYPES means. Off (the default, and what every existing
+> company keeps): he types the goods and tax goes on top — 700 at 17% means the
+> shop pays 819. On: he types the final figure and the tax is split back out of
+> it — 700 means the shop pays 700, of which Rs 102 is tax and Rs 598 goods.
+> Both write the SAME order — a discount percent off the subtotal — so the
+> rider's re-bill, the reports and the printed bill need not know which mode it
+> was taken in. `discountPercentForTotal` inverts it, and it rounds **down**:
+> at 17% no basket bills exactly 15,000 (12,820 → 14,999, 12,821 → 15,001), and
+> a shop asked for a rupee more than the booker promised is an argument in the
+> street. The Settings row hides itself at rate 0, where the question has one
+> answer.
+
+**No standing discount.** `Shop.standingDiscountPercent` is dead — read by
+nothing, written by nothing, left on old documents. It applied itself to every
+order for that shop without appearing on the order screen, the confirmation or
+the bill: the same objection that removed the percent chips. Do not wire it
+back up without putting the rate where the booker can see it.
+
+---
+
+## 1c. The 2026-08-10 round — owner's requests, the seventh commit
+
+The seventh and newest commit on the branch — `git log -1` on
+`booker-screens-pass` while nothing newer has landed. No hash is quoted here on
+purpose: this section ships INSIDE that commit, so any hash written in it names
+the amend before last and is wrong the moment it is read.
+
+One commit rather than seven, because the eight changes interleave in the same
+screens and a per-theme split would have produced commits that claim one thing
+and contain another. The message breaks them out; so does this section.
+
+Green locally (0 / 0 / 132 / 243) and installed on the emulator. **None of it
+has been driven on a real phone**, and §4.1 has grown from five checks to eight
+because of it.
+
+**Counter staff moved onto the shop, properly.** The register form on the
+booker's My Day is gone — its third question was "which shop does he work at?",
+asked of a man standing inside it. They are registered on the Add-shop form and
+edited through `CounterStaffSection` behind Route → *Edit details*, which is
+where the owner's shop editor already kept them. `ShopInput.counterStaff` lets
+a shop be created with them in one write.
+
+**A booker cannot rename a shop.** Rules-enforced (see §1 above), and the field
+is read-only on his form. Everything else about a shop is still his to fix —
+`settings.bookerEditsShops` (default ON, absent means ON) takes that UI away if
+the owner wants it, but that switch is a CLIENT scope like territory: a rule
+cannot read a settings document without a lookup and these rules do none. The
+name is a right; the rest is a preference. Do not confuse the two.
+
+**A logo on the bill.** `settings.logoUrl` is a CDN string; the bytes are
+cached per device in `lib/logoCache.ts` and embedded as a `data:` URI, because
+`react-native-html-to-pdf` fetches a remote `<img>` and the rider printing it
+is standing in a street. Size standard and its reasoning in `lib/logo.ts`
+(≥200px or it prints blurred, downscaled to 512, ≤200 KB). Absent is normal:
+the header falls back to the brand name, and a bill never fails over a picture.
+
+**WhatsApp opens the shop's own chat.** `sharePdf` takes a recipient and uses
+`Share.shareSingle` with `whatsAppNumber`; react-native-share's Android code
+starts `com.whatsapp.Conversation` first, so it works for a number that was
+never a contact. The old comment in that file called this a platform limit — it
+is not. The plain share sheet is still the fallback and must stay one.
+
+**Two icons did not exist.** `receipt-text-outline` and `truck-alert-outline`
+are not in the bundled MaterialCommunityIcons font and drew a "?" on device,
+silently. Check `glyphmaps/MaterialCommunityIcons.json`, never the MDI website,
+which lists icons newer than this package ships.
+
+**`Tag` no longer sets its own `alignSelf`.** It carried `flex-start`, which
+beats the parent's `alignItems` — so a pill overruled every container it was
+dropped into: top-aligned beside a Chip (NO PIN), left-aligned inside a
+right-aligned column (Employees). Every container holding one now states an
+alignment; the one tag that lives in a column wraps itself in a `flex-start`
+View. Do not put `alignSelf` back on it.
+
+**`StoreApi.demo`.** True only in preview. Screens must NOT branch on it — that
+is how the two stores drift — and it exists for the one thing preview cannot
+do: reach a Cloud Function. Today that is the logo upload, which preview fakes
+locally so the demo's bills carry a logo.
+
 The app builds are **not** all uploaded. The owner uploaded `versionCode 8`; 9 through 13
 were handed over as AABs and may or may not have been published.
 
 ---
 
-## 1b. The booker round — `booker-screens-pass`, five commits, NOT MERGED
+## 1b. The booker round — six of the seven commits, NOT MERGED
 
 Everything below is on that branch. `main` is still at `77ac64e`. It is green
 locally (0 / 0 / 104 / 240) but has never been through CI, and CI is the only
 thing that runs a real Metro bundle — see §5.
 
 ```
+4104476  Release 2.1 (versionCode 16), and a handoff that matches it again
 655e5dd  One shop list: the round, and everything else behind a magnifier
 8f4bc33  Owner screens: type the rate, require the area, delete the shop
 475b6ad  The owner may delete a shop, and booking starts on Tomorrow
@@ -355,8 +457,17 @@ two shops visited, because marking one puts the next under the same button.
    | 4 | Settings → Sales tax → 17%, deliver, open the bill PDF; then set it back to None | The tax line, and that sales in Reports stay net of it. New Order now shows the tax too, so the booker's TOTAL and the stored order must agree. |
    | 5 | Open the price chevron, type a price below the cap, book | The typed-price field (§1b). At the cap it clamps; the bill must charge the price on screen. |
 
-   If all four behave, the round is safe to publish. If one misbehaves, that
+   | 6 | Settings → Sales tax 17% → turn ON "Booker types the final price", type 700, book | The tax-inclusive mode (§1c). The card must read TOTAL 700 with a tax line inside it, not 819, and the stored order must agree. |
+   | 7 | Send an order confirmation from the booker's confirmation screen | WhatsApp must open **that shop's chat**, not the contact list (§1c). Falls back to the share sheet if WhatsApp is absent — that is correct, not a failure. |
+   | 8 | Set a logo in Settings, then deliver and open the bill PDF | The logo pipeline (§1c). Then turn the phone's data off and open a bill again: the logo must still be there, because it is embedded, not fetched. |
+
+   If all of them behave, the round is safe to publish. If one misbehaves, that
    is the bug — start there, not in the rules.
+
+   > Checks 6–8 were added on 2026-08-10 with §1c. The list is now eight
+   > because the round grew, not because the earlier five got easier: the
+   > tax mode changes what a bill totals, and the logo changes what a bill
+   > contains. Neither has been on a real phone.
 2. **Untested at volume.** Nobody has seeded a tenant with 40,000 orders and
    opened every screen on a 3GB device. Until that passes, the memory claim
    behind the windowing work is reasoning, not measurement.
@@ -420,6 +531,32 @@ two shops visited, because marking one puts the next under the same button.
    keeps a normal morning under twenty mounted cards — but a booker who taps
    *Show more* five times is back to a hundred. `FlatList` is the real fix and is
    now a small change, because each list is a single flat capped array.
+14. **A provisional serial is never promoted.** Offline sync itself is sound —
+   Firestore disk persistence is on (RNFirebase's default; nothing turns it
+   off), no field flow awaits the server, sign-in works from the cached token's
+   claims, and `flushPendingWrites` blocks sign-out while the queue is dirty
+   ([App.tsx:42](App.tsx#L42)). The gap is only in the NUMBER. `serial()` races
+   the counters transaction against a 4-second timeout and falls back to
+   `LOCAL-ORD-7` from an MMKV device counter, and the header of
+   `firestoreStore.tsx` says those "are promoted at sync" — **nothing
+   implements that.** No client code rewrites the serial and none of the eight
+   Cloud Functions touches `orderNo`/`invoiceNo`/`receiptNo`, so a document
+   written with no signal keeps its local reference permanently.
+
+   The reference is at least unique — the counter is per-device and
+   synchronous, so two documents made back to back offline cannot collide —
+   and since 2026-08-10 every screen and every printed sheet that shows one
+   marks it `PROVISIONAL` and says where it came from, rather than passing it
+   off as a company serial. That closes the honesty half; the promotion half is
+   still open.
+
+   Promotion is not a small change, and it is a business decision before it is
+   a technical one: the shop is already holding paper with the old number on
+   it, so a server-side rewrite means the phone and the customer's copy
+   disagree. The cheap alternative is to keep the local reference as the
+   permanent one and make it collision-proof across devices (seed the counter
+   with a short device id), which needs no promotion at all. Decide which
+   before building either.
 
 ---
 
@@ -503,8 +640,8 @@ cd android && ./gradlew bundleRelease
 | Also at | `android/app/build/outputs/bundle/release/app-release.aab` |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3 |
-| Built | 2026-08-09, from `booker-screens-pass` — **not from `main`** |
-| Needs | the rules deployed — done, including the shops `delete` rule |
+| Built | 2026-08-09, from `booker-screens-pass` — **not from `main`**, and **before §1c**. Rebuild before publishing or none of 2026-08-10 is in it. |
+| Needs | the rules deployed — done, including the shops `delete` rule and the `name` restriction (2026-08-10) |
 
 **Not published, and not yet safe to publish.** See §4.1 — the four device
 checks have not been run. Building the file is safe; putting it on a track

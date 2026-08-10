@@ -64,6 +64,62 @@ export function discountPercentForPrice(subTotal: number, price: number, maxPerc
 }
 
 /**
+ * What a shop actually pays on `taxable` rupees of goods — the same arithmetic
+ * `computeTotals` does, exposed so a screen can quote a tax-inclusive figure
+ * without rebuilding an item list to ask.
+ */
+export function totalWithTax(taxable: number, taxPercent = 0): number {
+  return taxable + Math.round((taxable * taxPercent) / 100);
+}
+
+/**
+ * The discount percent that makes the shop's FINAL total — tax included —
+ * come to exactly `total`.
+ *
+ * The tax-exclusive twin above inverts one multiplication. This one has to
+ * invert two roundings: `computeTotals` rounds the discount to whole rupees
+ * and then rounds the tax on what is left, so dividing by (1 + rate) lands
+ * within a rupee of the answer but not reliably ON it.
+ *
+ * Worse, some totals cannot be charged AT ALL. At 17% the tax on 12,820 rupees
+ * of goods rounds to 2,179 and on 12,821 to 2,180 — so a bill comes to 14,999
+ * or to 15,001, and there is no basket that makes exactly 15,000. When the
+ * typed figure falls in one of those gaps this takes the nearest total BELOW
+ * it, never above: the booker has given his word on a number across a counter,
+ * and a shop asked for one rupee more than it agreed is the app calling him a
+ * liar. Undercharging by a rupee is invisible; overcharging is an argument.
+ *
+ * Clamped between the owner's cap and full price, both measured WITH tax,
+ * because that is the pair of numbers the booker is quoting between.
+ */
+export function discountPercentForTotal(
+  subTotal: number,
+  total: number,
+  maxPercent: number,
+  taxPercent = 0,
+): number {
+  if (subTotal <= 0) return 0;
+  const floorTaxable = lowestPrice(subTotal, maxPercent);
+  const clamped = Math.min(
+    Math.max(total, totalWithTax(floorTaxable, taxPercent)),
+    totalWithTax(subTotal, taxPercent),
+  );
+  const estimate = Math.round(clamped / (1 + taxPercent / 100));
+  // The cap always satisfies "at or below", so it is a safe starting answer.
+  let taxable = floorTaxable;
+  // ±2 is generous: rounding twice can only ever put the estimate out by one.
+  for (const candidate of [estimate - 2, estimate - 1, estimate, estimate + 1, estimate + 2]) {
+    if (candidate < floorTaxable || candidate > subTotal) continue;
+    const charged = totalWithTax(candidate, taxPercent);
+    if (charged === clamped) { taxable = candidate; break; } // exact wins outright
+    if (charged < clamped && candidate > taxable) taxable = candidate;
+  }
+  // Unrounded for the same reason as discountPercentForPrice: computeTotals
+  // rounds the rupees, so an exact percent reproduces the exact taxable.
+  return ((subTotal - taxable) / subTotal) * 100;
+}
+
+/**
  * A stored discount percent as a human reads it: `5.4054…` -> `5.4`, `5` -> `5`.
  * Display only — never feed this back into `computeTotals`, which needs the
  * exact value to reproduce the price that was agreed.

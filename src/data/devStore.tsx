@@ -37,7 +37,7 @@ const pin = (lat: number, lng: number) => ({ lat, lng, accuracyM: 8, savedAt: no
 
 const seedShops: Shop[] = [
   { id: 's1', name: 'Beauty Corner', ownerName: 'Rashid', phone: '923001234567', area: 'Saddar',
-    outstanding: 2300, standingDiscountPercent: 0, active: true,
+    outstanding: 2300, active: true,
     // Counter staff live on their shop now — same as the real store.
     counterStaff: [
       { id: 'rs1', name: 'Salman (counter)', phone: '923001112233', active: true, addedBy: 'booker' },
@@ -46,12 +46,12 @@ const seedShops: Shop[] = [
     lastVisitAt: now - 8 * 86400_000,
     lastOrderSummary: [{ productId: 'p1', qty: 6 }, { productId: 'p2', qty: 4 }] },
   { id: 's2', name: 'Glow Mart', ownerName: 'Naveed', phone: '923009876543', area: 'Saddar',
-    outstanding: 0, standingDiscountPercent: 0, active: true,
+    outstanding: 0, active: true,
     location: pin(31.5595, 74.3310),
     lastVisitAt: now - 9 * 86400_000,
     lastOrderSummary: [{ productId: 'p2', qty: 12 }] },
   { id: 's3', name: 'City Cosmetics', ownerName: 'Imran', phone: '923215551234', area: 'Cantt',
-    outstanding: 6439, standingDiscountPercent: 2, active: true,
+    outstanding: 6439, active: true,
     lastVisitAt: now - 15 * 86400_000 },
 ];
 
@@ -108,14 +108,26 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
   const api: StoreApi = {
     ...state,
     ready: true,
+    demo: true,
     // Nothing in preview mode ever leaves the phone, so nothing is ever queued.
     pendingWrites: 0,
     async flushPendingWrites() { return true; },
     // Preview stand-ins: the demo's single rider is the only staff member.
     staffDays: state.day.handedOver ? [{ ...state.day, staffId: 'rider' }] : [],
-    staffNames: { rider: 'Delivery Rider (demo)', booker: 'Order Booker (demo)' },
+    staffNames: {
+      rider: 'Delivery Rider (demo)',
+      booker: 'Order Booker (demo)',
+      booker2: 'Second Booker (demo)',
+    },
     riders: [{ id: 'rider', name: 'Delivery Rider (demo)' }],
-    bookers: [{ id: 'booker', name: 'Order Booker (demo)' }],
+    // TWO bookers on purpose. Areas hides the "Booked by" row entirely while a
+    // company has only one — correct for a one-man business, but it meant the
+    // demo could never show that a round can be given to somebody, or shared
+    // between two people. The rounds are left unclaimed so the owner tries it.
+    bookers: [
+      { id: 'booker', name: 'Order Booker (demo)' },
+      { id: 'booker2', name: 'Second Booker (demo)' },
+    ],
     // One booker covers the whole demo, so his round is every live shop.
     routeShops: state.shops.filter(s => s.active),
     // The demo books everything to its one rider, so nothing is ever orphaned.
@@ -350,12 +362,22 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       }));
     },
 
-    addShop({ openingBalance, location, ...s }: ShopInput) {
+    addShop({ openingBalance, location, counterStaff, ...s }: ShopInput) {
       setState(st => ({
         ...st,
         shops: [...st.shops, {
           id: `s${Date.now()}`, outstanding: openingBalance && openingBalance > 0 ? openingBalance : 0,
-          active: true, standingDiscountPercent: s.standingDiscountPercent ?? 0, ...s,
+          active: true, ...s,
+          // Stamped by the store, exactly as firestoreStore does it.
+          ...(counterStaff?.length
+            ? {
+              counterStaff: counterStaff.map((c, i) => ({
+                id: `cs_${Date.now().toString(36)}_${i}`,
+                name: c.name, active: true, addedBy: 'demo',
+                ...(c.phone ? { phone: c.phone } : {}),
+              })),
+            }
+            : {}),
           // Stamped by the store, exactly as firestoreStore does it.
           ...(location ? { location: { ...location, savedAt: Date.now(), savedBy: 'demo' } } : {}),
         }],
@@ -427,10 +449,15 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       }));
     },
 
-    setAreaBooker(id, bookerId) {
+    // Written to mirror firestoreStore exactly, including dropping the legacy
+    // single `bookerId` in the same step — a difference between the two stores
+    // is the shape of bug that hid for two rounds (HANDOFF §3).
+    setAreaBooker(id, bookerIds) {
       setState(st => ({
         ...st,
-        areas: st.areas.map(a => (a.id === id ? { ...a, bookerId: bookerId ?? undefined } : a)),
+        areas: st.areas.map(a => (a.id === id
+          ? { ...a, bookerIds: bookerIds.length ? bookerIds : undefined, bookerId: undefined }
+          : a)),
       }));
     },
 
@@ -474,6 +501,11 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
             : st.orders,
         };
       });
+    },
+
+    // Mirrors firestoreStore exactly, clearing included.
+    setLogo(url) {
+      setState(st => ({ ...st, settings: { ...st.settings, logoUrl: url ?? undefined } }));
     },
 
     updateSettings(patch) {

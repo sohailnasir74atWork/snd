@@ -40,7 +40,8 @@ import { computeTotals } from '../lib/order';
 import { allocateFifo } from '../lib/fifo';
 import { mergeById, windowStartDate, windowStartKey } from '../lib/window';
 import { riderForShop, shopsForBooker, unassignedOf } from '../lib/assignment';
-import { formatSerial, nextLocalRef, type SerialKind } from '../lib/serials';
+import { formatSerial, type SerialKind } from '../lib/serials';
+import { nextLocalRef } from '../lib/kv';
 import { uploadPhotoBase64 } from '../lib/storage';
 import type { Role, SessionUser } from '../app/types';
 
@@ -770,6 +771,7 @@ export function FirestoreStoreProvider({
     staffDays, staffNames, expenses, fixedCharges,
     rewardStaff, rewardClaims, floatMovements, day, ready,
     riders, bookers, routeShops, unassignedOrders, need,
+    demo: false,
     pendingWrites: pendingOrders + pendingPayments,
 
     riderForShop(shopId) {
@@ -1135,9 +1137,20 @@ export function FirestoreStoreProvider({
       batch.commit().catch(writeRejected('Stock adjustment'));
     },
 
-    addShop({ openingBalance, location, ...s }: ShopInput) {
+    addShop({ openingBalance, location, counterStaff, ...s }: ShopInput) {
       setDoc(doc(collection(db, `${base}/shops`)), {
-        ...stripUndefined(s), standingDiscountPercent: s.standingDiscountPercent ?? 0,
+        ...stripUndefined(s),
+        // Ids and `addedBy` are stamped here for the same reason the pin's are:
+        // the form has no business asserting whose phone this was.
+        ...(counterStaff?.length
+          ? {
+            counterStaff: counterStaff.map((c, i) => ({
+              id: `cs_${Date.now().toString(36)}_${i}`,
+              name: c.name, active: true, addedBy: user.uid,
+              ...(c.phone ? { phone: c.phone } : {}),
+            })),
+          }
+          : {}),
         // Stamped here, not at the call site: the screen has no business
         // asserting whose fix this was.
         ...(location ? { location: { ...location, savedAt: Date.now(), savedBy: user.uid } } : {}),
@@ -1224,16 +1237,24 @@ export function FirestoreStoreProvider({
     },
 
     /**
-     * Put a booker on a round, or take him off it (null).
+     * Set who covers a round — several bookers at once is allowed.
      *
      * Territory is a client-side scope, not a rule: the shops collection stays
      * readable company-wide because a booker legitimately covers a colleague's
      * patch when someone is off sick, and a rule that made that impossible
-     * would be a worse bug than the one it prevents.
+     * would be a worse bug than the one it prevents. Two bookers on one round
+     * is that same case made deliberate, so it needs no rule change either.
+     *
+     * The legacy single `bookerId` is deleted in the SAME write that lands the
+     * array. Two writes would leave a round momentarily claimed by two
+     * different shapes, and `bookersOf()` prefers the array — so the old
+     * booker would blink off his own round between them.
      */
-    setAreaBooker(id, bookerId) {
-      updateDoc(doc(db, `${base}/areas/${id}`), { bookerId: bookerId ?? deleteField() })
-        .catch(writeRejected('Round booker'));
+    setAreaBooker(id, bookerIds) {
+      updateDoc(doc(db, `${base}/areas/${id}`), {
+        bookerIds: bookerIds.length ? bookerIds : deleteField(),
+        bookerId: deleteField(),
+      }).catch(writeRejected('Round bookers'));
     },
 
     /** Hand ONE order to a van — the owner's answer to the unassigned list. */
@@ -1251,6 +1272,12 @@ export function FirestoreStoreProvider({
         shopId, khataDelta: delta, note, by: user.uid, createdAt: serverTimestamp(),
       });
       batch.commit().catch(writeRejected('Khata adjustment'));
+    },
+
+    setLogo(url) {
+      setDoc(doc(db, `${base}/settings/company`),
+        { logoUrl: url ?? deleteField() }, { merge: true })
+        .catch(writeRejected('Logo'));
     },
 
     updateSettings(patch) {

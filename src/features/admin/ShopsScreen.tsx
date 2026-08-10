@@ -19,8 +19,6 @@ import type { Shop } from '../../data/models';
 import { AreaSelect } from '../../components/AreaSelect';
 import { CounterStaffSection } from './CounterStaffSection';
 
-const DISCOUNT_CHIPS = [0, 2, 5];
-
 function toRupees(text: string): number {
   const n = parseInt(text.replace(/[^0-9]/g, ''), 10);
   return Number.isFinite(n) ? n : 0;
@@ -28,8 +26,13 @@ function toRupees(text: string): number {
 
 /**
  * Everything the owner needs to do to an EXISTING shop (audit: shops could
- * never be edited): details, standing discount, manual khata correction,
- * a payment made directly to her, deactivation.
+ * never be edited): details, manual khata correction, a payment made directly
+ * to her, deactivation, deletion.
+ *
+ * There is no standing-discount control any more, and no standing discount:
+ * a per-shop rate applied itself to every order silently, which is the same
+ * thing the percent chips on New Order were removed for. A price is agreed per
+ * basket now, typed in rupees on the order itself.
  */
 function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
   const store = useStore();
@@ -37,7 +40,6 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
   const [phone, setPhone] = React.useState(shop.phone);
   const [area, setArea] = React.useState(shop.area);
   const [ownerName, setOwnerName] = React.useState(shop.ownerName ?? '');
-  const [discount, setDiscount] = React.useState(shop.standingDiscountPercent);
   const [khataText, setKhataText] = React.useState('');
   const [khataDir, setKhataDir] = React.useState<'down' | 'up'>('down');
   const [payText, setPayText] = React.useState('');
@@ -106,10 +108,6 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
         <AreaSelect value={area} onChange={setArea} />
       </View>
       <Field label="Owner's name" value={ownerName} onChange={setOwnerName} placeholder="Who runs the shop" />
-      <View style={styles.field}>
-        <Text style={styles.fieldLabel}>Standing discount</Text>
-        <OptionBar options={DISCOUNT_CHIPS} value={discount} render={d => `${d}%`} onChange={setDiscount} />
-      </View>
       <PrimaryButton
         label="Save details" icon="check-circle-outline"
         // Editing cannot strip an area off a shop either — that would take a
@@ -126,7 +124,7 @@ function ShopEditor({ shop, onClose }: { shop: Shop; onClose: () => void }) {
             name: name.trim(), phone: phone.trim(), area: area.trim(),
             // Empty string, not undefined: undefined is stripped before the
             // write, so clearing the owner's name silently kept the old one.
-            ownerName: ownerName.trim(), standingDiscountPercent: discount,
+            ownerName: ownerName.trim(),
           });
           onClose();
         })}
@@ -258,7 +256,6 @@ export function ShopsScreen() {
   const [area, setArea] = React.useState('');
   const [ownerName, setOwnerName] = React.useState('');
   const [address, setAddress] = React.useState('');
-  const [discount, setDiscount] = React.useState(0);
   const [openingText, setOpeningText] = React.useState('');
   const [editingId, setEditingId] = React.useState<string | null>(null);
 
@@ -271,7 +268,7 @@ export function ShopsScreen() {
 
   const reset = () => {
     setName(''); setPhone(''); setArea(''); setOwnerName(''); setAddress('');
-    setDiscount(0); setOpeningText(''); setShowMore(false); setAdding(false);
+    setOpeningText(''); setShowMore(false); setAdding(false);
   };
 
   // Without the guard a second tap made a duplicate shop — carrying a second
@@ -284,7 +281,6 @@ export function ShopsScreen() {
         area: area.trim(),
         ownerName: ownerName.trim() ? ownerName.trim() : undefined,
         address: address.trim() ? address.trim() : undefined,
-        standingDiscountPercent: discount,
         // The paper khata comes along on day one (audit blocker).
         openingBalance: toRupees(openingText),
       });
@@ -334,7 +330,7 @@ export function ShopsScreen() {
 
           {!showMore && (
             <Pressable onPress={() => setShowMore(true)} style={styles.moreLink}>
-              <Text style={styles.moreLinkText}>More — owner, address, discount</Text>
+              <Text style={styles.moreLinkText}>More — owner, address, old khata</Text>
             </Pressable>
           )}
 
@@ -344,16 +340,6 @@ export function ShopsScreen() {
                 placeholder="Who runs the shop" />
               <Field label="Address" value={address} onChange={setAddress}
                 placeholder="Street, landmark" />
-
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Standing discount</Text>
-                <OptionBar
-                  options={DISCOUNT_CHIPS}
-                  value={discount}
-                  render={d => `${d}%`}
-                  onChange={d => setDiscount(d)}
-                />
-              </View>
 
               <Field label="Old khata balance (Rs) — what they already owe from the paper book"
                 value={openingText} onChange={t => setOpeningText(t.replace(/[^0-9]/g, ''))}

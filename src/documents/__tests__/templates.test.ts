@@ -156,3 +156,105 @@ describe('payment receipt (§8.4)', () => {
     expect(html).toContain('Bismillah Store');
   });
 });
+
+/**
+ * A serial issued with no signal (src/lib/serials `LOCAL-…`) is a device
+ * reference, not the company's number. Unmarked on paper it reads exactly like
+ * a real one — these assert that it never prints unmarked, and equally that a
+ * normal document is not littered with a warning it does not need.
+ */
+describe('provisional serials are marked on paper (FR-5.8)', () => {
+  test('an offline order confirmation is marked and explained', () => {
+    const html = orderConfirmationHtml({
+      settings, shop, order: { ...order, orderNo: 'LOCAL-ORD-7' },
+    });
+    expect(html).toContain('LOCAL-ORD-7');
+    expect(html).toContain('PROVISIONAL');
+    expect(html).toContain('no internet connection');
+  });
+
+  test('an offline bill marks the bill number and the order number', () => {
+    const html = billHtml({
+      settings, shop,
+      order: { ...order, orderNo: 'LOCAL-ORD-7', invoiceNo: 'LOCAL-INV-8' },
+      amountInWordsLine: 'Rupees nine thousand nine hundred only',
+      received: 5000,
+      previousBalance: 4400,
+    });
+    expect(html).toContain('LOCAL-INV-8');
+    expect(html).toContain('LOCAL-ORD-7');
+    expect(html.match(/PROVISIONAL/g)).toHaveLength(3); // two numbers + the note
+  });
+
+  test('an offline receipt is marked', () => {
+    const html = receiptHtml({
+      settings,
+      payment: {
+        id: 'pay2', receiptNo: 'LOCAL-RCP-3', shopId: 's1', orderIds: [],
+        amount: 5000, mode: 'cash', collectedBy: 'rider', confirmed: false,
+        createdAt: new Date(2026, 7, 6).getTime(),
+      },
+      shopName: 'Bismillah Store',
+      allocations: [],
+      newOutstanding: 4400,
+    });
+    expect(html).toContain('LOCAL-RCP-3');
+    expect(html).toContain('PROVISIONAL');
+  });
+
+  test('a synced document carries no marker and no note at all', () => {
+    const html = billHtml({
+      settings, shop, order,
+      amountInWordsLine: 'Rupees nine thousand nine hundred only',
+      received: 5000,
+      previousBalance: 4400,
+    });
+    expect(html).not.toContain('PROVISIONAL');
+    expect(html).not.toContain('no internet connection');
+  });
+});
+
+/**
+ * The logo is a data: URI, never a CDN link — the rider printing a bill may
+ * have no signal, and a remote <img> would be a hole in the one document the
+ * shopkeeper keeps. `lib/logoCache.ts` is what makes the bytes local.
+ */
+describe('company logo on the letterhead', () => {
+  const LOGO_URI = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+
+  test('a bill with a logo embeds it beside the brand name', () => {
+    const html = billHtml({
+      settings, shop, order, logo: LOGO_URI,
+      amountInWordsLine: 'Rupees nine thousand nine hundred only',
+      received: 5000, previousBalance: 4400,
+    });
+    expect(html).toContain('class="letterhead"');
+    expect(html).toContain(LOGO_URI);
+    expect(html).toContain('Alpha Skin Care'); // the name is still the header
+  });
+
+  test('every document type carries it', () => {
+    expect(orderConfirmationHtml({ settings, order, shop, logo: LOGO_URI }))
+      .toContain('class="logo"');
+    expect(receiptHtml({
+      settings, shopName: 'Bismillah Store', allocations: [], newOutstanding: 0,
+      logo: LOGO_URI,
+      payment: {
+        id: 'p', receiptNo: 'RCP-2026-0009', shopId: 's1', orderIds: [], amount: 100,
+        mode: 'cash', collectedBy: 'rider', confirmed: false, createdAt: Date.now(),
+      },
+    })).toContain('class="logo"');
+  });
+
+  test('without one the header is exactly what it always was', () => {
+    const html = billHtml({
+      settings, shop, order,
+      amountInWordsLine: 'Rupees nine thousand nine hundred only',
+      received: 5000, previousBalance: 4400,
+    });
+    // The CSS rule is always in the sheet; it is the markup that is optional.
+    expect(html).not.toContain('class="letterhead"');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('Alpha Skin Care');
+  });
+});

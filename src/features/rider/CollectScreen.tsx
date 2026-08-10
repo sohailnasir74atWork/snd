@@ -8,15 +8,17 @@ import {
   Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, ProvisionalNote,
   SectionLabel, Tag, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { CollectionInput } from '../../data/store';
 import type { Payment, Shop } from '../../data/models';
 import { formatAmount } from '../../lib/money';
+import { isProvisional } from '../../lib/serials';
 import { receiptHtml } from '../../documents/templates';
 import { sharePdf } from '../../documents/share';
+import { documentLogo } from '../../lib/logoCache';
 
 type Mode = CollectionInput['mode'];
 
@@ -102,10 +104,17 @@ export function CollectScreen() {
         const html = receiptHtml({
           settings: store.settings, payment, shopName: done.shopName,
           allocations: [], newOutstanding: done.newOutstanding,
+          logo: await documentLogo(store.settings.logoUrl),
         });
         await sharePdf(
           html, done.receiptNo,
           `Receipt ${done.receiptNo} — Rs ${done.amount.toLocaleString()} received. Balance Rs ${done.newOutstanding.toLocaleString()}.`,
+          // Read off the store rather than frozen into `done`: the number is
+          // whatever the shop's record says at the moment of sending.
+          {
+            phone: store.shops.find(s => s.id === done.shopId)?.phone,
+            countryCode: store.settings.countryCode,
+          },
         );
       } catch (e) {
         Alert.alert('Could not share', e instanceof Error ? e.message : String(e));
@@ -118,6 +127,7 @@ export function CollectScreen() {
         <Icon name="check-circle" size={72} color={color.success} />
         <Text style={styles.doneTitle}>Money taken</Text>
         <Text style={styles.receiptNo}>Receipt {done.receiptNo}</Text>
+        {isProvisional(done.receiptNo) && <ProvisionalNote />}
         <Money amount={done.amount} size={font.h1} bold color={color.success} />
         <Text style={styles.hint}>It is counted as cash with you until the owner confirms the handover.</Text>
         <View style={styles.doneButtons}>

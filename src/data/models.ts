@@ -47,12 +47,28 @@ export interface Area {
    */
   riderId?: string;
   /**
-   * The booker who covers this round — his territory.
+   * The bookers who cover this round — their territory. More than one is
+   * allowed and normal: a dense bazaar round is worked by two men on the same
+   * morning, and the owner is the one who decides that, not the data model.
    *
-   * Unset means nobody owns it, and an unowned round is picked up by any
-   * booker who has no territory of his own (see `shopsForBooker`). While NO
-   * round has a booker on it, every booker sees every shop, which is exactly
-   * how the app behaved before territories existed.
+   * Empty (or absent) means nobody owns it, and an unowned round is picked up
+   * by any booker who has no territory of his own (see `shopsForBooker`).
+   * While NO round has a booker on it, every booker sees every shop, which is
+   * exactly how the app behaved before territories existed.
+   *
+   * Territory is a CLIENT scope, never a rule — the rules have always let any
+   * booker read any shop in his company, because covering a colleague's patch
+   * is normal and the shop picker searches company-wide on purpose. Putting
+   * two bookers on one round changes what each of them SEES, nothing about
+   * what either is permitted to do.
+   */
+  bookerIds?: string[];
+  /**
+   * The single-booker field this replaced. READ, NEVER WRITTEN — a migration
+   * shim exactly like `settings.autoAssignRiderId`, so a company configured
+   * before rounds could be shared keeps working untouched until the owner next
+   * edits that round, at which point `setAreaBooker` folds it into the array
+   * and deletes it. Read it through `bookersOf()`, never directly.
    */
   bookerId?: string;
 }
@@ -92,7 +108,21 @@ export interface Shop {
   /** Shopfront photo on the CDN — what the next person looks for from the road. */
   photoUrl?: string;
   outstanding: number;
-  standingDiscountPercent: number;
+  /**
+   * DEAD — read by nothing, written by nothing (2026-08-10, owner's decision).
+   *
+   * A per-shop rate that applied itself to every order for that shop without
+   * appearing on the order screen, the confirmation or the bill. The same
+   * objection that removed the percent chips from New Order: a discount nobody
+   * decided to give in the moment is not a negotiation. Price is agreed per
+   * basket now and typed in rupees.
+   *
+   * The field is left on the type and on the documents that carry it rather
+   * than migrated away — deleting it buys nothing, and a stored number that
+   * nothing reads cannot cost anybody money. Do not wire it back up without
+   * putting the rate on the order screen where the booker can see it.
+   */
+  standingDiscountPercent?: number;
   lastVisitAt?: number;
   lastOrderSummary?: { productId: string; qty: number }[];
   collectionFlagged?: boolean;
@@ -346,6 +376,41 @@ export interface CompanySettings {
   currencySymbol: string;
   countryCode: string;
   taxPercent: number;
+  /**
+   * What a price the booker TYPES on New Order means, once a tax rate is set.
+   *
+   *   false / absent → the typed price is the goods, and tax is added on top.
+   *                    Type 700 at 17% and the shop pays 819. This is how the
+   *                    app has always behaved and stays the default, so no
+   *                    existing company changes meaning.
+   *   true           → the typed price is the FINAL figure, tax already inside
+   *                    it. Type 700 at 17% and the shop pays 700, of which
+   *                    Rs 102 is tax and Rs 598 is goods.
+   *
+   * Both write the same order: a discount PERCENT off the subtotal, with the
+   * tax computed from it exactly as before. The setting only decides which
+   * number the booker is quoting, so nothing downstream — the rider's re-bill
+   * against delivered quantities, the reports' net-of-tax sales, the printed
+   * bill — needs to know which mode the order was taken in.
+   *
+   * Irrelevant at `taxPercent: 0`, where the two are the same number, and the
+   * Settings row hides itself there rather than asking a question with one
+   * possible answer.
+   */
+  priceIncludesTax?: boolean;
+  /**
+   * May a BOOKER change a shop's details — phone, owner's name, area, counter
+   * staff? Default ON (absent means true), because the booker is the only
+   * person who ever stands in the shop and finds out the number is wrong.
+   *
+   * The shop's NAME is never his, switch or no switch: a renamed shop is a
+   * different shop to everyone reading a report, and that is enforced in
+   * `firestore.rules`, not here. This flag is a CLIENT scope like territory —
+   * it takes the editing UI off his screen. A rule cannot read it without a
+   * document lookup, and the rules deliberately do none. Turning it off tidies
+   * the app; it does not lock the door.
+   */
+  bookerEditsShops?: boolean;
   maxDiscountPercent: number;
   defaultDeliveryDay: 'today' | 'tomorrow';
   shopsPerDay: number;

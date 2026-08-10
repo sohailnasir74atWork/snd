@@ -55,7 +55,15 @@ export interface CollectionInput {
 
 export interface ShopInput {
   name: string; ownerName?: string; phone: string; area: string;
-  address?: string; standingDiscountPercent?: number;
+  address?: string;
+  /**
+   * Whoever already stands behind that counter, registered in the same breath
+   * as the shop. Optional and usually empty — a shop is registered at a
+   * counter in thirty seconds and the person selling for you is often found
+   * out later, which is why `CounterStaffSection` exists on the shop editor
+   * too. Both doors, because both moments are real.
+   */
+  counterStaff?: { name: string; phone?: string }[];
   /** Pre-app paper-khata debt, entered once at creation (owner only). */
   openingBalance?: number;
   /**
@@ -139,6 +147,17 @@ export interface StoreApi {
   floatMovements: FloatMovement[];
   ready: boolean;
   /**
+   * True only in preview mode.
+   *
+   * Screens should not branch on this — two stores that behave differently is
+   * HANDOFF section 3, and every one of these is a place the demo can drift
+   * from the real app. It exists for the one thing preview genuinely cannot
+   * do: reach a Cloud Function. Nobody is signed in, so anything that needs
+   * the server has to be faked locally rather than fail with an error the
+   * demo user cannot act on.
+   */
+  demo: boolean;
+  /**
    * Orders and payments written on this phone that have not reached the
    * server yet. Signing out destroys them, so the sign-out flow refuses
    * while this is above zero.
@@ -219,14 +238,30 @@ export interface StoreApi {
   addArea(name: string): void;
   /** Renames the area AND every shop still filed under the old name. */
   renameArea(id: string, name: string): void;
+  /**
+   * Set or clear the company logo. Separate from `updateSettings` because that
+   * strips undefined before writing — `{ logoUrl: undefined }` through it is a
+   * no-op, so "Remove" would have silently done nothing while the demo store
+   * cleared it happily. Two stores that disagree is HANDOFF section 3.
+   */
+  setLogo(url: string | null): void;
   setAreaActive(id: string, active: boolean): void;
   /**
    * Put a rider on a round, or take him off it (null). Future bookings only —
    * orders already written keep the van they were booked to.
    */
   setAreaRider(id: string, riderId: string | null): void;
-  /** Give a round to a booker, or take it back (null) — his territory. */
-  setAreaBooker(id: string, bookerId: string | null): void;
+  /**
+   * Set who covers a round — the WHOLE list, not a delta. An empty array
+   * leaves it unclaimed.
+   *
+   * Several bookers on one round is allowed on purpose (see `Area.bookerIds`).
+   * The caller passes the complete new list because it already holds it from
+   * `bookersOf()`, which lets one write both replace the list and retire the
+   * legacy single-booker field — no read-modify-write, and no window where a
+   * round is claimed by nobody.
+   */
+  setAreaBooker(id: string, bookerIds: string[]): void;
   /**
    * Start syncing a collection this screen needs. Prefer the `useNeed` hook.
    *

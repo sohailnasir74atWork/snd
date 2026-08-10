@@ -55,15 +55,31 @@ export function unassignedOf<T extends { status: string; assignedTo?: string }>(
 }
 
 /**
+ * Who covers a round — the ONLY way to read that off an area.
+ *
+ * `bookerIds` is the live field; `bookerId` is the single-booker shim it
+ * replaced and is read here so a company configured before rounds could be
+ * shared keeps behaving identically without a migration pass. Nothing else in
+ * the app may touch either field directly, so there is exactly one place that
+ * knows the old shape exists.
+ */
+export function bookersOf(area: Area): string[] {
+  if (area.bookerIds?.length) return area.bookerIds;
+  return area.bookerId ? [area.bookerId] : [];
+}
+
+/**
  * The shops one booker is responsible for.
  *
  * Three cases, and the order of them is the design:
  *
  *   nothing configured  → everybody sees everything. A one-booker business
  *                         never opens this screen and nothing changes for it.
- *   he has rounds       → exactly his rounds, and nobody else's. Two bookers
- *                         working the same shop on the same day is the thing
- *                         territories exist to stop.
+ *   he has rounds       → exactly his rounds. A round may name SEVERAL
+ *                         bookers, and then every one of them sees it — the
+ *                         owner putting two men on one bazaar morning is a
+ *                         decision the app carries out, not one it second-
+ *                         guesses. It still hides the rounds he is not on.
  *   others have rounds,
  *   he does not         → the rounds NOBODY covers. Never an empty screen:
  *                         a booker who arrives before the owner has assigned
@@ -73,10 +89,11 @@ export function unassignedOf<T extends { status: string; assignedTo?: string }>(
  *                         stay reachable instead of falling out of the app.
  */
 export function shopsForBooker(bookerId: string, shops: Shop[], areas: Area[]): Shop[] {
-  const assigned = areas.filter(a => a.bookerId);
+  const assigned = areas.filter(a => bookersOf(a).length > 0);
   if (!assigned.length) return shops;
 
-  const mine = new Set(areas.filter(a => a.bookerId === bookerId).map(a => a.name));
+  const mine = new Set(
+    areas.filter(a => bookersOf(a).includes(bookerId)).map(a => a.name));
   if (mine.size) return shops.filter(s => mine.has(s.area));
 
   const covered = new Set(assigned.map(a => a.name));

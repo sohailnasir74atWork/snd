@@ -1,13 +1,17 @@
 import {
-  riderForShop, shopsForBooker, unassignedOf, visitCycleDays,
+  bookersOf, riderForShop, shopsForBooker, unassignedOf, visitCycleDays,
 } from '../assignment';
 import type { Area, Shop } from '../../data/models';
 
 const area = (name: string, riderId?: string): Area =>
   ({ id: `a-${name}`, name, active: true, riderId } as Area);
 const shop = (areaName: string): Shop => ({ area: areaName } as Shop);
+/** A round carrying the LEGACY single-booker field — the pre-sharing shape. */
 const round = (name: string, bookerId?: string): Area =>
   ({ id: `a-${name}`, name, active: true, bookerId } as Area);
+/** A round in the current shape: any number of bookers, including none. */
+const shared = (name: string, ...bookerIds: string[]): Area =>
+  ({ id: `a-${name}`, name, active: true, bookerIds } as Area);
 
 describe('riderForShop — the assignment ladder', () => {
   const areas = [area('Saddar', 'ali'), area('Gulberg', 'usman'), area('Bund Road')];
@@ -103,6 +107,53 @@ describe('shopsForBooker — territories', () => {
   it('does not hand a covered round to a second booker', () => {
     const areas = [round('Saddar', 'ali')];
     expect(shopsForBooker('newcomer', shops, areas).map(s => s.area)).not.toContain('Saddar');
+  });
+
+  /**
+   * Every test above builds its areas with the legacy single `bookerId`, so
+   * the whole block doubles as the regression suite for the migration shim: a
+   * company that has not touched its rounds since sharing arrived must behave
+   * exactly as it did. These add the shared case on top.
+   */
+  describe('a round may be worked by more than one booker', () => {
+    it('puts a shared round on every one of their screens', () => {
+      const areas = [shared('Saddar', 'ali', 'usman'), round('Gulberg', 'kamran')];
+      expect(shopsForBooker('ali', shops, areas).map(s => s.area)).toEqual(['Saddar']);
+      expect(shopsForBooker('usman', shops, areas).map(s => s.area)).toEqual(['Saddar']);
+    });
+
+    it('still hides the rounds a sharer is not on', () => {
+      const areas = [shared('Saddar', 'ali', 'usman'), round('Gulberg', 'kamran')];
+      expect(shopsForBooker('ali', shops, areas).map(s => s.area)).not.toContain('Gulberg');
+    });
+
+    it('counts a shared round as covered, so a spare booker does not get it too', () => {
+      const areas = [shared('Saddar', 'ali', 'usman')];
+      expect(shopsForBooker('newcomer', shops, areas).map(s => s.area)).not.toContain('Saddar');
+    });
+
+    it('treats an empty array as unclaimed, exactly like an absent field', () => {
+      // setAreaBooker deletes the key rather than writing [], but a document
+      // written by an older build must not become a round nobody can see.
+      const areas = [shared('Saddar'), round('Gulberg', 'usman')];
+      expect(shopsForBooker('newcomer', shops, areas).map(s => s.area)).toContain('Saddar');
+    });
+
+    it('prefers the array when a document somehow carries both fields', () => {
+      const both = { ...shared('Saddar', 'usman'), bookerId: 'ali' } as Area;
+      expect(shopsForBooker('usman', shops, [both]).map(s => s.area)).toEqual(['Saddar']);
+      // 'ali' was replaced when the owner edited the round, not kept alongside.
+      expect(shopsForBooker('ali', shops, [both]).map(s => s.area)).not.toContain('Saddar');
+    });
+  });
+});
+
+describe('bookersOf — the one place that knows the old shape', () => {
+  it('reads the array, the legacy field, or neither', () => {
+    expect(bookersOf(shared('Saddar', 'ali', 'usman'))).toEqual(['ali', 'usman']);
+    expect(bookersOf(round('Saddar', 'ali'))).toEqual(['ali']);
+    expect(bookersOf(round('Saddar'))).toEqual([]);
+    expect(bookersOf(shared('Saddar'))).toEqual([]);
   });
 });
 

@@ -300,14 +300,27 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     // Both jobs, because either one left dangling points a round at a ghost:
     // as a rider his orders go dark, as a booker his territory belongs to
     // nobody and drops off every route screen in the company.
-    const [asRider, asBooker] = await Promise.all([
+    // A round can name SEVERAL bookers (Area.bookerIds), so removal has to
+    // pull this one man out of the array and leave his colleagues on it —
+    // deleting the field would silently take a round off everybody else's
+    // route screen. The legacy single `bookerId` is still queried because a
+    // company that has not edited its rounds since the change still stores it.
+    const [asRider, asBooker, asBookerLegacy] = await Promise.all([
       db.collection(`companies/${companyId}/areas`).where('riderId', '==', target.uid).get(),
+      db.collection(`companies/${companyId}/areas`)
+        .where('bookerIds', 'array-contains', target.uid).get(),
       db.collection(`companies/${companyId}/areas`).where('bookerId', '==', target.uid).get(),
     ]);
-    if (!asRider.empty || !asBooker.empty) {
+    if (!asRider.empty || !asBooker.empty || !asBookerLegacy.empty) {
       const batch = db.batch();
       asRider.docs.forEach((d) => batch.update(d.ref, { riderId: FieldValue.delete() }));
-      asBooker.docs.forEach((d) => batch.update(d.ref, { bookerId: FieldValue.delete() }));
+      asBooker.docs.forEach((d) => {
+        const left = (d.data().bookerIds || []).filter((uid) => uid !== target.uid);
+        batch.update(d.ref, {
+          bookerIds: left.length ? left : FieldValue.delete(),
+        });
+      });
+      asBookerLegacy.docs.forEach((d) => batch.update(d.ref, { bookerId: FieldValue.delete() }));
       await batch.commit().catch((e) => console.warn('clear rounds on removal', e.message));
     }
   }
