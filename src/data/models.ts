@@ -345,6 +345,14 @@ export interface Employee {
   name: string;
   role: Role;
   joined: boolean; // false = "Invited — not joined yet" (FR-1.3)
+  /**
+   * Set when the OWNER minted this login rather than inviting a Google
+   * address. The email behind it is synthesised and unreadable, so every screen
+   * showing this person shows `loginId` instead.
+   */
+  staffLogin?: boolean;
+  /** What the person actually types. Present only on a staff login. */
+  loginId?: string;
 }
 
 /**
@@ -370,6 +378,14 @@ export const DEFAULT_VISIBILITY: VisibilitySettings = {
 
 export interface CompanySettings {
   brandName: string;
+  /**
+   * The short code every staff member types to sign in — "alitraders". Written
+   * by the server (createStaffLogin / business creation) and read-only here;
+   * it is mirrored onto settings because this is the document every client
+   * already listens to, and the Employees screen has to be able to show the
+   * owner what to write on the slip before he has issued anybody a login.
+   */
+  companyCode?: string;
   address?: string;
   phone?: string;
   taxNumber?: string;

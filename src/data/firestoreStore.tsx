@@ -1293,6 +1293,25 @@ export function FirestoreStoreProvider({
       });
     },
 
+    async createStaffLogin({ name, loginId, pin, role }) {
+      const call = httpsCallable(getFunctions(undefined, 'asia-south1'), 'createStaffLogin');
+      // No mirror write to follow, unlike addEmployee: the account, its claims
+      // and all three documents are created together server-side, so there is
+      // no window in which the row exists without a role.
+      const { data } = (await call({ name, loginId, pin, role })) as {
+        data: { loginId: string; companyCode: string };
+      };
+      return { loginId: data.loginId, companyCode: data.companyCode };
+    },
+
+    async resetStaffPin(email, pin) {
+      const call = httpsCallable(getFunctions(undefined, 'asia-south1'), 'resetStaffPin');
+      const { data } = (await call({ email, pin })) as {
+        data: { loginId: string; companyCode: string };
+      };
+      return { loginId: data.loginId, companyCode: data.companyCode };
+    },
+
     async removeEmployee(email) {
       const call = httpsCallable(getFunctions(undefined, 'asia-south1'), 'removeEmployee');
       await call({ email });

@@ -29,3 +29,11 @@
 -dontwarn com.gemalto.jp2.**
 -dontwarn com.tom_roush.pdfbox.**
 -keep class com.tom_roush.pdfbox.** { *; }
+
+# Credential Manager — the credential classes are looked up reflectively by
+# type string (TYPE_GOOGLE_ID_TOKEN_CREDENTIAL), so R8 cannot see the use and
+# would strip them. Without these the bottom sheet works in debug and fails
+# only in release, which is the worst way to find out.
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }

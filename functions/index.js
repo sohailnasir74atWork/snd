@@ -22,6 +22,108 @@ const db = getFirestore();
 
 const norm = (email) => (email || '').trim().toLowerCase();
 
+// ---------------------------------------------------------------------------
+// Provisioned staff logins (FR-1.3, two-lane auth)
+//
+// An owner recruits a rider off the street. He knows the man's phone number and
+// his face; he does NOT know his Gmail address, and the rider frequently does
+// not know it either — his handset was set up for him at the shop he bought it
+// from. Asking the owner to type it EXACTLY put the app's worst failure right
+// at its first minute: one wrong character and the rider's first morning is a
+// refusal screen and a phone call.
+//
+// So the owner mints the identity instead, the way Salesforce has always done
+// it: a login ID he chooses and a PIN he can read out. Firebase Auth needs a
+// globally unique email, so one is synthesised from the company's own code and
+// never shown to anybody — the rider types "ali" and six digits.
+//
+// Owners keep Google. They are signing themselves up, they have a real address,
+// and they need account recovery that does not route through a helpdesk that
+// does not exist.
+// ---------------------------------------------------------------------------
+
+/** Non-routable by design: nobody can mail a staff login, and the owner is the
+ *  only reset path. That is the intended property, not a limitation. */
+const STAFF_DOMAIN = 'snd.app';
+// 2–20 chars so "ali" works and a paragraph does not. Leading alphanumeric
+// keeps the synthesised address a legal one.
+const LOGIN_ID_RE = /^[a-z0-9][a-z0-9._-]{1,19}$/;
+// Six, not four: Firebase Auth rejects passwords under six characters. Digits
+// only, so the phone shows a number pad and the PIN survives being read aloud
+// down a bad line.
+const PIN_RE = /^\d{6}$/;
+
+function slugify(name) {
+  const base = (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 12);
+  return base.length >= 3 ? base : `biz${base}`;
+}
+
+/**
+ * Claim a globally unique company code.
+ *
+ * This code is typed by every employee at every sign-in, so it is derived from
+ * the business's own name rather than being a random string — "alitraders" is
+ * something a rider can be told once and remember. The reservation doc is what
+ * makes it unique; the transaction is what stops two businesses called Ali
+ * Traders signing up in the same second from both getting it.
+ */
+async function reserveCompanyCode(businessName, companyId) {
+  const base = slugify(businessName);
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const code = attempt === 0 ? base : `${base}${Math.floor(Math.random() * 9000) + 1000}`;
+    const ref = db.doc(`companySlugs/${code}`);
+    try {
+      await db.runTransaction(async (tx) => {
+        if ((await tx.get(ref)).exists) throw new Error('taken');
+        tx.set(ref, { companyId, createdAt: FieldValue.serverTimestamp() });
+      });
+      return code;
+    } catch (e) {
+      if (e.message !== 'taken') throw e;
+    }
+  }
+  throw new HttpsError('resource-exhausted', 'Could not allocate a business code.');
+}
+
+/**
+ * The company's code, minted on demand.
+ *
+ * Businesses created before staff logins existed have no code, and the first
+ * one their owner issues is where they get one. It is mirrored onto the
+ * settings doc because that is the document every client already listens to —
+ * the Employees screen has to be able to show the owner what to write on the
+ * slip, including before he has issued anybody a login.
+ */
+async function companyCodeFor(companyId) {
+  const ref = db.doc(`companies/${companyId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError('not-found', 'Business not found.');
+  const existing = snap.data().companyCode;
+  if (existing) return existing;
+  const code = await reserveCompanyCode(snap.data().businessName, companyId);
+  await ref.set({ companyCode: code }, { merge: true });
+  await db.doc(`companies/${companyId}/settings/company`)
+    .set({ companyCode: code }, { merge: true })
+    .catch((e) => console.warn('mirror companyCode', e.message));
+  return code;
+}
+
+const staffEmail = (loginId, code) => `${loginId}@${code}.${STAFF_DOMAIN}`;
+
+/**
+ * The first rider a company onboards becomes its default, so a one-van business
+ * needs no configuration at all. Shared with admitSignIn — it must fire once
+ * per company and never again, or rider #4 would quietly inherit the round.
+ */
+async function claimDefaultRider(companyId, uid) {
+  const sRef = db.doc(`companies/${companyId}/settings/company`);
+  const sSnap = await sRef.get();
+  const s = sSnap.exists ? sSnap.data() : {};
+  if (!s.defaultRiderId && !s.autoAssignRiderId) {
+    await sRef.set({ defaultRiderId: uid }, { merge: true });
+  }
+}
+
 /**
  * Called right after Firebase Auth sign-in.
  * data: { createBusinessName?: string }  — present only from the
@@ -59,23 +161,11 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
           removed: false,
         }, { merge: true })
         .catch((e) => console.warn('employeeList mirror', e.message));
-      // The FIRST rider a company ever onboards becomes its default, so a
-      // one-van business needs no configuration at all. Every rider after him
-      // is put on a round by the owner (Area.riderId) — this must never fire
-      // again, or rider #4 signing in would quietly inherit the whole company.
-      //
       // What used to be here also swept every unaddressed order onto whoever
       // arrived. With one rider that was a fix; with six it silently overrode
       // the owner's own assignments, so unassigned orders are now surfaced to
       // the owner in-app instead of being redirected behind his back.
-      if (dir.role === 'rider') {
-        const sRef = db.doc(`companies/${dir.companyId}/settings/company`);
-        const sSnap = await sRef.get();
-        const s = sSnap.exists ? sSnap.data() : {};
-        if (!s.defaultRiderId && !s.autoAssignRiderId) {
-          await sRef.set({ defaultRiderId: uid }, { merge: true });
-        }
-      }
+      if (dir.role === 'rider') await claimDefaultRider(dir.companyId, uid);
       await db.doc(`companies/${dir.companyId}/users/${uid}`).set(
         {
           name: dir.name || '',
@@ -117,9 +207,13 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
   if (!businessName) return { status: 'not_on_list' };
 
   const companyRef = db.collection('companies').doc();
+  // Minted here rather than at the first staff login, so the owner can see the
+  // code his people will type from the moment the business exists.
+  const companyCode = await reserveCompanyCode(businessName, companyRef.id);
   const batch = db.batch();
   batch.set(companyRef, {
     businessName,
+    companyCode,
     ownerUid: uid,
     ownerEmail: email,
     createdAt: FieldValue.serverTimestamp(),
@@ -154,6 +248,9 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
   });
   batch.set(db.doc(`companies/${companyRef.id}/settings/company`), {
     brandName: businessName,
+    // The Employees screen reads it from here — settings is the doc every
+    // client already listens to, so the code needs no listener of its own.
+    companyCode,
     currencySymbol: 'Rs',
     countryCode: '92',
     taxPercent: 0,
@@ -228,6 +325,129 @@ exports.addEmployee = onCall({ region: 'asia-south1' }, async (request) => {
 });
 
 /**
+ * createStaffLogin — the owner mints an identity instead of asking for one.
+ *
+ * Unlike addEmployee this leaves nothing pending: the account exists, its
+ * claims are written, and the man can sign in on the spot with a login ID and
+ * six digits on a slip of paper. There is no invitation to accept, no address
+ * to spell, and no Google account involved anywhere.
+ */
+exports.createStaffLogin = onCall({ region: 'asia-south1' }, async (request) => {
+  if (!request.auth || request.auth.token.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Only the owner creates staff logins.');
+  }
+  const companyId = request.auth.token.companyId;
+  const loginId = (request.data?.loginId || '').trim().toLowerCase();
+  const pin = String(request.data?.pin || '');
+  const role = request.data?.role;
+  const name = (request.data?.name || '').trim();
+
+  if (!name) throw new HttpsError('invalid-argument', 'Give this person a name.');
+  if (!LOGIN_ID_RE.test(loginId)) {
+    throw new HttpsError('invalid-argument', 'Login ID: 2–20 letters or numbers, no spaces.');
+  }
+  if (!PIN_RE.test(pin)) throw new HttpsError('invalid-argument', 'PIN must be exactly 6 digits.');
+  if (!['admin', 'booker', 'rider'].includes(role)) {
+    throw new HttpsError('invalid-argument', 'Pick a role.');
+  }
+
+  const companyCode = await companyCodeFor(companyId);
+  const email = staffEmail(loginId, companyCode);
+  const dirRef = db.doc(`employeeDirectory/${email}`);
+  const dirSnap = await dirRef.get();
+  // A removed staff login is fair game — removeEmployee moves the old address
+  // out of the way precisely so the round's next man can inherit the login ID.
+  if (dirSnap.exists && !dirSnap.data().removedAt) {
+    throw new HttpsError('already-exists', `"${loginId}" is already taken. Pick another login ID.`);
+  }
+
+  let uid;
+  try {
+    ({ uid } = await getAuth().createUser({ email, password: pin, displayName: name }));
+  } catch (e) {
+    if (e.code === 'auth/email-already-exists') {
+      throw new HttpsError('already-exists', `"${loginId}" is already taken. Pick another login ID.`);
+    }
+    if (e.code === 'auth/invalid-password') {
+      throw new HttpsError('invalid-argument', 'PIN must be exactly 6 digits.');
+    }
+    throw new HttpsError('internal', e.message);
+  }
+
+  // Before the documents, so a phone that raced in on the new PIN is never
+  // admitted without a company. The claims ARE the authorisation (§4.3).
+  await getAuth().setCustomUserClaims(uid, { companyId, role });
+
+  const batch = db.batch();
+  batch.set(dirRef, {
+    email, companyId, role, name, uid,
+    loginId, companyCode, staffLogin: true,
+    addedBy: request.auth.uid,
+    addedAt: FieldValue.serverTimestamp(),
+    // Provisioned, so he has already "joined" — there is nothing to wait for.
+    joinedAt: FieldValue.serverTimestamp(),
+    removedAt: null,
+    removedBy: null,
+  });
+  batch.set(db.doc(`companies/${companyId}/employeeList/${email}`), {
+    email, name, role, loginId, staffLogin: true, joined: true, removed: false,
+  });
+  batch.set(db.doc(`companies/${companyId}/users/${uid}`), {
+    name, email, companyId, role,
+    active: true, cashUnconfirmed: 0, floatOutstanding: 0,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  await batch.commit();
+
+  if (role === 'rider') await claimDefaultRider(companyId, uid);
+
+  return { status: 'created', email, loginId, companyCode, role };
+});
+
+/**
+ * resetStaffPin — the owner IS the password-reset flow.
+ *
+ * Nothing can be mailed to a synthesised address, which is the whole point: the
+ * man who forgot his PIN on a market street rings the owner, who reads him a
+ * new one. Tokens are revoked with it, so a phone still holding the old session
+ * is out inside a minute (startAccessWatch) — that matters when the reason for
+ * the reset is that the handset went missing.
+ */
+exports.resetStaffPin = onCall({ region: 'asia-south1' }, async (request) => {
+  if (!request.auth || request.auth.token.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Only the owner resets a PIN.');
+  }
+  const companyId = request.auth.token.companyId;
+  const email = norm(request.data?.email);
+  const pin = String(request.data?.pin || '');
+  if (!PIN_RE.test(pin)) throw new HttpsError('invalid-argument', 'PIN must be exactly 6 digits.');
+
+  const snap = await db.doc(`employeeDirectory/${email}`).get();
+  if (!snap.exists || snap.data().companyId !== companyId) {
+    throw new HttpsError('not-found', 'Not on your employee list.');
+  }
+  const target = snap.data();
+  if (target.removedAt) {
+    throw new HttpsError('failed-precondition', 'This person no longer has access.');
+  }
+  if (!target.staffLogin || !target.uid) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This person signs in with Google — there is no PIN to reset.',
+    );
+  }
+
+  await getAuth().updateUser(target.uid, { password: pin });
+  await getAuth().revokeRefreshTokens(target.uid);
+  return {
+    status: 'reset',
+    email,
+    loginId: target.loginId || '',
+    companyCode: target.companyCode || '',
+  };
+});
+
+/**
  * removeEmployee — FR-1.9: cut access within about a minute.
  * Refuses to remove the last admin (FR-1.10).
  */
@@ -282,6 +502,22 @@ exports.removeEmployee = onCall({ region: 'asia-south1' }, async (request) => {
     }
     await getAuth().setCustomUserClaims(target.uid, null);
     await getAuth().revokeRefreshTokens(target.uid); // FR-1.9
+    // Revocation alone leaves an account that can still authenticate — it just
+    // gets a claimless token. Disabling is the hard stop, and for a PIN login
+    // it is the only one that matters: the ex-rider knows his own six digits.
+    await getAuth()
+      .updateUser(target.uid, { disabled: true })
+      .catch((e) => console.warn('disable account', e.message));
+    // Free the login ID so the next man on the round can be "ali" too. The uid
+    // is untouched, so his days, cash and orders stay attached to him and not
+    // to whoever inherits the name.
+    if (target.staffLogin && target.loginId && target.companyCode) {
+      await getAuth()
+        .updateUser(target.uid, {
+          email: staffEmail(`${target.loginId}.left-${target.uid.slice(0, 6)}`, target.companyCode),
+        })
+        .catch((e) => console.warn('release login id', e.message));
+    }
   }
   // Take him off every round he covered and out of the default slot —
   // otherwise new orders keep addressing a ghost, and because a rider's read

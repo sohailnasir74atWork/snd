@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-10
+**Written:** 2026-08-09 · **Last updated:** 2026-08-10 (second round that day — §1d)
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -11,16 +11,16 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 7 commits ahead of `main` and **not merged or pushed** — see §1b, §1c |
+| Branch | **`booker-screens-pass`**, 8 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 16` / `versionName "2.1"` — the AAB predates §1c, so it does **not** contain it |
+| Version | `versionCode 17` / `versionName "2.2"` — built after §1d, so it **does** contain it |
 | TypeScript | 0 errors |
-| ESLint | 0 errors (101 warnings, all house style: `no-void`, `no-bitwise`, inline styles) |
+| ESLint | 0 errors (108 warnings, all house style: `no-void`, `no-bitwise`, inline styles) |
 | Unit tests | **132 / 132**, 11 suites |
 | Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
-| Device | debug build driven on the emulator (§1b); ❗ **nothing in §1c has been driven anywhere but the emulator, and no release build by hand since the SaaS round** — see §4.1 before publishing |
+| Device | debug build driven on the emulator (§1b); §1d driven on the emulator in **both debug and a real release build** (R8 on — see §4.0b). ❗ **Nothing in §1c or §1d has been on a real phone** — see §4.1 before publishing |
 
 > **There is no production.** The app is not on a public track and there is no
 > real customer data anywhere. "Evolver Skin Care"
@@ -54,6 +54,19 @@ stay on `nam5` for now — that is a decision, not an oversight.
 
 ### Deployed to `saleforec-10ce7`
 
+- **2026-08-10, second deploy — staff logins (§1d).** `createStaffLogin` and
+  `resetStaffPin` **created**; `admitSignIn` and `removeEmployee` **updated**.
+  All four in `asia-south1`, `Deploy complete`, no errors. Backward-compatible:
+  a Google sign-in from `versionCode 16` still admits exactly as before.
+  ⚠️ **`createStaffLogin` cannot work until Email/Password is enabled** in
+  Console → Authentication → Sign-in method. It is NOT enabled at time of
+  writing. The failure is misleading — the account is created server-side and
+  the staff member's sign-in is then rejected, which reads as a wrong PIN.
+  > The deploy log warns that **Node.js 20 is decommissioned 2026-10-30** —
+  > about eleven weeks out. Deployed functions keep serving past that date, but
+  > you cannot deploy at all until the runtime is upgraded, and
+  > `firebase-functions` is flagged outdated with breaking changes on upgrade.
+  > That is its own testing pass, not a drive-by bump.
 - **Cloud Functions** — all 8, redeployed in the SaaS round
 - **`firestore.rules`** — including the `days` tenant fix (§1a) and, deployed
   **2026-08-09 ahead of the branch that needs it**, `allow delete` on shops for
@@ -160,6 +173,154 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1d. Two doors — staff logins, the artwork, the eighth commit
+
+The newest commit on the branch. As with §1c, no hash is quoted: this section
+ships inside the commit it describes.
+
+Green locally (0 / 0 / 132) and driven on the emulator — the welcome screen,
+the two-door fork and the Credential Manager sheet were all screenshotted on
+`Pixel9_API35`. **No real phone, and no release build has been opened**; the
+AAB for `versionCode 17` was produced from this commit but not installed.
+
+### The question that started it
+
+*Is it logical to recruit an employee and make them sign in with Gmail?*
+
+No, and the code said so louder than anyone did. The owner had to type his
+rider's Gmail address **exactly** into the Employees screen — an address the
+owner does not know and the rider frequently does not either, because his
+handset was set up for him at the shop he bought it from. One wrong character
+and the rider's first morning is a refusal screen and a phone call. That sat at
+the highest-friction minute of the whole product.
+
+Salesforce, Shopify POS, Square and every field-sales tool in this market do
+the same thing instead: **the org provisions the identity**. Consumer OAuth is
+for self-service signup — the person paying. So:
+
+| | How they sign in |
+|---|---|
+| Owner / admin | Google. They are signing themselves up, they have a real address, and Google carries recovery so there is no helpdesk to build |
+| Booker / rider | A login ID and a 6-digit PIN **the owner issues**. No Gmail, no SMS, no Play Services |
+
+**The synthetic address.** Firebase Auth needs a globally unique email, so one
+is made up from the company's own code — `ali@alitraders.snd.app` — and shown
+to nobody. The man types `alitraders`, `ali` and six digits. `parseStaffEmail`
+in `auth.ts` reads the pair back out of the address rather than storing them
+separately, which is what keeps the "continue as" hint correct through
+`refreshAdmission` — that function re-remembers the account on every restore
+and has no idea which door the person came in by.
+
+**Company codes.** `reserveCompanyCode` claims one in a transaction against
+`companySlugs/{code}`, derived from the business name so a rider can be told it
+once. Minted at business creation, and lazily by `companyCodeFor` for any
+business that predates this. Mirrored onto `settings/company.companyCode`
+because that is the document every client already listens to.
+
+**This kills the one-email-one-business ceiling, for staff.** `employeeDirectory`
+is keyed by email, so a person could only ever belong to one company — a real
+problem for a generic app the moment a rider works for two distributors. Each
+tenant now mints its own identity in its own namespace, so the same human can
+hold three. **Owners still have the ceiling**; that is unchanged and still a
+trap (§3).
+
+**Six digits, never leading zero.** Firebase Auth rejects passwords under six
+characters, so four was never available. A leading zero is dropped by half the
+people who copy a number onto a slip, so `newPin()` starts at 100000.
+
+**`removeEmployee` got harder.** It revoked refresh tokens, which leaves an
+account that can still authenticate — it just gets a claimless token. It now
+**disables** the account, and for a PIN login that is the only stop that
+matters, because the ex-rider knows his own six digits. It also renames the
+address to a tombstone so the next man on the round can be `ali` too; the uid
+is untouched, so the old man's days, cash and orders stay attached to him.
+
+**A PIN reset revokes tokens, and that needed its own sentence.** Removal and a
+reset look identical to the phone — a dead token either way, with no way to ask
+which. `strings.signIn.signedOutRemotely` covers both and accuses nobody;
+telling a rider whose PIN was just reset that his access was "ended by the
+owner" reads as being fired.
+
+⚠️ **A 6-digit PIN is brute-forceable if a login ID leaks.** Firebase's own
+throttling is the only thing standing there right now — `too-many-requests` is
+handled and the refusal never says which of the three fields was wrong, which
+is deliberate. **App Check plus a server-side lockout is the real fix and is
+NOT done** (§4).
+
+### The welcome screen was lying
+
+`onSignIn('employee')` and `onSignIn('owner')` called the identical function.
+The intent changed the wording of a REFUSAL and nothing else, so the screen
+offered a choice, ignored it, and carried a line underneath — *"Both sign in
+with Google — we know who you are"* — admitting as much. The fork is real now,
+and that line is gone because it has nothing to apologise for.
+
+**The wizard was the worse version of the same bug.** Its step 4 was Gmail-only,
+so a brand-new owner on his very first run was walked straight into the friction
+this whole round exists to remove, four screens before he would ever find the
+Employees screen. It now carries the same App-login/Google toggle.
+
+### The artwork
+
+`react-native-svg@15.15.5` was added — a **native dependency**, so a JS reload
+will not pick it up. It compiled clean against RN 0.86.2.
+
+`BrandHero` draws the tagline instead of decorating around it: a van on a round,
+a shop with a teal awning, a dashed route with a stop pin, and a khata page with
+a line ticked off. `StaffHero` draws the slip the man is holding — three lines,
+the last of them six dots. Every colour is a theme token; the two literals are
+the logo teal and a deeper crimson used only as the van's own shading, neither
+of which is a UI colour.
+
+The dark SnD square that used to head this screen is **gone**. With a scene
+above and the wordmark below it was a third brand statement competing with both.
+
+`EmptyState` gained a concentric ring — one component, 21 screens. The ring is
+absolutely positioned so the disc keeps the layout box; nothing shifted.
+
+### Credential Manager — the bottom sheet
+
+The centred "Choose an account" dialog is drawn by Play Services and **cannot be
+styled, moved or themed by any app**. The bottom sheet is a different API —
+Credential Manager — and the installed `@react-native-google-signin/google-signin`
+is the free tier, which its own README says uses the legacy SDK. The premium
+package has it; rather than buy a licence, there is now an app-local native
+module.
+
+`CredentialSignInModule.kt` — `GetGoogleIdOption` → `getCredentialAsync` →
+`GoogleIdTokenCredential`. It returns **the same ID token** the legacy path
+returns, so `GoogleAuthProvider.credential()`, `admitSignIn` and every claim
+downstream are untouched; Firebase cannot tell which door it came through.
+
+- **Plain `ReactContextBaseJavaModule`, not a codegen TurboModule.** The New
+  Architecture's interop layer serves legacy modules unchanged, and a codegen
+  spec for one method is machinery without benefit.
+- **`reactApplicationContext.currentActivity`, not the module's own.**
+  `ReactContextBaseJavaModule` no longer exposes `getCurrentActivity()` in RN
+  0.86. Credential Manager requires an Activity and rejects an app context.
+- **`setAutoSelectEnabled(false)`.** It will otherwise sign somebody in with
+  zero taps. On a screen forking between two different people, silently picking
+  the handset owner's account is the wrong answer on a shared phone.
+- **Two passes.** Filtered first, so a returning owner gets a one-row sheet;
+  that pass fails rather than showing an empty one, so the second asks for every
+  account. **Only `no_credential` retries** — stale Play Services or a bad
+  client id fail the same way twice. A cancel is never retried.
+- **The legacy flow is still there and still reachable.** Any phone Credential
+  Manager cannot serve gets `'unavailable'` and falls through to
+  `GoogleSignin.hasPlayServices()` exactly as before. This is a nicer front
+  door, not a replacement. iOS is untouched.
+
+**ProGuard — checked, not assumed.** ✅ The Google credential classes are
+resolved reflectively by type string, so R8 cannot see the use and would strip
+them: the failure mode is a sheet that works in every debug build and dies only
+in release. Keep rules are in `app/proguard-rules.pro`, and a release APK from
+this commit was installed on the emulator and the sheet opened — no
+`ClassNotFoundException`, clean logcat. `react-native-svg` survives R8 too.
+Do not remove those rules because "nothing seems to use them"; nothing visibly
+does, which is the entire point.
 
 ---
 
@@ -436,6 +597,40 @@ two shops visited, because marking one puts the next under the same button.
 
 ## 4. What is NOT done
 
+0. **Email/Password is NOT enabled in Firebase Auth.** ❗ **Blocks §1d entirely.**
+
+   Console → Authentication → Sign-in method → enable **Email/Password**. Until
+   that is on, the whole staff lane is dead, and it fails in the way that wastes
+   the most time: `createStaffLogin` succeeds, the owner gets a slip with a
+   business code, login ID and PIN on it, and the staff member's sign-in is then
+   rejected — which reads as a wrong PIN, not a console setting. It is one
+   toggle. Do it before testing anything in §1d.
+
+   Then the end-to-end check is: Employees → Add employee → App login → create →
+   note the slip → sign out → **I work for a business** → type the three fields.
+
+0a. **App Check and a PIN lockout are NOT done.** ⚠️
+
+   A 6-digit PIN plus a known login ID is brute-forceable, and Firebase's own
+   throttling is the only thing in the way. The refusal deliberately never says
+   which of the three fields was wrong, and `too-many-requests` is handled — but
+   that is mitigation, not a fix. App Check plus a server-side failed-attempt
+   lockout is the real answer. Do it before a real customer holds real khata.
+
+0b. **`versionCode 17` has not been on a real phone** — but the release build
+   HAS been driven. ✅ ⚠️
+
+   The ProGuard question is **settled**. A release APK from this exact commit
+   (`assembleRelease` — R8, `minifyEnabled` and `shrinkResources` all on, the
+   same pipeline the AAB uses) was installed on the emulator, and the Credential
+   Manager sheet opens: no `ClassNotFoundException`, no crash, clean logcat. The
+   keep rules in `app/proguard-rules.pro` are proven, not assumed. `react-native-svg`
+   also survives R8 — both illustrations render in release.
+
+   What that does **not** cover: a real handset, real Play Services, and an
+   actual account tap. The emulator's Play Services is not the field's. Still
+   worth five minutes on a real phone before anyone else holds it.
+
 1. **`versionCode 16` HAS NOT BEEN DRIVEN ON A PHONE.** ❗
 
    The AAB is built and signed. Nobody has run it. The SaaS round replaced
@@ -690,8 +885,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "https://firestore.googleapis.com/v1/p
 | `src/components/theme.ts` | every colour, size and space — including `space.gutter`, `color.cardEdge` and `shadow.card` |
 | `src/lib/order.ts` | all order money: `computeTotals`, `discountPercentForPrice`, `lowestPrice`, `netOfTax`. Screens never do arithmetic |
 | `src/app/navigation.tsx` | `BookerRouteStack` is where Route, the order form and the shop search live; the booker has three tabs |
+| `src/components/BrandHero.tsx` | both illustrations (`BrandHero`, `StaffHero`). Theme tokens only — an illustration that drifts off the palette is what makes an app look assembled |
+| `src/app/credentialSignIn.ts` | the bottom-sheet wrapper. Returns `'unavailable'` on anything it cannot serve, which is what makes the legacy fallback real |
+| `android/app/src/main/java/…/CredentialSignInModule.kt` | the only native code in this app that is not a library |
 | `firestore.rules` | identity rides in the token; rules never do lookups. Shops are the ONLY collection with a live `delete` |
-| `functions/index.js` | `admitSignIn` is the only door into the app |
+| `functions/index.js` | `admitSignIn` is the only door into the app — **but no longer the only way to reach it**: `createStaffLogin` mints an account and its claims directly (§1d) |
 
 Firestore layout is `companies/{companyId}/…` for everything except `employeeDirectory`,
 which is at the root because sign-in must resolve an email before it knows the company.

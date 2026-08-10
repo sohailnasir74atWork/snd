@@ -5,7 +5,7 @@
  * safety prompt (a lost account must have a way back in).
  */
 import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Card, Chip, Icon, IconTile, ListRow, Money, MoreFields, OptionBar, PrimaryButton,
@@ -478,12 +478,22 @@ const ROLE_SHORT: Record<Employee['role'], string> = {
   admin: 'Admin', booker: 'Booker', rider: 'Rider',
 };
 
+const METHODS = ['app', 'google'] as const;
+type Method = (typeof METHODS)[number];
+const METHOD_LABELS: Record<Method, string> = { app: 'App login', google: 'Google' };
+const LOGIN_ID_RE = /^[a-z0-9][a-z0-9._-]{1,19}$/;
+/** Never leads with a zero — that is the digit people drop off a slip. */
+const newPin = () => String(Math.floor(Math.random() * 900000) + 100000);
+
 function TeamStep({ onFinish }: { onFinish: () => void }) {
   const store = useStore();
   // The last-admin guard below counts this list, so it has to be synced before
   // the guard can mean anything.
   useNeed('employeeList');
+  const [method, setMethod] = React.useState<Method>('app');
   const [email, setEmail] = React.useState('');
+  const [loginId, setLoginId] = React.useState('');
+  const [pin, setPin] = React.useState(newPin);
   const [name, setName] = React.useState('');
   const [role, setRole] = React.useState<Employee['role']>('admin');
   const [busy, setBusy] = React.useState(false);
@@ -495,16 +505,34 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
   // now the busy label, so the button spins instead of pretending to be
   // unfinished.
   const disabledReason =
-    !emailOk ? 'Enter their Gmail address first'
-    : name.trim() === '' ? 'Type their name first'
-    : undefined;
+    name.trim() === '' ? 'Type their name first'
+    : method === 'google'
+      ? (!emailOk ? 'Enter their Gmail address first' : undefined)
+      : (!LOGIN_ID_RE.test(loginId) ? 'Pick a login ID first' : undefined);
 
   const add = async () => {
-    if (busy) return; // addEmployee calls a cloud function — never call it twice
+    if (busy) return; // both of these call a cloud function — never call twice
     setBusy(true);
     try {
-      await store.addEmployee(email.trim().toLowerCase(), name.trim(), role);
-      setEmail(''); setName(''); setRole('admin');
+      if (method === 'google') {
+        await store.addEmployee(email.trim().toLowerCase(), name.trim(), role);
+      } else {
+        const who = name.trim();
+        const issued = pin;
+        const res = await store.createStaffLogin({ name: who, loginId, pin: issued, role });
+        // The PIN is hashed the moment it lands, so this alert is the only
+        // time it will ever be readable. Say so, and offer to send it.
+        const body =
+          `${who} — your login for SnD Manager\n\n` +
+          `Business code: ${res.companyCode}\n` +
+          `Login ID: ${res.loginId}\n` +
+          `PIN: ${issued}`;
+        Alert.alert(`${who} can sign in now`, `${body}\n\nThe PIN is not shown again.`, [
+          { text: 'Done', style: 'cancel' },
+          { text: 'Send', onPress: () => void Share.share({ message: body }).catch(() => {}) },
+        ]);
+      }
+      setEmail(''); setLoginId(''); setPin(newPin()); setName(''); setRole('admin');
     } catch (e) {
       Alert.alert('Could not add', e instanceof Error ? e.message : 'Something went wrong. Try again.');
     } finally {
@@ -541,16 +569,18 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
       <Card>
         <CardHead icon="account-plus-outline" label="Add a person" />
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Gmail address</Text>
-          <TextInput
-            style={styles.input}
-            value={email}
-            onChangeText={setEmail}
-            placeholder="name@gmail.com"
-            placeholderTextColor={color.textFaint}
-            keyboardType="email-address"
-            autoCapitalize="none"
+          <Text style={styles.fieldLabel}>How do they sign in?</Text>
+          <OptionBar
+            options={METHODS}
+            value={method}
+            render={m => METHOD_LABELS[m]}
+            onChange={setMethod}
           />
+          <Text style={styles.methodHint}>
+            {method === 'app'
+              ? 'You pick the login ID, the app makes a PIN. No Gmail needed — best for riders and bookers.'
+              : 'They sign in with this exact Google address. Best for a partner with a work email.'}
+          </Text>
         </View>
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>Name</Text>
@@ -562,6 +592,43 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
             placeholderTextColor={color.textFaint}
           />
         </View>
+        {method === 'google' ? (
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Gmail address</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="name@gmail.com"
+              placeholderTextColor={color.textFaint}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          </View>
+        ) : (
+          <>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Login ID</Text>
+              <TextInput
+                style={styles.input}
+                value={loginId}
+                onChangeText={t => setLoginId(t.toLowerCase().replace(/[^a-z0-9._-]/g, ''))}
+                placeholder="e.g. ahmed"
+                placeholderTextColor={color.textFaint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={20}
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>PIN</Text>
+              <View style={styles.pinRow}>
+                <Text style={styles.pinValue} selectable>{pin}</Text>
+                <Chip small label="New PIN" onPress={() => setPin(newPin())} />
+              </View>
+            </View>
+          </>
+        )}
         <View style={styles.field}>
           <Text style={styles.fieldLabel}>Role</Text>
           <OptionBar
@@ -594,7 +661,9 @@ function TeamStep({ onFinish }: { onFinish: () => void }) {
                 key={e.email}
                 icon="account-multiple-outline"
                 title={e.name}
-                sub={`${ROLE_LABELS[e.role]} • ${e.email}`}
+                // A staff address is synthesised and unreadable; what the owner
+                // needs to see back is the login ID he just chose.
+                sub={`${ROLE_LABELS[e.role]} • ${e.staffLogin ? e.loginId ?? '—' : e.email}`}
                 right={<Tag label={e.joined ? 'JOINED' : 'INVITED'} tone={e.joined ? 'success' : 'warn'} />}
               />
             ))}
@@ -642,6 +711,10 @@ const styles = StyleSheet.create({
 
   field: { marginBottom: space.s },
   fieldLabel: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs },
+  methodHint: { fontSize: font.sub, color: color.textSub, marginTop: space.s, lineHeight: 16 },
+  // Generated, never typed — so it is displayed rather than input.
+  pinRow: { flexDirection: 'row', alignItems: 'center', gap: space.m },
+  pinValue: { fontSize: font.h1, fontWeight: '800', color: color.text, letterSpacing: 4 },
   input: {
     backgroundColor: color.surfaceAlt, borderRadius: radius.tile,
     borderWidth: 1, borderColor: color.border,

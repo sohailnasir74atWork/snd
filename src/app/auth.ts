@@ -1,23 +1,32 @@
 /**
- * Sign in with Google + employee-list admission — SRS FR-1.1–1.10, §10.1.
+ * Two doors, one admission — SRS FR-1.1–1.10, §10.1.
  *
- * Flow: Google account chooser → Firebase Auth → the `admitSignIn` Cloud
- * Function checks the email against employeeDirectory and writes
- * {companyId, role} into custom claims → the client force-refreshes its
- * token and lands on the role home. Refusals carry one of three specific
- * messages (FR-1.4) — never a generic error.
+ *   Owners  → Sign in with Google. They are signing themselves up, they have a
+ *             real address, and Google carries recovery for them.
+ *   Staff   → A login ID and a six-digit PIN the OWNER issued. He knows his
+ *             rider's face and phone number, not his Gmail; asking him to spell
+ *             an address he does not have put the app's worst failure in its
+ *             first minute. The address behind a staff login is synthesised
+ *             from the company code and never shown to anyone.
+ *
+ * Both land in the same place: `admitSignIn` checks employeeDirectory and
+ * writes {companyId, role} into custom claims, the client force-refreshes its
+ * token, and the role home opens. Refusals carry one specific message
+ * (FR-1.4) — never a generic error.
  */
 import {
   getAuth,
   GoogleAuthProvider,
   onIdTokenChanged,
   signInWithCredential,
+  signInWithEmailAndPassword,
   signOut as fbSignOut,
 } from '@react-native-firebase/auth';
 import { getFunctions, httpsCallable } from '@react-native-firebase/functions';
 import { getCrashlytics, setAttributes, setUserId } from '@react-native-firebase/crashlytics';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { kv } from '../lib/kv';
+import { signInWithCredentialManager } from './credentialSignIn';
 import { strings } from '../i18n/strings';
 import type { Role, SessionUser } from './types';
 
@@ -33,22 +42,57 @@ export function configureGoogleSignIn(): void {
 const SESSION_KEY = 'snd.session';
 const LAST_ACCOUNT_KEY = 'snd.lastAccount';
 
-export type LastAccount = { email: string; name: string };
+/** Mirrors the server's synthesised staff address. Never typed, never shown. */
+const STAFF_DOMAIN = 'snd.app';
+const staffEmail = (loginId: string, companyCode: string) =>
+  `${loginId}@${companyCode}.${STAFF_DOMAIN}`;
+
+/**
+ * Pull the login ID and company code back out of a synthesised address.
+ *
+ * Deriving these rather than storing them alongside is what keeps the
+ * "continue as" hint correct through `refreshAdmission`, which re-remembers the
+ * account on every restore and has no idea which door the person came in by.
+ */
+function parseStaffEmail(email: string): { loginId: string; companyCode: string } | null {
+  const m = /^([^@]+)@([^@.]+)\.snd\.app$/.exec(email.trim().toLowerCase());
+  return m ? { loginId: m[1], companyCode: m[2] } : null;
+}
+
+export type LastAccount = {
+  email: string;
+  name: string;
+  /** Which door gets this person back in. */
+  kind: 'google' | 'staff';
+  /** Staff only — everything but the PIN, so the return trip is six digits. */
+  loginId?: string;
+  companyCode?: string;
+};
 
 /**
  * A Welcome-screen hint that deliberately OUTLIVES sign-out.
  *
- * "I work for a business" vs "Create a new business" is the right question
- * exactly once. Every time after that the answer is already known, and asking
- * again puts a wrong button — the one that starts a second business — under
- * the thumb of someone who just wants back into their own.
+ * "Do you work for a business, or own one?" is the right question exactly once.
+ * Every time after that the answer is already known, and asking again puts a
+ * wrong button — the one that starts a second business — under the thumb of
+ * someone who just wants back into their own.
  *
- * Holds no credentials. Google and Firebase own those; this is a name and an
- * address used to label a button.
+ * Holds no credentials. Google and Firebase own those; a PIN is never written
+ * here. This is a name, and enough to label a button and fill two fields.
  */
 function rememberAccount(u: SessionUser): void {
   try {
-    kv.set(LAST_ACCOUNT_KEY, JSON.stringify({ email: u.email, name: u.name }));
+    const staff = parseStaffEmail(u.email);
+    kv.set(
+      LAST_ACCOUNT_KEY,
+      JSON.stringify({
+        email: u.email,
+        name: u.name,
+        kind: staff ? 'staff' : 'google',
+        loginId: staff?.loginId,
+        companyCode: staff?.companyCode,
+      }),
+    );
   } catch {}
 }
 
@@ -57,7 +101,15 @@ export function getLastAccount(): LastAccount | null {
     const raw = kv.getString(LAST_ACCOUNT_KEY);
     if (!raw) return null;
     const a = JSON.parse(raw) as Partial<LastAccount>;
-    return a.email ? { email: a.email, name: a.name ?? '' } : null;
+    if (!a.email) return null;
+    return {
+      email: a.email,
+      name: a.name ?? '',
+      // Anything written before staff logins existed came in through Google.
+      kind: a.kind === 'staff' ? 'staff' : 'google',
+      loginId: a.loginId,
+      companyCode: a.companyCode,
+    };
   } catch {
     return null;
   }
@@ -231,16 +283,97 @@ export type SignInResult =
   | { ok: true; user: SessionUser; notice?: string }
   | {
       ok: false;
-      reason: 'offline' | 'not_on_list' | 'access_ended' | 'cancelled';
+      reason:
+        | 'offline'
+        | 'not_on_list'
+        | 'access_ended'
+        | 'cancelled'
+        /** Staff lane: the code, the ID or the PIN is wrong — we cannot say which. */
+        | 'bad_credentials'
+        /** Too many wrong PINs. Firebase locked this address for a while. */
+        | 'locked';
       message: string;
       /** The address that was refused — the caller words its own refusal. */
       email?: string;
     };
 
+/**
+ * Everything after Firebase Auth says yes, shared by both doors.
+ *
+ * `lane` only decides how a refusal READS. A staff login that is not on the
+ * list is a broken record rather than an uninvited guest, and "ask your owner
+ * to add this Google address" is nonsense to a man who never had one.
+ */
+async function admitCurrentUser(
+  lane: 'google' | 'staff',
+  createBusinessName?: string,
+): Promise<SignInResult> {
+  const user = getAuth().currentUser;
+  if (!user) throw new Error('signed in, but no current user');
+
+  // Server-side admission: employeeDirectory lookup + custom claims (§10.1).
+  // The typed business name is what makes "Create your business" deliberate (FR-1.7).
+  const admit = admitCallable();
+  const { data } = (await admit({ createBusinessName })) as { data: AdmitResponse };
+
+  if (data.status === 'not_on_list') {
+    await signOutEverywhere();
+    forgetAccount(); // do not offer to continue as an account that is refused
+    return {
+      ok: false,
+      reason: 'not_on_list',
+      message:
+        lane === 'staff'
+          ? strings.signIn.staffNotOnList
+          : strings.signIn.notOnList(user.email ?? ''),
+      email: user.email ?? '',
+    };
+  }
+  if (data.status === 'access_ended') {
+    await signOutEverywhere();
+    forgetAccount();
+    return { ok: false, reason: 'access_ended', message: strings.signIn.accessEnded };
+  }
+
+  // Claims were just written server-side; refresh the token so rules see them.
+  await user.getIdToken(true);
+  const session: SessionUser = {
+    uid: user.uid,
+    email: user.email ?? '',
+    name: data.name || user.displayName || '',
+    companyId: data.companyId,
+    role: data.role,
+  };
+  storeSession(session);
+  rememberAccount(session);
+  return {
+    ok: true,
+    user: session,
+    notice:
+      data.status === 'already_in_business'
+        ? strings.signIn.alreadyInBusiness(data.businessName, data.role)
+        : undefined,
+  };
+}
+
 export async function signInWithGoogle(
   opts?: { createBusinessName?: string; silent?: boolean },
 ): Promise<SignInResult> {
   try {
+    // Credential Manager first — same token, but its picker is a bottom sheet
+    // rather than the centred dialog Play Services draws and no app can style.
+    // Skipped for a silent restore, which has its own no-UI path below, and it
+    // returns 'unavailable' on any phone it cannot serve, so the legacy flow
+    // underneath is a real fallback rather than a formality.
+    if (!opts?.silent) {
+      const sheet = await signInWithCredentialManager(WEB_CLIENT_ID);
+      if (sheet.type === 'cancelled') return { ok: false, reason: 'cancelled', message: '' };
+      if (sheet.type === 'success') {
+        await signInWithCredential(getAuth(), GoogleAuthProvider.credential(sheet.idToken));
+        return await admitCurrentUser('google', opts?.createBusinessName);
+      }
+    }
+
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
     // A returning person on their own phone should not have to pick their
     // account out of a list again — Google still holds the grant, so ask for
@@ -256,54 +389,53 @@ export async function signInWithGoogle(
     if (!idToken) throw new Error('no idToken from Google');
 
     const credential = GoogleAuthProvider.credential(idToken);
-    const { user } = await signInWithCredential(getAuth(), credential);
-
-    // Server-side admission: employeeDirectory lookup + custom claims (§10.1).
-    // The typed business name is what makes "Create your business" deliberate (FR-1.7).
-    const admit = admitCallable();
-    const { data } = (await admit({ createBusinessName: opts?.createBusinessName })) as {
-      data: AdmitResponse;
-    };
-
-    if (data.status === 'not_on_list') {
-      await signOutEverywhere();
-      forgetAccount(); // do not offer to continue as an account that is refused
-      return {
-        ok: false,
-        reason: 'not_on_list',
-        message: strings.signIn.notOnList(user.email ?? ''),
-        email: user.email ?? '',
-      };
-    }
-    if (data.status === 'access_ended') {
-      await signOutEverywhere();
-      forgetAccount();
-      return { ok: false, reason: 'access_ended', message: strings.signIn.accessEnded };
-    }
-
-    // Claims were just written server-side; refresh the token so rules see them.
-    await user.getIdToken(true);
-    const session: SessionUser = {
-      uid: user.uid,
-      email: user.email ?? '',
-      name: data.name || user.displayName || '',
-      companyId: data.companyId,
-      role: data.role,
-    };
-    storeSession(session);
-    rememberAccount(session);
-    return {
-      ok: true,
-      user: session,
-      notice:
-        data.status === 'already_in_business'
-          ? strings.signIn.alreadyInBusiness(data.businessName, data.role)
-          : undefined,
-    };
+    await signInWithCredential(getAuth(), credential);
+    return await admitCurrentUser('google', opts?.createBusinessName);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/network|offline|unavailable/i.test(msg)) {
       return { ok: false, reason: 'offline', message: strings.signIn.noInternetFirstTime };
+    }
+    throw e;
+  }
+}
+
+/**
+ * The staff door — a company code, a login ID and six digits (FR-1.3).
+ *
+ * No Play Services, no account chooser, no SMS, and no Gmail. A phone that
+ * cannot reach Google at all still gets its rider to work, which the Google
+ * lane cannot promise: `hasPlayServices` above is a wall with nothing behind it
+ * on a handset whose Play Services are missing or stale.
+ */
+export async function signInWithStaffId(
+  companyCode: string,
+  loginId: string,
+  pin: string,
+): Promise<SignInResult> {
+  const code = companyCode.trim().toLowerCase();
+  const id = loginId.trim().toLowerCase();
+  try {
+    await signInWithEmailAndPassword(getAuth(), staffEmail(id, code), pin);
+    return await admitCurrentUser('staff');
+  } catch (e: unknown) {
+    const code2 = (e as { code?: string })?.code ?? '';
+    const msg = e instanceof Error ? e.message : String(e);
+
+    if (/network|offline|unavailable/i.test(code2 + msg)) {
+      return { ok: false, reason: 'offline', message: strings.signIn.noInternetFirstTime };
+    }
+    if (/too-many-requests/.test(code2)) {
+      return { ok: false, reason: 'locked', message: strings.signIn.pinLocked };
+    }
+    // Firebase collapses "no such account" and "wrong PIN" into one code when
+    // email-enumeration protection is on, and that is the right answer to give
+    // anyway: telling a stranger which of the three fields was wrong is how a
+    // six-digit PIN gets guessed.
+    if (
+      /invalid-credential|wrong-password|user-not-found|invalid-email|user-disabled/.test(code2)
+    ) {
+      return { ok: false, reason: 'bad_credentials', message: strings.signIn.badStaffLogin };
     }
     throw e;
   }

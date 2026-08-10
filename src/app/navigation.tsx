@@ -12,7 +12,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { strings } from '../i18n/strings';
-import { Icon, color, font, radius, space } from '../components/ui';
+import { Icon, color, font, radius, shadow, space } from '../components/ui';
+import { BrandHero, StaffHero } from '../components/BrandHero';
 import type { Role } from './types';
 import {
   BookerRouteScreen, MyDayScreen, NewOrderScreen, ShopSearchScreen,
@@ -302,9 +303,162 @@ export function RoleTabs({ role, onSwitchRole }: { role: Role; onSwitchRole?: ()
  * and then a Cloud Function that can bootstrap a whole business, so every
  * button here has to go dead — and visibly so — until it comes back.
  */
-/** Which button was pressed. The server decides the role either way — this
- *  only says how to read a REFUSAL, which is different for the two people. */
+/**
+ * Which door was chosen — and now it genuinely is a door.
+ *
+ * These two used to be one call apart only in the wording of a refusal: the
+ * screen offered a choice, ignored it, and carried a line underneath owning up
+ * to that. `employee` opens the login-ID form; `owner` opens Google.
+ */
 export type SignInIntent = 'employee' | 'owner';
+
+/**
+ * The staff door — §7.1. Three fields, all of them off one slip of paper the
+ * owner wrote, and no dependency on Google, Play Services, SMS or an address
+ * anybody has to remember.
+ *
+ * A returning man is asked for the PIN alone: the code and the ID are already
+ * on the phone, and re-typing a business name he half-remembers at 7am on a
+ * market street is exactly the friction this whole lane exists to remove.
+ */
+export function StaffSignInScreen({
+  onSubmit,
+  onBack,
+  busy,
+  initialCompanyCode,
+  initialLoginId,
+  knownName,
+}: {
+  onSubmit: (companyCode: string, loginId: string, pin: string) => void;
+  onBack: () => void;
+  busy?: boolean;
+  initialCompanyCode?: string;
+  initialLoginId?: string;
+  /** Set for a returning person — collapses the form down to the PIN. */
+  knownName?: string;
+}) {
+  const [companyCode, setCompanyCode] = React.useState(initialCompanyCode ?? '');
+  const [loginId, setLoginId] = React.useState(initialLoginId ?? '');
+  const [pin, setPin] = React.useState('');
+  const [showPin, setShowPin] = React.useState(false);
+  const returning = !!knownName && !!initialCompanyCode && !!initialLoginId;
+  const ready =
+    companyCode.trim().length > 0 && loginId.trim().length > 0 && pin.length === 6 && !busy;
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.fill}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView
+        style={styles.welcome}
+        contentContainerStyle={styles.welcomeContent}
+        keyboardShouldPersistTaps="handled">
+        {/* The returning man is typing six digits into an autofocused field
+            with the keyboard already up — there is no room for a picture and
+            nothing left to explain. */}
+        {!returning && <StaffHero />}
+        <Text style={styles.staffTitle}>
+          {returning ? `Welcome back, ${knownName}` : 'Sign in to work'}
+        </Text>
+        <Text style={styles.staffHint}>
+          {returning
+            ? 'Enter your 6-digit PIN to carry on.'
+            : 'Use the business code, login ID and PIN your owner gave you.'}
+        </Text>
+
+        {!returning && (
+          <>
+            <Text style={styles.fieldLabel}>Business code</Text>
+            <TextInput
+              style={styles.input}
+              value={companyCode}
+              onChangeText={t => setCompanyCode(t.trim().toLowerCase())}
+              placeholder="e.g. alitraders"
+              placeholderTextColor={color.textFaint}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!busy}
+            />
+
+            <Text style={styles.fieldLabel}>Login ID</Text>
+            <TextInput
+              style={styles.input}
+              value={loginId}
+              onChangeText={t => setLoginId(t.trim().toLowerCase())}
+              placeholder="e.g. ali"
+              placeholderTextColor={color.textFaint}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!busy}
+            />
+          </>
+        )}
+
+        {returning && (
+          <View style={styles.staffWho}>
+            <Text style={styles.staffWhoText} numberOfLines={1}>
+              {initialLoginId} · {initialCompanyCode}
+            </Text>
+          </View>
+        )}
+
+        <Text style={styles.fieldLabel}>PIN</Text>
+        <View style={styles.pinRow}>
+          <TextInput
+            style={[styles.input, styles.pinInput]}
+            value={pin}
+            // Digits only, so a stray letter from a sticky keyboard cannot
+            // silently make a 6-character PIN that is not the one on the slip.
+            onChangeText={t => setPin(t.replace(/\D/g, '').slice(0, 6))}
+            placeholder="000000"
+            placeholderTextColor={color.textFaint}
+            keyboardType="number-pad"
+            secureTextEntry={!showPin}
+            maxLength={6}
+            autoFocus={returning}
+            editable={!busy}
+          />
+          {/* Daylight, a cracked screen and six dots is a bad combination. */}
+          <Pressable
+            style={styles.pinEye}
+            accessibilityLabel={showPin ? 'Hide PIN' : 'Show PIN'}
+            onPress={() => setShowPin(v => !v)}>
+            <Icon
+              name={showPin ? 'eye-off-outline' : 'eye-outline'}
+              size={22}
+              color={color.textSub}
+            />
+          </Pressable>
+        </View>
+
+        <Pressable
+          style={[styles.primaryBtn, styles.staffGo, !ready && styles.btnDisabled]}
+          disabled={!ready}
+          accessibilityState={{ disabled: !ready, busy: !!busy }}
+          onPress={ready ? () => onSubmit(companyCode, loginId, pin) : undefined}>
+          <View style={styles.btnRow}>
+            {busy ? <ActivityIndicator size="small" color={color.onDark} /> : null}
+            <Text style={styles.primaryBtnText}>{busy ? 'Signing in…' : 'Sign in'}</Text>
+          </View>
+        </Pressable>
+
+        <Pressable
+          style={styles.linkBtn}
+          disabled={busy}
+          accessibilityState={{ disabled: !!busy }}
+          onPress={busy ? undefined : onBack}>
+          <Text style={[styles.linkBtnText, busy && styles.secondaryBtnTextDisabled]}>
+            {returning ? 'Use a different login' : 'Back'}
+          </Text>
+        </Pressable>
+
+        <Text style={styles.staffFoot}>
+          Forgot your PIN? Only your owner can reset it — ask him for a new one.
+        </Text>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
 
 export function WelcomeScreen({
   onSignIn,
@@ -322,7 +476,13 @@ export function WelcomeScreen({
   /** Returning person on their own phone — straight back in, no chooser. */
   onContinue?: () => void;
   onUseAnother?: () => void;
-  lastAccount?: { email: string; name: string } | null;
+  lastAccount?: {
+    email: string;
+    name: string;
+    kind: 'google' | 'staff';
+    loginId?: string;
+    companyCode?: string;
+  } | null;
   busy?: boolean;
   /**
    * Controlled by the gate, not by this screen: a refused "I own a business"
@@ -355,11 +515,10 @@ export function WelcomeScreen({
         // Otherwise the first tap on the confirm button only dismisses the
         // keyboard and the press itself is swallowed.
         keyboardShouldPersistTaps="handled">
-        <View style={styles.logoMark}>
-          <Text style={styles.logoS}>S</Text>
-          <Text style={styles.logoN}>n</Text>
-          <Text style={styles.logoD}>D</Text>
-        </View>
+        {/* Short while the create-business field is up: the keyboard takes
+            most of the screen, and a full-height drawing above a form is a
+            drawing nobody can see past. */}
+        <BrandHero height={creating ? 116 : 190} />
         <Text style={styles.appName}>{strings.common.appName}</Text>
         <Text style={styles.appTag}>Orders, deliveries and khata — in one app</Text>
         {returning ? (
@@ -376,7 +535,13 @@ export function WelcomeScreen({
                 </Text>
               </View>
             </Pressable>
-            <Text style={styles.accountLine} numberOfLines={1}>{lastAccount?.email}</Text>
+            {/* A staff address is synthesised and meaningless on sight. What
+                the man recognises is the pair he was handed on a slip. */}
+            <Text style={styles.accountLine} numberOfLines={1}>
+              {lastAccount?.kind === 'staff' && lastAccount.loginId
+                ? `${lastAccount.loginId} · ${lastAccount.companyCode}`
+                : lastAccount?.email}
+            </Text>
             <Pressable
               style={[styles.secondaryBtn, busy && styles.secondaryBtnDisabled]}
               disabled={busy}
@@ -389,34 +554,54 @@ export function WelcomeScreen({
           </>
         ) : !creating ? (
           <>
-            {/* Both of these are one and the same sign-in — the server reads
-                the employee directory and hands back the role. They are two
-                buttons so each person recognises themselves, not because the
-                app needs to be told. Starting a business is the rare path and
-                is demoted to a link so nobody reaches for it by default. */}
+            {/* Two doors that lead to different places, so each one can say
+                where it goes. The staff button is the big target — most people
+                opening this app for the first time were handed a phone, not a
+                bill. Starting a business is the rare path and stays a link, but
+                a divider gives it enough room to be found on purpose. */}
             <Pressable
-              style={[styles.primaryBtn, busy && styles.btnDisabled]}
+              style={[styles.choiceCard, busy && styles.choiceOff]}
               disabled={busy}
-              accessibilityState={{ disabled: !!busy, busy: !!busy }}
+              accessibilityState={{ disabled: !!busy }}
               onPress={busy ? undefined : () => onSignIn('employee')}>
-              <View style={styles.btnRow}>
-                {busy ? <ActivityIndicator size="small" color={color.onDark} /> : null}
-                <Text style={styles.primaryBtnText}>{strings.welcome.workForBusiness}</Text>
+              {/* A key, because that is literally what he was handed. */}
+              <View style={[styles.choiceTile, { backgroundColor: color.ctaSoft }]}>
+                <Icon name="key-variant" size={22} color={color.cta} />
               </View>
+              <View style={styles.choiceBody}>
+                <Text style={styles.choiceTitle}>{strings.welcome.workForBusiness}</Text>
+                <Text style={styles.choiceSub}>{strings.welcome.workForBusinessSub}</Text>
+              </View>
+              <Icon name="chevron-right" size={22} color={color.textFaint} />
             </Pressable>
+
             <Pressable
-              style={[styles.secondaryBtn, busy && styles.secondaryBtnDisabled]}
+              style={[styles.choiceCard, busy && styles.choiceOff]}
               disabled={busy}
               accessibilityState={{ disabled: !!busy, busy: !!busy }}
               onPress={busy ? undefined : () => onSignIn('owner')}>
-              <View style={styles.btnRow}>
-                {busy ? <ActivityIndicator size="small" color={color.primary} /> : null}
-                <Text style={[styles.secondaryBtnText, busy && styles.secondaryBtnTextDisabled]}>
-                  {strings.welcome.ownBusiness}
-                </Text>
+              {/* The shopfront from the drawing above. Only this door does work
+                  on press — the other just opens a form — so it is the only one
+                  that can be waited on, and the spinner takes the tile's place
+                  rather than shoving the title sideways. */}
+              <View style={[styles.choiceTile, { backgroundColor: color.primarySoft }]}>
+                {busy
+                  ? <ActivityIndicator size="small" color={color.primary} />
+                  : <Icon name="storefront-outline" size={22} color={color.primary} />}
               </View>
+              <View style={styles.choiceBody}>
+                <Text style={styles.choiceTitle}>{strings.welcome.ownBusiness}</Text>
+                <Text style={styles.choiceSub}>{strings.welcome.ownBusinessSub}</Text>
+              </View>
+              <Icon name="chevron-right" size={22} color={color.textFaint} />
             </Pressable>
-            <Text style={styles.signInNote}>Both sign in with Google — we know who you are</Text>
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>{strings.welcome.startingFresh}</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
             <Pressable
               style={styles.linkBtn}
               disabled={busy}
@@ -489,23 +674,37 @@ const styles = StyleSheet.create({
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: color.bg },
   placeholderTitle: { fontSize: font.h1, fontWeight: '700', color: color.text, marginBottom: space.m },
   placeholderHint: { fontSize: font.body, color: color.textSub, textAlign: 'center', lineHeight: 20 },
-  fill: { flex: 1 },
+  // Carries the canvas colour as well as the flex: when the keyboard shrinks
+  // this, anything it uncovers must not flash white.
+  fill: { flex: 1, backgroundColor: color.bg },
   // Split in two so the keyboard can shrink the scroller: the canvas keeps
   // flex, the old padding/centring moves to the content container.
   welcome: { flex: 1, backgroundColor: color.bg },
-  welcomeContent: { flexGrow: 1, alignItems: 'stretch', justifyContent: 'center', padding: 24 },
-  logoMark: {
-    alignSelf: 'center', flexDirection: 'row', alignItems: 'flex-end',
-    backgroundColor: '#0F172A', borderRadius: 20, paddingHorizontal: 18, paddingVertical: 12,
-    marginBottom: space.l, shadowColor: '#0F172A', shadowOpacity: 0.3, shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 }, elevation: 8,
+  /**
+   * Centred, biased slightly UP.
+   *
+   * With `justifyContent: center` the free space splits evenly, so the heavier
+   * bottom padding lifts the block by half the difference — optical centre sits
+   * nearer 45% than 50%, and true centre reads as having drifted low.
+   *
+   * The bias was 96pt when this screen was mostly empty air; BrandHero fills
+   * most of that now, and the demo card sits below this scroller rather than
+   * inside it, so a small lift is all that is left to correct.
+   *
+   * On the staff form with the keyboard up the content is taller than the
+   * scroller, so none of this applies and the padding is simply scroll room.
+   */
+  welcomeContent: {
+    flexGrow: 1, alignItems: 'stretch', justifyContent: 'center',
+    paddingHorizontal: 24, paddingTop: 24, paddingBottom: 48,
   },
-  // Brand literals stay; only the mark's scale comes down with the new type.
-  logoS: { color: '#2DD4BF', fontSize: 34, fontWeight: '800' },
-  logoN: { color: '#94A3B8', fontSize: 22, fontWeight: '800', marginBottom: 2 },
-  logoD: { color: '#FFFFFF', fontSize: 34, fontWeight: '800' },
+  // The dark rounded SnD square that used to sit here is gone: BrandHero draws
+  // the scene and the wordmark below carries the name, so the square was a
+  // third brand statement competing with both.
   appName: { fontSize: 24, fontWeight: '800', color: color.text, textAlign: 'center', marginBottom: space.s },
-  appTag: { fontSize: font.body, color: color.textSub, textAlign: 'center', marginBottom: 32 },
+  // Was 32. The buttons now carry a line of their own each, so the old gap on
+  // top of that pushed the whole block into the dead middle of the screen.
+  appTag: { fontSize: font.body, color: color.textSub, textAlign: 'center', marginBottom: space.xl },
   primaryBtn: {
     backgroundColor: color.cta, borderRadius: radius.pill, paddingVertical: space.l,
     // minHeight keeps the one-handed target at 48 even as the padding tightens.
@@ -532,14 +731,48 @@ const styles = StyleSheet.create({
     fontSize: font.sub, color: color.textSub, textAlign: 'center',
     marginTop: space.xs, marginBottom: space.xs,
   },
-  // Says the quiet part out loud: the two buttons above are one action, so
-  // picking the "wrong" one costs nothing.
-  signInNote: {
-    fontSize: font.sub, color: color.textFaint, textAlign: 'center',
-    marginTop: space.s,
+  /**
+   * The fork, as two cards rather than two pills.
+   *
+   * The descriptions used to sit BETWEEN the buttons as loose grey lines, which
+   * is a caption belonging to nothing — the eye cannot tell whether it explains
+   * the button above it or labels the one below. Inside the card there is no
+   * question. The icons are the other half: two identical full-width pills gave
+   * the eye nothing to sort by, and a key and a shopfront are recognised long
+   * before either title is read.
+   */
+  choiceCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: color.surface,
+    borderRadius: radius.card + 2, paddingVertical: space.m, paddingHorizontal: space.l,
+    minHeight: 68, marginBottom: space.m,
+    // Plain card edge all the way round. The colour lives in the icon tile
+    // alone — a solid crimson card put a third saturated red on a screen that
+    // already has a red van and a red pin, and it shouted over the artwork it
+    // sits under.
+    borderWidth: 1, borderColor: color.cardEdge,
+    ...shadow.card,
   },
-  linkBtn: { alignItems: 'center', justifyContent: 'center', minHeight: 44, marginTop: space.m },
-  linkBtnText: { fontSize: font.body, fontWeight: '700', color: color.primary },
+  choiceOff: { opacity: 0.55 },
+  choiceTile: {
+    width: 40, height: 40, borderRadius: 13,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  choiceBody: { flex: 1, minWidth: 0, marginLeft: space.m },
+  choiceTitle: { fontSize: font.h2, fontWeight: '800', color: color.text },
+  choiceSub: { fontSize: font.sub, marginTop: 2, lineHeight: 16, color: color.textSub },
+  // Gives "Create a new business" a room of its own. It is the rare path, so
+  // it stays a link — but a link nobody trips over is also a link nobody finds.
+  divider: { flexDirection: 'row', alignItems: 'center', marginTop: space.s, gap: space.m },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.border },
+  dividerText: { fontSize: font.sub, color: color.textFaint, fontWeight: '600' },
+  linkBtn: { alignItems: 'center', justifyContent: 'center', minHeight: 44, marginTop: space.s },
+  // Was identical to secondaryBtnText — same size, same weight, same blue — so
+  // the third option shouted as loudly as the second. It stays blue, because it
+  // is a real action and greying it would read as unavailable; the weight is
+  // what puts it third. Size holds at font.body: this screen is read at arm's
+  // length in daylight, and shrinking the signup path is the wrong trade.
+  linkBtnText: { fontSize: font.body, fontWeight: '600', color: color.primary },
   // Why this form appeared without being asked for. Sits above the title so
   // the refused address is the first thing read, not an afterthought.
   createNote: {
@@ -551,5 +784,38 @@ const styles = StyleSheet.create({
     backgroundColor: color.surface, borderRadius: radius.card, borderWidth: 1, borderColor: color.border,
     // Padding down to space.m, so minHeight carries the 44pt touch target.
     padding: space.m, minHeight: 44, fontSize: font.body + 1, marginBottom: space.l, color: color.text,
+  },
+
+  // ---- Staff door ---------------------------------------------------------
+  staffTitle: {
+    fontSize: font.h1, fontWeight: '800', color: color.text,
+    textAlign: 'center', marginBottom: space.s,
+  },
+  staffHint: {
+    fontSize: font.body, color: color.textSub, textAlign: 'center',
+    lineHeight: font.body + 6, marginBottom: space.xl,
+  },
+  fieldLabel: {
+    fontSize: font.sub, fontWeight: '700', color: color.textSub, marginBottom: space.xs,
+  },
+  // The returning man's identity, shown rather than asked for.
+  staffWho: {
+    backgroundColor: color.surfaceAlt, borderRadius: radius.card,
+    paddingVertical: space.m, paddingHorizontal: space.m, marginBottom: space.l,
+    alignItems: 'center',
+  },
+  staffWhoText: { fontSize: font.body, fontWeight: '700', color: color.text },
+  // The eye sits INSIDE the field's box rather than beside it, so the row does
+  // not shrink the PIN field to make room for a 44pt target.
+  pinRow: { position: 'relative', justifyContent: 'center' },
+  pinInput: { paddingRight: 52, letterSpacing: 6, fontSize: font.h2 },
+  pinEye: {
+    position: 'absolute', right: 0, top: 0, bottom: space.l,
+    width: 48, alignItems: 'center', justifyContent: 'center',
+  },
+  staffGo: { marginTop: space.xs },
+  staffFoot: {
+    fontSize: font.sub, color: color.textFaint, textAlign: 'center',
+    lineHeight: font.sub + 6, marginTop: space.l,
   },
 });

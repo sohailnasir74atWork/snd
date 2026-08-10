@@ -378,31 +378,132 @@ export function AdminDashboardScreen() {
   );
 }
 
-export function AdminMoreMenu({ navigation }: { navigation: { navigate: (r: string) => void } }) {
-  const items: [string, string, string, string][] = [
-    ['storefront-outline', 'Shops', 'add, edit, pins, balances', 'Shops'],
-    ['map-marker-radius-outline', 'Areas', 'the rounds a booker covers', 'Areas'],
-    ['bottle-tonic-plus-outline', 'Products', 'prices, stock, activate/deactivate', 'Products'],
-    ['account-multiple-outline', 'Employees', 'add by Gmail, roles, remove', 'Employees'],
-    ['account-clock-outline', 'Team today', 'who started, who is still out', 'TeamDay'],
-    ['chart-line', 'Reports', 'sales, collections, who owes me', 'Reports'],
-    ['receipt', 'Expenses', 'fixed charges + one-off expenses', 'Expenses'],
-    ['cog-outline', 'Settings', 'brand, delivery day, discounts, toggles', 'Settings'],
-  ];
+type MoreRow = {
+  icon: string;
+  tint: string;
+  bg: string;
+  title: string;
+  sub: string;
+  route: string;
+  right?: React.ReactNode;
+};
+
+/**
+ * One group of destinations. Module scope, not defined during render — a
+ * nested component would be a new type on every render and throw away the
+ * subtree each time.
+ */
+function MoreSection({
+  label, rows, onGo,
+}: { label: string; rows: MoreRow[]; onGo: (route: string) => void }) {
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Card>
-        {items.map(([icon, title, sub, route]) => (
-          <ListRow
-            key={route}
-            icon={icon}
-            title={title}
-            sub={sub}
-            chevron
-            onPress={() => navigation.navigate(route)}
-          />
+    <>
+      <SectionLabel>{label}</SectionLabel>
+      <Card style={styles.menuCard}>
+        {rows.map((r, i) => (
+          // Hairlines between rows: eight identical rows in one unbroken card
+          // read as a wall of text, and the eye has nothing to count by.
+          <View key={r.route} style={i < rows.length - 1 ? styles.menuDivider : undefined}>
+            <ListRow
+              icon={r.icon}
+              tint={r.tint}
+              bg={r.bg}
+              title={r.title}
+              sub={r.sub}
+              right={r.right}
+              chevron
+              onPress={() => onGo(r.route)}
+            />
+          </View>
         ))}
       </Card>
+    </>
+  );
+}
+
+export function AdminMoreMenu({ navigation }: { navigation: { navigate: (r: string) => void } }) {
+  const store = useStore();
+  const go = React.useCallback(
+    (route: string) => navigation.navigate(route),
+    [navigation],
+  );
+
+  // Everything counted here is ALREADY on the phone: shops, products, areas
+  // and today's day docs all attach at sign-in. This screen opens no listener
+  // of its own — which is exactly why Employees carries no count. That one is
+  // lazy (LazyKey), and a number on a menu row does not justify a sync a rider
+  // would also be paying for.
+  const shops = store.shops.filter(s => s.active).length;
+  const products = store.products.filter(p => p.active).length;
+  const areas = store.areas.filter(a => a.active).length;
+
+  // The only thing on this screen that is about money rather than navigation:
+  // cash a man has handed over that nobody has counted yet (FR-7.11). It
+  // outranks "still out" because it is the owner's to act on, not to wait on.
+  const toConfirm = store.staffDays.filter(d => d.handedOver && !d.handoverConfirmed).length;
+  const stillOut = store.staffDays.filter(d => d.routeStarted && !d.handedOver).length;
+  const teamRight =
+    toConfirm > 0 ? (
+      <Tag label={`${toConfirm} TO CONFIRM`} tone="warn" />
+    ) : stillOut > 0 ? (
+      <Tag label={`${stillOut} OUT`} tone="primary" />
+    ) : null;
+
+  const count = (n: number) => <Text style={styles.menuCount}>{n}</Text>;
+
+  // Daily checks first. This screen is reached from a tab several times a day
+  // and the setup lists are opened once a month, so leading with Shops put the
+  // rarest thing under the thumb and the owner's actual errand four rows down.
+  const today: MoreRow[] = [
+    {
+      icon: 'account-clock-outline', tint: color.primary, bg: color.primarySoft,
+      title: 'Team today', sub: 'who started, who is still out',
+      route: 'TeamDay', right: teamRight,
+    },
+    {
+      icon: 'chart-line', tint: color.success, bg: color.successSoft,
+      title: 'Reports', sub: 'sales, collections, who owes me', route: 'Reports',
+    },
+    {
+      icon: 'receipt', tint: color.warn, bg: color.warnSoft,
+      title: 'Expenses', sub: 'fixed charges + one-off expenses', route: 'Expenses',
+    },
+  ];
+
+  const business: MoreRow[] = [
+    {
+      icon: 'storefront-outline', tint: color.primary, bg: color.primarySoft,
+      title: 'Shops', sub: 'add, edit, pins, balances', route: 'Shops', right: count(shops),
+    },
+    {
+      icon: 'bottle-tonic-plus-outline', tint: color.success, bg: color.successSoft,
+      title: 'Products', sub: 'prices, stock, activate/deactivate',
+      route: 'Products', right: count(products),
+    },
+    {
+      icon: 'map-marker-radius-outline', tint: color.warn, bg: color.warnSoft,
+      title: 'Areas', sub: 'the rounds a booker covers', route: 'Areas', right: count(areas),
+    },
+    {
+      icon: 'account-multiple-outline', tint: color.primary, bg: color.primarySoft,
+      // Was "add by Gmail, roles, remove" — Gmail is now the second way in,
+      // not the only one.
+      title: 'Employees', sub: 'login IDs, PINs, roles', route: 'Employees',
+    },
+  ];
+
+  const app: MoreRow[] = [
+    {
+      icon: 'cog-outline', tint: color.textSub, bg: color.surfaceAlt,
+      title: 'Settings', sub: 'brand, delivery day, discounts, toggles', route: 'Settings',
+    },
+  ];
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <MoreSection label="Today" rows={today} onGo={go} />
+      <MoreSection label="Your business" rows={business} onGo={go} />
+      <MoreSection label="App" rows={app} onGo={go} />
     </ScrollView>
   );
 }
@@ -449,4 +550,11 @@ const styles = StyleSheet.create({
     backgroundColor: color.surfaceAlt,
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: space.s },
+
+  // ---- More menu ----------------------------------------------------------
+  menuCard: { paddingVertical: space.xs },
+  menuDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  // Faint on purpose: a count is context for the row it sits on, not a figure
+  // the owner is meant to read down the column.
+  menuCount: { fontSize: font.body, fontWeight: '700', color: color.textFaint },
 });

@@ -519,6 +519,34 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       }));
     },
 
+    // `pin` is a map helper at module scope in this file, so the field keeps
+    // its own name here.
+    async createStaffLogin({ name, loginId, pin: secret, role }) {
+      const companyCode = 'demo';
+      const id = loginId.trim().toLowerCase();
+      if (state.employees.some(e => e.loginId === id)) {
+        throw new Error(`"${id}" is already taken. Pick another login ID.`);
+      }
+      if (!/^\d{6}$/.test(secret)) throw new Error('PIN must be exactly 6 digits.');
+      setState(st => ({
+        ...st,
+        employees: [
+          ...st.employees,
+          // Provisioned, so joined from the start — there is no invitation
+          // sitting in anybody's inbox waiting to be accepted.
+          { email: `${id}@${companyCode}.snd.app`, name, role, joined: true, staffLogin: true, loginId: id },
+        ],
+      }));
+      return { loginId: id, companyCode };
+    },
+
+    async resetStaffPin(email, secret) {
+      if (!/^\d{6}$/.test(secret)) throw new Error('PIN must be exactly 6 digits.');
+      // Nothing to store — the demo holds no credentials at all.
+      const emp = state.employees.find(e => e.email === email);
+      return { loginId: emp?.loginId ?? '', companyCode: 'demo' };
+    },
+
     async removeEmployee(email) {
       setState(st => ({
         ...st,

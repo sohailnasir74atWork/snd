@@ -281,7 +281,25 @@ export interface StoreApi {
    */
   voidPayment(paymentId: string): void;
   updateSettings(patch: Partial<CompanySettings>): void;
+  /** Invite a Google address. The person is "Invited" until they sign in. */
   addEmployee(email: string, name: string, role: Employee['role']): Promise<void>;
+  /**
+   * Mint a login instead of asking for one — the owner picks the ID and the
+   * PIN, and the person can sign in the moment he is handed them. Resolves with
+   * the pair to write on the slip.
+   */
+  createStaffLogin(input: {
+    name: string;
+    loginId: string;
+    pin: string;
+    role: Employee['role'];
+  }): Promise<{ loginId: string; companyCode: string }>;
+  /**
+   * The owner IS the reset flow — nothing can be mailed to a staff address.
+   * Resolves with the pair to read out, taken from the server rather than from
+   * the settings listener, which may not have delivered the code yet.
+   */
+  resetStaffPin(email: string, pin: string): Promise<{ loginId: string; companyCode: string }>;
   removeEmployee(email: string): Promise<void>;
   addExpense(e: Omit<Expense, 'id'>): void;
   removeExpense(id: string): void;

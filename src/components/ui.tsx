@@ -289,11 +289,22 @@ export function MoreFields({
 }
 
 /** Guided empty state (§5.4) with an icon instead of an illustration. */
+/**
+ * The "nothing here yet" panel — 21 screens share this one drawing.
+ *
+ * The concentric ring is the same device BrandHero uses on the sign-in screen:
+ * a halo, then the shape. A lone pastel disc read as an icon that had been
+ * left somewhere; the ring gives it a place to sit and ties every empty screen
+ * in the app to the artwork the owner met on his first day.
+ */
 export function EmptyState({ icon, title, hint }: { icon: string; title: string; hint: string }) {
   return (
     <View style={styles.empty}>
-      <View style={styles.emptyIcon}>
-        <MCIcon name={icon} size={44} color={color.primary} />
+      <View style={styles.emptyArt}>
+        <View style={styles.emptyRing} />
+        <View style={styles.emptyIcon}>
+          <MCIcon name={icon} size={38} color={color.primary} />
+        </View>
       </View>
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptyHint}>{hint}</Text>
@@ -442,9 +453,16 @@ const styles = StyleSheet.create({
   optionTextActive: { color: color.onDark, fontWeight: '800' },
 
   empty: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 28 },
+  // The ring is absolute so the disc keeps the layout box — swapping to a
+  // 100pt art block would otherwise shift the title down on all 21 screens.
+  emptyArt: { width: 68, height: 68, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  emptyRing: {
+    position: 'absolute', width: 100, height: 100, borderRadius: 50,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: color.border,
+  },
   emptyIcon: {
     width: 68, height: 68, borderRadius: 34, backgroundColor: color.primarySoft,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    alignItems: 'center', justifyContent: 'center',
   },
   emptyTitle: { fontSize: font.h2, fontWeight: '700', color: color.text, textAlign: 'center' },
   emptyHint: { fontSize: font.sub, color: color.textSub, textAlign: 'center', marginTop: 5, lineHeight: 17 },

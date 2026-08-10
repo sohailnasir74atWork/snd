@@ -20,14 +20,17 @@ export const strings = {
     whatsapp: 'WhatsApp',
   },
   welcome: {
-    // The first two are the SAME sign-in: admitSignIn reads the employee
-    // directory and hands back the role. They are worded separately only so
-    // each person recognises themselves — an owner coming back after a
-    // sign-out did not see himself in "I work for a business", and the only
-    // other button on the screen offered to start a second business.
+    // Two doors that really are two doors. These used to be one call apart
+    // only in the wording of a refusal, which meant the screen offered a
+    // choice and then ignored it — and needed a line underneath admitting so.
     workForBusiness: 'I work for a business',
+    // Sits under the button. The rider does not know what a "login" is until
+    // he is told where it comes from: the man who hired him.
+    workForBusinessSub: 'Your owner gives you a login ID and PIN',
     ownBusiness: 'I own a business',
+    ownBusinessSub: 'Sign in with Google',
     createBusiness: 'Create a new business',
+    startingFresh: 'Starting fresh?',
     createBusinessConfirmTitle: 'Type your business name to create it',
     // Shown when "I own a business" was refused. The generic refusal tells the
     // person to ask their owner, which is the wrong sentence for the one who
@@ -42,6 +45,24 @@ export const strings = {
     notOnList: (email: string) =>
       `This Google account (${email}) is not on any business's employee list. Ask your owner to add exactly this address.`,
     accessEnded: 'Your access was ended by the owner.',
+    // A revoked token locally looks identical whether the man was removed or
+    // his PIN was just reset — the phone is holding a dead session either way
+    // and cannot ask which. Telling a rider whose PIN was reset that his access
+    // was "ended by the owner" reads as being fired, so this covers both and
+    // accuses nobody.
+    signedOutRemotely:
+      'The owner signed this phone out. If your PIN was reset, sign in with the new one — otherwise ask him.',
+    // Staff lane. Deliberately does NOT say which of the three was wrong: a
+    // six-digit PIN stops being six digits' worth of protection the moment the
+    // screen confirms that a login ID exists.
+    badStaffLogin:
+      'Business code, login ID or PIN is wrong. Check the slip your owner gave you — or ask him to reset your PIN.',
+    pinLocked:
+      'Too many wrong tries. Wait a few minutes and try again, or ask your owner to reset your PIN.',
+    // The account authenticated but its directory row is gone — a broken
+    // record, not an uninvited guest, so it must not read like a rejection.
+    staffNotOnList:
+      'This login is no longer connected to a business. Ask your owner to set it up again.',
     // "Create a new business" from someone the directory already knows. They
     // are signed in to the business they belong to, so this explains the
     // workspace they asked for and did not get.
