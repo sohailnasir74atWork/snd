@@ -69,6 +69,32 @@ export async function sharePdf(
   await Share.open(common);
 }
 
+/**
+ * The owner's own copy — a PDF he keeps rather than one he sends.
+ *
+ * Same generator, same data: URL trick as `sharePdf` and for the same reason
+ * (RNShare's FileProvider does not cover the directory RNHTMLtoPDF writes to),
+ * but with no WhatsApp branch: nobody is being messaged. The share sheet is
+ * how Android offers "save to Files" / "print", so the sheet IS the download —
+ * writing to external storage ourselves would need a runtime permission and a
+ * scoped-storage path per Android version, to end up in the same place.
+ *
+ * `failOnCancel: false` matters here more than anywhere: the owner browsing a
+ * sheet and backing out is not an error worth an alert.
+ */
+export async function savePdf(html: string, fileName: string, message: string): Promise<void> {
+  const { base64 } = await generatePDF({ html, fileName, base64: true });
+  if (!base64) throw new Error('PDF generation failed');
+  await Share.open({
+    url: `data:application/pdf;base64,${base64}`,
+    filename: fileName.replace(/\.pdf$/, ''),
+    type: 'application/pdf',
+    message,
+    failOnCancel: false,
+    useInternalStorage: true,
+  });
+}
+
 /** CSV export (FR-9) — data: URL through the share sheet, no filesystem needed. */
 export async function shareCsv(filename: string, rows: (string | number | undefined)[][]): Promise<void> {
   await Share.open({

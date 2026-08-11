@@ -1,5 +1,5 @@
 /** Pure order math — unit-tested; screens never do arithmetic themselves. */
-import type { OrderItem, Totals } from '../data/models';
+import type { OrderItem, Payment, Totals } from '../data/models';
 
 /**
  * `taxPercent` defaults to 0, and at 0 this returns exactly what it always
@@ -117,6 +117,137 @@ export function discountPercentForTotal(
   // Unrounded for the same reason as discountPercentForPrice: computeTotals
   // rounds the rupees, so an exact percent reproduces the exact taxable.
   return ((subTotal - taxable) / subTotal) * 100;
+}
+
+/**
+ * The two ways of saying one concession. Which one comes out of the booker's
+ * mouth depends on how the haggle went — "give it to me for 660" and "take 40
+ * off" are the same sentence — and the screen offers both boxes so that he
+ * never does the subtraction at the counter with the shopkeeper watching him
+ * do it. One of them is always wrong by a rupee when done in the head, and it
+ * is always wrong in the shop's favour to argue about.
+ *
+ * `fullPrice` is whatever full price MEANS on the basis he is typing in: goods
+ * in exclusive mode, goods-plus-tax in inclusive mode. Hand both functions the
+ * same number the price box is measured against and the pair cannot disagree.
+ *
+ * Neither clamps to the owner's cap. `discountPercentForPrice` and
+ * `discountPercentForTotal` already do that on the way to a stored rate, and
+ * clamping here as well would rewrite the digits under the booker's thumb
+ * while he was still typing them — he types 4, then 0, and a cap-clamp on the
+ * first keystroke turns "40" into something he did not ask for. The hint line
+ * tells him he is past the cap; the field does not argue back mid-keystroke.
+ */
+export function priceForDiscountAmount(fullPrice: number, amount: number): number {
+  return Math.max(fullPrice - amount, 0);
+}
+
+export function discountAmountForPrice(fullPrice: number, price: number): number {
+  return Math.max(fullPrice - price, 0);
+}
+
+/**
+ * Pieces, not rupees. `useDelivered` mirrors `computeTotals` for the same
+ * reason it exists there: a billed order counts what the rider actually handed
+ * over, a booked one counts what the shop asked for.
+ */
+export function totalQty(items: OrderItem[], useDelivered = false): number {
+  return items.reduce((sum, it) => sum + (useDelivered ? it.deliveredQty ?? 0 : it.qty), 0);
+}
+
+/** One product, and everything the whole run needs of it. */
+export interface PickLine {
+  productId: string;
+  name: string;
+  qty: number;
+  /** How many shops want it — the number that says "split this box". */
+  shops: number;
+  /**
+   * And WHICH shops, with how many each.
+   *
+   * The total gets the stock off the shelf; this is what turns one heap of 54
+   * into nine piles. Without it the owner has the right quantity in front of
+   * him and still has to open nine order slips to find out who gets what,
+   * which is the counting he asked not to do.
+   */
+  perShop: { shopId: string; name: string; qty: number }[];
+}
+
+/** One shop's contribution to the run. */
+export interface PickEntry {
+  shopId: string;
+  shopName: string;
+  items: OrderItem[];
+}
+
+/**
+ * What to pull off the shelf for a run, added up across every shop in it.
+ *
+ * The owner loads the van from ONE list, not from nine. Reading nine order
+ * slips and adding the sunblock up in his head is the step where a van leaves
+ * with eleven of something and needs fourteen, and nobody finds out until the
+ * rider is four shops down a bazaar.
+ *
+ * Keyed by `productId`, never by name: two products can be renamed into the
+ * same string, and a rename between two orders would otherwise split one line
+ * into two. The name shown is the one on the first order that mentions it,
+ * which is the only one this function can honestly claim.
+ *
+ * Sorted by name, ascending and deterministically — a picker works down a list
+ * against a shelf, and quantity order would move a line every time an order
+ * was added. `localeCompare` is avoided on purpose: it is locale-dependent and
+ * this list has to come out identical on the phone and in the printed PDF.
+ */
+export function pickList(entries: PickEntry[], useDelivered = false): PickLine[] {
+  const byProduct = new Map<string, PickLine>();
+  for (const entry of entries) {
+    for (const it of entry.items) {
+      const qty = useDelivered ? it.deliveredQty ?? 0 : it.qty;
+      if (qty <= 0) continue;
+      const line = byProduct.get(it.productId);
+      if (!line) {
+        byProduct.set(it.productId, {
+          productId: it.productId, name: it.name, qty, shops: 1,
+          perShop: [{ shopId: entry.shopId, name: entry.shopName, qty }],
+        });
+        continue;
+      }
+      line.qty += qty;
+      /**
+       * Keyed by `shopId`, never by name — the same rule as the products
+       * above, and for a sharper reason. Two shops genuinely called
+       * "Al-Madina Traders" on different streets is ordinary in this market.
+       * Merging them by name would build ONE pile of twelve where two piles
+       * of six belong, and the rider would deliver a double order to the
+       * first one and nothing to the second.
+       */
+      const already = line.perShop.find(p => p.shopId === entry.shopId);
+      if (already) already.qty += qty;
+      else { line.perShop.push({ shopId: entry.shopId, name: entry.shopName, qty }); line.shops += 1; }
+    }
+  }
+  const byName = (a: { name: string }, b: { name: string }) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  for (const line of byProduct.values()) line.perShop.sort(byName);
+  return [...byProduct.values()].sort(byName);
+}
+
+/**
+ * What has actually been paid against ONE bill — every non-voided payment's
+ * allocation to that order, summed.
+ *
+ * Voided payments are skipped because voiding un-applies the allocation
+ * (`Payment.voided`); the row survives as history and every total steps over
+ * it. UNCONFIRMED payments are counted, and that is the deliberate half:
+ * `confirmed` means the owner has the cash in his own hand, not that the shop
+ * paid. The shop paid when it paid. A bill copy that ignored the rider's
+ * satchel would dun a shopkeeper for money he handed over this morning — the
+ * same mistake `paidToPrevious` was added to `billHtml` to fix.
+ */
+export function paidAgainstOrder(payments: Payment[], orderId: string): number {
+  return payments.reduce((sum, p) => p.voided
+    ? sum
+    : sum + p.orderIds.reduce((s, a) => a.orderId === orderId ? s + a.amount : s, 0), 0);
 }
 
 /**

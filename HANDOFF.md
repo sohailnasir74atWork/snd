@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-10 (second round that day — §1d)
+**Written:** 2026-08-09 · **Last updated:** 2026-08-11 (§1h — three field bugs fixed, the bill book, `versionCode 22`)
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -11,13 +11,13 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 8 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d |
+| Branch | **`booker-screens-pass`**, 9 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 17` / `versionName "2.2"` — built after §1d, so it **does** contain it |
+| Version | `versionCode 22` / `versionName "2.6"` — built 2026-08-11, see §5 |
 | TypeScript | 0 errors |
-| ESLint | 0 errors (108 warnings, all house style: `no-void`, `no-bitwise`, inline styles) |
-| Unit tests | **132 / 132**, 11 suites |
+| ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
+| Unit tests | **202 / 202**, 14 suites |
 | Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
 | Device | debug build driven on the emulator (§1b); §1d driven on the emulator in **both debug and a real release build** (R8 on — see §4.0b). ❗ **Nothing in §1c or §1d has been on a real phone** — see §4.1 before publishing |
@@ -58,10 +58,16 @@ stay on `nam5` for now — that is a decision, not an oversight.
   `resetStaffPin` **created**; `admitSignIn` and `removeEmployee` **updated**.
   All four in `asia-south1`, `Deploy complete`, no errors. Backward-compatible:
   a Google sign-in from `versionCode 16` still admits exactly as before.
-  ⚠️ **`createStaffLogin` cannot work until Email/Password is enabled** in
-  Console → Authentication → Sign-in method. It is NOT enabled at time of
-  writing. The failure is misleading — the account is created server-side and
-  the staff member's sign-in is then rejected, which reads as a wrong PIN.
+  ✅ **Email/Password is ENABLED** (confirmed 2026-08-11 against the live
+  project — `signIn.email.enabled: true`). It was off when §1d was written, and
+  that failed in the way that wastes the most time: the account is created
+  server-side and the staff member's sign-in is then rejected, which reads as a
+  wrong PIN. §1e made that error say so out loud; the toggle then removed the
+  cause. Verify it yourself rather than trusting this line — one call, and the
+  answer is not in the repo:
+  ```bash
+  TOKEN=$(gcloud auth print-access-token); curl -s -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: saleforec-10ce7" "https://identitytoolkit.googleapis.com/admin/v2/projects/saleforec-10ce7/config"
+  ```
   > The deploy log warns that **Node.js 20 is decommissioned 2026-10-30** —
   > about eleven weeks out. Deployed functions keep serving past that date, but
   > you cannot deploy at all until the runtime is upgraded, and
@@ -173,6 +179,298 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1h. Three bugs off a real phone, and the bill the owner prints
+
+2026-08-11. The owner ran `versionCode 17` in the field and reported three
+things. All three were real, all three are fixed, and none of them was
+reproducible on the emulator — which is the lesson worth keeping.
+
+### The crash — `MainActivity` was missing four lines
+
+```
+Unable to instantiate fragment com.swmansion.rnscreens.D:
+calling Fragment constructor caused an exception
+```
+
+`D` is `ScreenFragment` after R8. Its no-arg constructor **throws on purpose**
+— react-native-screens refuses to be resurrected by Android behind React's
+back. Android was reinstating saved fragment state after killing the process,
+which MIUI/HyperOS does constantly. `super.onCreate(null)` throws that state
+away. The reasoning and the field stack trace are in the file; do not pass the
+bundle back.
+
+> This is why it never showed up here: the emulator does not kill background
+> apps the way a real Xiaomi does. A crash nobody can reproduce on a desk is
+> the normal shape of an OEM-ROM bug, not a mystery.
+
+### The map froze — three uncapped renders
+
+`AreaSweepScreen` mounted a **native** `<Marker>` per pinned shop, plus a Card
+per stop in a plain `ScrollView`. A hundred-shop area built a hundred of each.
+Capped at `MAP_MARKERS = 12` and `LIST_STOPS = 25`, each saying what it holds
+back. This was §4.12, raised and deferred; the booker hit it.
+
+### Pinning failed "sometimes" — two causes, both fixed
+
+1. **Android 12 "Approximate" was read as a refusal.** Granting approximate
+   denies FINE and grants COARSE; the code only checked FINE, so a booker who
+   HAD granted location was told he had not. Intermittent because it depends
+   on a button he tapped months ago.
+2. **One high-accuracy attempt, no fallback.** He pins from inside a shop under
+   a concrete roof, where a cold GPS chip often never resolves. Now 12s
+   precise, then a 10s wifi/cell fix rather than a refusal. `maximumAge: 0` on
+   BOTH passes — the fallback buys speed with ACCURACY, never with staleness,
+   because a stale fix pins this shop to the last one's doorway.
+
+### The bill book — More → Bills
+
+Every order with paper in it, undelivered first (the rider cannot leave
+without those). Tick, download, and it moves to **Printed** and out of the way
+— kept 30 days, re-printable, with a *Not printed* undo. The mark is
+device-local (`lib/billLog.ts` + `features/admin/billDownloads.ts`) and the
+trade is written up there: worst case is printing a copy twice, where the
+Firestore version's worst case is believing a bill was handed over when it
+never was.
+
+**The sheet** is A4 **landscape**, three columns, cut top to bottom. It was
+four-up portrait first and the owner rejected it on sight; then three portrait
+columns, too skinny; turning the paper gave each slip 99mm. Item rows pad out
+with **ruled blanks** to `minRows` the way a paper invoice book does, and the
+footer — booker, rider, two signature lines, warranty — is pushed to the foot
+with `margin-top: auto`. Page one is an optional **load sheet**: every product
+totalled across the run with the per-shop split under it, which is what turns
+one heap of 54 into nine piles.
+
+- **`displayName`** (`lib/name.ts`) fixes shop names on paper only —
+  `ss bakar` → `SS Bakar`, `u mart` → `U Mart`, `DOLLAR MALL` → `Dollar Mall`.
+  Never written back: correcting what a person typed about their own shop is
+  not the app's business, but a bill is the document they keep.
+- **The warranty is Form 6** now, citing the DRAP Act 2012 and the Alternative
+  Medicine and Health Products (Enlistment) Rules 2014. ⚠️ It is a
+  RECONSTRUCTION, not a copy of the prescribed form, and nobody has had it
+  checked. Settings → Company → *Bill small print* overrides it completely.
+
+### The owner can reprice an order — More → Bills → Edit
+
+`repriceOrder` changes unit prices on a `booked`/`assigned` order and
+recomputes totals; the rules already allowed an admin to update orders, so
+there was no rule change and no rules-test risk. **Prices only** — quantities
+move `committedQty`, and a stock correction hidden inside a price screen is
+how stock stops matching the shelf.
+
+### What is NOT done
+
+❗ **None of §1h has been driven on a device.** The three field fixes are
+reasoned from a stack trace and from the library's own source, and the Bills
+screen has only ever been rendered to PDF and read at full size. §4.1's
+checklist has not moved.
+
+---
+
+## 1g. The bill book — the owner's own copies, three to a page — NOT COMMITTED
+
+2026-08-11, same working tree as §1f. `npm run test:rules` not re-run (nothing
+touches the rules); **159 tests**, 0 TS errors, 0 lint errors. Never bundled,
+never on a device — see "what was NOT checked" at the end of §1f, which now
+covers this too.
+
+### Why it exists
+
+The rider WhatsApps each shop its bill at the door and that is untouched. The
+owner wanted the other copy: the stack in his own hand, to file and to hand
+out. One A5 bill per sheet turns a forty-bill day into forty pages.
+
+### Three to a page, cut straight across
+
+`billSheetHtml` in `documents/templates.ts` — A4, `BillsPerPage` of 2, 3 or 4,
+**default 3**. Not a taste decision:
+
+> A bill's item table is four columns and the product NAME is the one that
+> needs the width. A 2×2 grid halves it to 105mm and "Sunblock SPF50 90ml"
+> wraps onto two lines while three quarters of the cell sits empty underneath.
+> Full-width strips spend the paper where the content is. The cutting is also
+> two straight passes with no cross-cut to line up — which matters when it is
+> done every day. **4 was the first default and the owner rejected it on
+> sight; do not quietly restore it.**
+
+- **The caps are measured, not guessed.** `SHEET_LAYOUTS[n].maxItems` came off
+  a rendered A4 (2→20, 3→12, 4→14) and sits near half of what fits, because a
+  wrapping name takes two rows and a cell CLIPS rather than flows.
+- **A long basket is summarised, never silently cut.** Over the cap the slip
+  prints `+ N more items — TOTAL below covers all M`, and the TOTAL still
+  counts every line. A slip that quietly dropped two lines would be filed, and
+  wrong, and nobody would know.
+- **Blank cells are drawn on a part-full last page**, so the last sheet cuts on
+  the same lines as every other.
+- Logo and warranty ride on **every** slip. These get cut apart and handed
+  over: terms that exist only on the sheet the owner keeps were never given to
+  the buyer.
+
+### The warranty block
+
+`settings.warrantyText`, free text, with `DEFAULT_WARRANTY` in `data/models.ts`
+as a starting point. Modelled on the Form 2A block the pharma distributors
+print, and **deliberately a fraction of its length** — that one is long because
+the Drugs Act prescribes its wording nearly clause by clause, and none of that
+applies here.
+
+> ⚠️ **Cosmetics are not drugs.** In Pakistan they sit under the DRAP Act 2012
+> and the Cosmetics Rules 2020, not the Drugs Act 1976. Printing a drugs
+> warranty on a face wash claims a compliance the goods were never assessed
+> for, so the default names the cosmetics instruments instead.
+>
+> ⚠️ **It is a TEMPLATE and nobody has had it checked by a lawyer.** It is
+> editable for exactly that reason, and clearing the box prints no block at all
+> rather than a wrong one. Settings → Company → *Bill small print*.
+
+The Settings field seeds from `s.warrantyText ?? DEFAULT_WARRANTY` — absent
+key, not empty string. `?? ''` would have been the bug: an owner who cleared
+the box would find the default back on his next visit, and on his next bill.
+
+### The screen
+
+`features/admin/BillsScreen.tsx`, More → **Bills**. Delivered orders only
+(nothing else has a bill), newest first, Today / 7 days / All, tick and
+download. `Open full bill` per row still produces the rider's real A5 invoice.
+
+- **`paidAgainstOrder`** (`lib/order.ts`) sums every non-voided payment's
+  allocation to that order. It counts UNCONFIRMED payments deliberately:
+  `confirmed` means the owner has the cash, not that the shop paid. Ignoring
+  the rider's satchel would dun a shopkeeper for money he handed over that
+  morning.
+- **The reprint passes `previousBalance: 0` and that is not laziness.** The
+  khata as it stood before a bill months ago cannot be reconstructed from a
+  delivered order, and a wrong "previous balance" on a reprint is worse than
+  none. The rider's copy at delivery time is the one that carries it.
+- The screen says the window out loud — 90 days plus anything unpaid. "All"
+  means all of THAT, and an owner hunting last year's bill deserves to know
+  why it is not there.
+
+---
+
+## 1f. Rupees off, and what a morning was actually worth — NOT COMMITTED
+
+2026-08-11, the owner's two asks. Green (0 errors / 0 errors / **141** tests,
+up 9) but sitting in the working tree, and **nothing has been on a device or
+even in an emulator** — not the screens, not a bundle. Two screens, one shared
+piece of order math.
+
+### The booker may now say it either way round
+
+§1b replaced the percent chips with a typed **Discounted price**, and that was
+right: rupees is what the two men are arguing about. But it only accepted the
+haggle phrased one way. Half of them end on *"take forty off"* rather than
+*"give it to me for six sixty"*, and the booker was left doing the subtraction
+in his head at the counter with the shopkeeper watching — which is exactly
+where a bill ends up a rupee away from what was said out loud.
+
+There are two boxes behind the same chevron now: **Discount — rupees off** and
+the existing price box. Type either, the other fills in **on every keystroke**,
+not on blur: they disagree for precisely as long as somebody is looking at
+them otherwise.
+
+- **`priceText` is still the only source of truth.** The off box writes into
+  it and nothing else reads the off box, so it cannot introduce a figure the
+  stored percent will not reproduce. Everything §1b says about why the ORDER
+  stores a rate — the rider re-bills against delivered quantities — is
+  untouched.
+- **Both derive against `priceCeiling`**, which is full price on whichever
+  basis this company types in: goods, or goods with the tax already inside
+  (`settings.priceIncludesTax`, §1a). Mix the two bases and "40 off" quietly
+  becomes 47 off at 17%. There is a test pinning exactly that.
+- **`priceForDiscountAmount` / `discountAmountForPrice` do NOT clamp to the
+  owner's cap**, deliberately. The percent functions already clamp on the way
+  to a stored rate, and clamping in the box as well rewrites digits under the
+  booker's thumb — he types `4`, then `0`, and a cap-clamp on the first
+  keystroke turns "40" into a number nobody asked for. The hint line tells him;
+  the field does not argue back mid-keystroke.
+- **Both boxes empty together, through `clearPrice()`.** Five call sites clear
+  the price — a new shop, two quantity paths, reset, "Different shop" — and a
+  cleared price beside a surviving "40 off" is a screen promising something the
+  order does not contain. None of the five gets to remember only half.
+- The hint quotes the cap **both ways** now (*"at most Rs 1,440 off, so
+  Rs 12,960 is as low as you go"*), because either box may be the one he is
+  staring at when he hits it.
+
+### The dashboard said how many, never at what
+
+The owner's tiles carried **Orders today** and no way to tell whether twelve
+orders was a good morning or a poor one — 40 pieces and 400 pieces looked
+identical, and the answer was three taps away in Reports. Two tiles added:
+**Pieces booked today** and **Value booked today**.
+
+> ⚠️ **They count a different set of orders from the two tiles beside them,
+> and that is not a bug.** `todayOrders` is anything that MOVED today, which
+> sweeps in yesterday's bookings going out on today's van — the right
+> denominator for a delivered ratio, the wrong one for "how much business did
+> we take". The new pair filters on `bookedAt`, so an order written this
+> morning for Thursday lands in them and in neither of the others. The labels
+> say **booked** out loud for that reason. Do not "fix" the two to agree.
+
+Value is **net of tax**, matching TODAY'S SALES directly above it — tax inside
+a booked order is money this business collects and hands straight on, and a
+tile that quietly included it would disagree with every sales figure on the
+same screen by exactly the tax rate.
+
+`totalQty(items, useDelivered)` is new in `lib/order.ts` rather than a `reduce`
+in the screen, per the rule at the top of that file. Its `useDelivered` twin
+mirrors `computeTotals` for the same reason: an absent `deliveredQty` must
+count as nothing delivered, or a van that left full reports a full delivery.
+That case has a test.
+
+### What HAS and has not been checked
+
+✅ **§1f was driven on the emulator** (`Pixel9_API35_ARM`, demo store,
+2026-08-11). Check 9 passes in full: typing 40 into *rupees off* moved the
+price box to 860 on the keystroke, the Discount row read -40, TOTAL and the
+Confirm button both read 860; changing a quantity then emptied BOTH boxes and
+put the hint back to "up to Rs 240 off". Check 10 is **half** done — the two
+new tiles render with the right labels, icons and grid, but their NUMBERS were
+not verified: switching role in demo mode re-seeds the store, so the order
+booked as the booker was gone by the time the owner's dashboard opened. The
+arithmetic is covered only by the lib tests.
+
+⚠️ Two traps cost an hour and will cost the next person the same:
+> **A stale Metro on port 8081 serves a stale bundle**, silently — the first
+> run showed the OLD single-field panel and looked like the code had not
+> landed. `curl localhost:8081/status` says `running` either way. Kill it and
+> restart with `--reset-cache`; do not trust a debug build's JS until you have.
+>
+> **`installDebug` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`** if the
+> release APK from §1d is still on the device. `adb uninstall
+> com.apptechsolutions.fieldsales` first; it costs the signed-in session and
+> nothing else.
+
+§1g is **static only** — `tsc`, `eslint`, `jest`, plus the A4 output rendered
+through headless Chrome and read by eye at full size (that is how the item caps
+were set). **No emulator, no bundle, no device** for the Bills screen.
+`npm run test:rules` was not re-run: nothing in this round touches
+`firestore.rules`, the stored order shape or any store method, so it should be
+untouched — but "should be" is not the same as watched. See §4.1 checks 9–10.
+
+---
+
+## 1e. The ninth commit — `7016b37`, and why it is nearly obsolete
+
+`auth/operation-not-allowed` fell through to a bare throw, so a rider whose PIN
+was correct got a raw Firebase SDK string through the generic "Sign in failed"
+alert. Every word of it pointed at the credentials and the credentials were
+fine: Email/Password was switched off in the console and Firebase refuses
+before it ever looks at the account. The message now leads with *"your PIN is
+fine"* and names the console — the only place in the app that says the word
+Firebase, and it earns the exception because this error has exactly one cause
+and exactly one fix.
+
+The provider was enabled the next day (§4.0), so this path should now be
+unreachable in the live project. **Leave it in.** It is the error a fresh
+Firebase project throws on day one, and the next person standing this app up
+somewhere else meets it before they meet anything else.
+
+⚠️ This commit is **not** in the `versionCode 17` AAB on disk — that bundle was
+built at 20:31 and this landed at 22:08. See §5.
 
 ---
 
@@ -597,17 +895,16 @@ two shops visited, because marking one puts the next under the same button.
 
 ## 4. What is NOT done
 
-0. **Email/Password is NOT enabled in Firebase Auth.** ❗ **Blocks §1d entirely.**
+0. ~~**Email/Password is NOT enabled in Firebase Auth.**~~ **DONE 2026-08-11.** ✅
 
-   Console → Authentication → Sign-in method → enable **Email/Password**. Until
-   that is on, the whole staff lane is dead, and it fails in the way that wastes
-   the most time: `createStaffLogin` succeeds, the owner gets a slip with a
-   business code, login ID and PIN on it, and the staff member's sign-in is then
-   rejected — which reads as a wrong PIN, not a console setting. It is one
-   toggle. Do it before testing anything in §1d.
+   Confirmed on the live project, not taken on trust — `signIn.email.enabled`
+   is `true` (the curl is in §1). The staff lane is no longer dead at the
+   provider.
 
-   Then the end-to-end check is: Employees → Add employee → App login → create →
-   note the slip → sign out → **I work for a business** → type the three fields.
+   What that does **not** prove is that the lane works end to end. Nobody has
+   walked it: Employees → Add employee → App login → create → note the slip →
+   sign out → **I work for a business** → type the three fields. Do that before
+   believing §1d.
 
 0a. **App Check and a PIN lockout are NOT done.** ⚠️
 
@@ -655,14 +952,17 @@ two shops visited, because marking one puts the next under the same button.
    | 6 | Settings → Sales tax 17% → turn ON "Booker types the final price", type 700, book | The tax-inclusive mode (§1c). The card must read TOTAL 700 with a tax line inside it, not 819, and the stored order must agree. |
    | 7 | Send an order confirmation from the booker's confirmation screen | WhatsApp must open **that shop's chat**, not the contact list (§1c). Falls back to the share sheet if WhatsApp is absent — that is correct, not a failure. |
    | 8 | Set a logo in Settings, then deliver and open the bill PDF | The logo pipeline (§1c). Then turn the phone's data off and open a bill again: the logo must still be there, because it is embedded, not fetched. |
+   | 9 | Open the chevron, type **40** in *rupees off*, watch the price box; then change a quantity | The two-box discount (§1f). The price box must follow every keystroke, the TOTAL must drop by exactly 40, and the quantity change must empty **both** boxes — a surviving "40 off" beside a cleared price is the failure to look for. |
+   | 10 | Book two orders, then open the owner's dashboard | *Pieces booked today* and *Value booked today* (§1f). Pieces must match what was typed; value must be net of tax at a non-zero rate, and must NOT equal the delivered figure in the hero card. |
 
    If all of them behave, the round is safe to publish. If one misbehaves, that
    is the bug — start there, not in the rules.
 
-   > Checks 6–8 were added on 2026-08-10 with §1c. The list is now eight
-   > because the round grew, not because the earlier five got easier: the
-   > tax mode changes what a bill totals, and the logo changes what a bill
-   > contains. Neither has been on a real phone.
+   > Checks 6–8 were added on 2026-08-10 with §1c, 9–10 on 2026-08-11 with
+   > §1f. The list grows because the round grows, not because the earlier ones
+   > got easier: the tax mode changes what a bill totals, the logo changes what
+   > a bill contains, and the discount box changes what the shop is charged.
+   > None of them has been on a real phone.
 2. **Untested at volume.** Nobody has seeded a tenant with 40,000 orders and
    opened every screen on a 3GB device. Until that passes, the memory claim
    behind the windowing work is reasoning, not measurement.
@@ -830,12 +1130,15 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 16` / `versionName "2.1"` |
-| File | `builds/SnD-Manager-v2.1-build16.aab` (65 MB, outside the repo — AABs are not committed) |
-| Also at | `android/app/build/outputs/bundle/release/app-release.aab` |
+| Version | `versionCode 18` / `versionName "2.3"` — read out of the AAB's own manifest, not off `build.gradle` |
+| File | `builds/SnD-Manager-v2.3-build18.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
 | Signature | `jar verified` |
-| Signer | `CN=sohail, OU=solana, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3 |
-| Built | 2026-08-09, from `booker-screens-pass` — **not from `main`**, and **before §1c**. Rebuild before publishing or none of 2026-08-10 is in it. |
+| Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
+| Built | 2026-08-11 17:41, from `booker-screens-pass` — **not from `main`** |
+| ❗ Contains uncommitted work | §1f, §1g and the load sheet were in the WORKING TREE when this was built and are still not committed. This bundle cannot be reproduced from any commit. Commit before it goes anywhere, or the day someone asks what is in `versionCode 18` there is no answer. |
+| `versionCode 17` | gone — it lived only at `app/build/outputs/.../app-release.aab` and this build overwrote it. Rebuildable from `1f8eec1` if it is ever wanted; nothing depends on it. |
+
+**Not published, and §4.1 has not moved.** Ten device checks, of which only 9 and half of 10 have been run. Building the file is safe; putting it on a track that reaches a real user is not.
 | Needs | the rules deployed — done, including the shops `delete` rule and the `name` restriction (2026-08-10) |
 
 **Not published, and not yet safe to publish.** See §4.1 — the four device
@@ -883,7 +1186,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "https://firestore.googleapis.com/v1/p
 | `src/features/shops/` | pin screen, sweep screen, the shared photo/pin chips, sweep progress (MMKV) |
 | `src/components/AreaSelect.tsx` | the only way to set a shop's area — and an area is now required on every path that creates one |
 | `src/components/theme.ts` | every colour, size and space — including `space.gutter`, `color.cardEdge` and `shadow.card` |
-| `src/lib/order.ts` | all order money: `computeTotals`, `discountPercentForPrice`, `lowestPrice`, `netOfTax`. Screens never do arithmetic |
+| `src/lib/order.ts` | all order money: `computeTotals`, `discountPercentForPrice`, `lowestPrice`, `netOfTax`, `totalQty`, and the `priceForDiscountAmount`/`discountAmountForPrice` pair that keeps the booker's two discount boxes agreeing. Screens never do arithmetic |
 | `src/app/navigation.tsx` | `BookerRouteStack` is where Route, the order form and the shop search live; the booker has three tabs |
 | `src/components/BrandHero.tsx` | both illustrations (`BrandHero`, `StaffHero`). Theme tokens only — an illustration that drifts off the palette is what makes an app look assembled |
 | `src/app/credentialSignIn.ts` | the bottom-sheet wrapper. Returns `'unavailable'` on anything it cannot serve, which is what makes the legacy fallback real |

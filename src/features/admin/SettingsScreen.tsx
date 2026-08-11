@@ -10,6 +10,7 @@ import {
 } from '../../components/ui';
 import { KeyboardScreen } from './AdminScreens';
 import { useStore } from '../../data/store';
+import { DEFAULT_WARRANTY } from '../../data/models';
 import { LogoPicker } from './LogoPicker';
 
 /**
@@ -65,21 +66,25 @@ function NumberRow({ icon, label, value, prefix, suffix, min, max, onCommit, las
   );
 }
 
-function Field({ label, value, onChange, placeholder, keyboardType }: {
+function Field({ label, value, onChange, placeholder, keyboardType, multiline, hint }: {
   label: string; value: string; onChange: (t: string) => void;
-  placeholder: string; keyboardType?: 'phone-pad';
+  placeholder: string; keyboardType?: 'phone-pad'; multiline?: boolean; hint?: string;
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, multiline && styles.inputTall]}
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={color.textFaint}
         keyboardType={keyboardType}
+        multiline={multiline}
+        // A paragraph field must not centre its text vertically on Android.
+        textAlignVertical={multiline ? 'top' : undefined}
       />
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -116,6 +121,14 @@ export function SettingsScreen() {
   const [address, setAddress] = React.useState(s.address ?? '');
   const [phone, setPhone] = React.useState(s.phone ?? '');
   const [taxNumber, setTaxNumber] = React.useState(s.taxNumber ?? '');
+  /**
+   * `?? DEFAULT_WARRANTY` only when the key is ABSENT — a company that has
+   * never been asked gets the template, and one that deliberately cleared the
+   * box keeps it cleared. `?? ''` would have been the bug: an owner who
+   * emptied it would find the default back on his next visit to Settings, and
+   * on his next bill.
+   */
+  const [warranty, setWarranty] = React.useState(s.warrantyText ?? DEFAULT_WARRANTY);
 
   // Nothing on this screen needs a busy guard: there is no save button, and
   // every control writes the whole value it shows, so a repeated tap writes
@@ -144,6 +157,22 @@ export function SettingsScreen() {
           <Field label="Tax number (NTN / STRN)" value={taxNumber}
             placeholder="Printed on every bill"
             onChange={t => { setTaxNumber(t); store.updateSettings({ taxNumber: t }); }} />
+        </MoreFields>
+        {/*
+          Behind a disclosure because it is a paragraph, and a paragraph at the
+          top of Settings would push every switch below the fold. Not optional
+          in importance — it is what the shopkeeper's copy says about returns —
+          but it is set once and then left alone for years.
+        */}
+        <MoreFields label="Bill small print" count={1}>
+          <Field
+            label="Warranty and returns terms"
+            value={warranty}
+            multiline
+            placeholder="Leave empty to print no small print at all"
+            hint="Printed at the foot of every bill and on each cut-out copy. The default is written for cosmetics — have it checked before you rely on it."
+            onChange={t => { setWarranty(t); store.updateSettings({ warrantyText: t }); }}
+          />
         </MoreFields>
       </Card>
       <SectionLabel>Sales tax</SectionLabel>
@@ -319,6 +348,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: color.border,
     paddingHorizontal: space.m, height: 40,
     fontSize: font.body, color: color.text,
+  },
+  // A paragraph, not a line: fixed height so the card does not grow under the
+  // owner's thumb as he types, and it scrolls inside itself past that.
+  inputTall: { height: 132, paddingVertical: space.s, lineHeight: font.body + 5 },
+  fieldHint: {
+    fontSize: font.tiny, color: color.textSub, marginTop: space.xs,
+    lineHeight: font.tiny + 5,
   },
 
   ruleRow: { paddingVertical: space.s },

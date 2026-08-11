@@ -1,6 +1,6 @@
 import {
-  computeTotals, discountPercentForPrice, discountPercentForTotal,
-  formatDiscountPercent, lowestPrice, netOfTax, totalWithTax,
+  computeTotals, discountAmountForPrice, discountPercentForPrice, discountPercentForTotal,
+  formatDiscountPercent, lowestPrice, netOfTax, pickList, priceForDiscountAmount, totalQty, totalWithTax,
 } from '../order';
 
 const items = [
@@ -202,5 +202,176 @@ describe('a typed price with the sales tax already inside it', () => {
     expect(billed.subTotal).toBe(9900);
     expect(billed.grandTotal).toBeLessThan(16000);
     expect(billed.taxTotal).toBe(Math.round((billed.subTotal - billed.discountTotal) * RATE / 100));
+  });
+});
+
+/**
+ * "Take 40 off" and "give it to me for 660" are one concession said two ways.
+ * The booker gets a box for each; these are what keep the two boxes agreeing.
+ */
+describe('the discount amount — the other end of the same field', () => {
+  const sub = 14400;
+
+  test('the two directions invert each other', () => {
+    for (const amount of [0, 1, 40, 720, 14400]) {
+      expect(discountAmountForPrice(sub, priceForDiscountAmount(sub, amount))).toBe(amount);
+    }
+  });
+
+  test('an amount typed in rupees lands on exactly that many rupees off', () => {
+    // The whole point: 40 off must bill 40 less, not 39 or 41 after the
+    // percent has been round-tripped through the stored rate.
+    const price = priceForDiscountAmount(sub, 40);
+    const pct = discountPercentForPrice(sub, price, 100);
+    expect(computeTotals(items, pct).grandTotal).toBe(sub - 40);
+    expect(computeTotals(items, pct).discountTotal).toBe(40);
+  });
+
+  test('neither goes negative, however hard it is pushed', () => {
+    // A fat thumb on the number pad: 40000 off a 14,400 basket.
+    expect(priceForDiscountAmount(sub, 40000)).toBe(0);
+    expect(discountAmountForPrice(sub, 99999)).toBe(0);
+  });
+
+  test('neither clamps to the cap — that is the percent functions\' job', () => {
+    // Deliberate. Clamping here too would rewrite the digits mid-keystroke.
+    expect(priceForDiscountAmount(sub, 5000)).toBe(9400);
+    // ...and the cap still binds where it actually matters, on the stored rate.
+    expect(discountPercentForPrice(sub, 9400, 10)).toBe(10);
+  });
+
+  test('in tax-inclusive mode the pair measures against the tax-in total', () => {
+    // 40 off the figure the shop hands over, not 40 off the goods.
+    const ceiling = totalWithTax(sub, 17);
+    const price = priceForDiscountAmount(ceiling, 40);
+    const pct = discountPercentForTotal(sub, price, 100, 17);
+    expect(computeTotals(items, pct, false, 17).grandTotal).toBe(ceiling - 40);
+  });
+});
+
+describe('totalQty — pieces, not rupees', () => {
+  test('counts what was ordered', () => {
+    expect(totalQty(items)).toBe(18);
+  });
+
+  test('counts what was delivered when asked', () => {
+    expect(totalQty(items, true)).toBe(12);
+  });
+
+  test('a line the rider never touched counts as nothing delivered', () => {
+    // `deliveredQty` is absent until close-out — it must not read as the
+    // ordered quantity, or a van that left full reports a full delivery.
+    expect(totalQty([{ productId: 'p', name: 'X', qty: 9, unitPrice: 10 }], true)).toBe(0);
+  });
+
+  test('an empty cart is zero, not NaN', () => {
+    expect(totalQty([])).toBe(0);
+  });
+});
+
+/**
+ * The load sheet — what the owner pulls off the shelf before the van goes.
+ * He does this once for the whole run, not once per shop, and doing the
+ * addition in his head is where a van leaves short.
+ */
+describe('pickList — one list for the whole van', () => {
+  const shopA = { shopId: 'sA', shopName: 'Alpha Store', items: [
+    { productId: 'p1', name: 'Face Wash', qty: 6, unitPrice: 900, deliveredQty: 6 },
+    { productId: 'p2', name: 'Sunblock', qty: 12, unitPrice: 750, deliveredQty: 6 },
+  ] };
+  const shopB = { shopId: 'sB', shopName: 'Beta Mart', items: [
+    { productId: 'p2', name: 'Sunblock', qty: 5, unitPrice: 750, deliveredQty: 5 },
+    { productId: 'p3', name: 'Night Cream', qty: 2, unitPrice: 500, deliveredQty: 0 },
+  ] };
+
+  test('adds the same product across every shop', () => {
+    const list = pickList([shopA, shopB]);
+    expect(list.find(l => l.productId === 'p2')).toMatchObject({ qty: 17, shops: 2 });
+    expect(list.find(l => l.productId === 'p1')).toMatchObject({ qty: 6, shops: 1 });
+  });
+
+  test('says how many shops want it — the number that means "split this box"', () => {
+    expect(pickList([shopA, shopB]).find(l => l.name === 'Night Cream')?.shops).toBe(1);
+  });
+
+  test('sorted by name, and the order does not depend on who was added first', () => {
+    const forwards = pickList([shopA, shopB]).map(l => l.name);
+    const backwards = pickList([shopB, shopA]).map(l => l.name);
+    expect(forwards).toEqual(['Face Wash', 'Night Cream', 'Sunblock']);
+    expect(backwards).toEqual(forwards);
+  });
+
+  test('keyed by productId, so a renamed product stays ONE line', () => {
+    // Two orders, same product, different label on the second. Keying by name
+    // would put the same box on the list twice and load the van twice over.
+    const renamed = { shopId: 'sC', shopName: 'Gamma Shop', items: [{ productId: 'p1', name: 'Face Wash 120ml', qty: 3, unitPrice: 900 }] };
+    const list = pickList([shopA, renamed]);
+    expect(list.filter(l => l.productId === 'p1')).toHaveLength(1);
+    expect(list.find(l => l.productId === 'p1')?.qty).toBe(9);
+  });
+
+  test('a zero line is not picked', () => {
+    expect(pickList([{ shopId: 'sZ', shopName: 'Any', items: [{ productId: 'p9', name: 'Nothing', qty: 0, unitPrice: 10 }] }]))
+      .toEqual([]);
+  });
+
+  test('delivered mode counts what actually went out', () => {
+    const list = pickList([shopA, shopB], true);
+    expect(list.find(l => l.productId === 'p2')?.qty).toBe(11); // 6 + 5, not 12 + 5
+    // Night Cream was ordered but never delivered — it is not on a load sheet
+    // for goods that already moved.
+    expect(list.find(l => l.productId === 'p3')).toBeUndefined();
+  });
+
+  test('no orders is an empty list, not a crash', () => {
+    expect(pickList([])).toEqual([]);
+  });
+
+  /**
+   * The split. The total gets the stock off the shelf; this is what turns one
+   * heap of 17 into a pile per shop, which is the counting the owner asked
+   * not to do by hand across nine order slips.
+   */
+  test('names which shop gets how many', () => {
+    expect(pickList([shopA, shopB]).find(l => l.productId === 'p2')?.perShop)
+      .toEqual([
+        { shopId: 'sA', name: 'Alpha Store', qty: 12 },
+        { shopId: 'sB', name: 'Beta Mart', qty: 5 },
+      ]);
+  });
+
+  test('the piles add up to the heap', () => {
+    for (const line of pickList([shopA, shopB])) {
+      expect(line.perShop.reduce((s, p) => s + p.qty, 0)).toBe(line.qty);
+      expect(line.perShop).toHaveLength(line.shops);
+    }
+  });
+
+  test('one shop on two lines is ONE pile, not two entries with its name twice', () => {
+    const twice = { shopId: 'sA', shopName: 'Alpha Store', items: [
+      { productId: 'p1', name: 'Face Wash', qty: 2, unitPrice: 900 },
+      { productId: 'p1', name: 'Face Wash', qty: 3, unitPrice: 900 },
+    ] };
+    const line = pickList([twice]).find(l => l.productId === 'p1');
+    expect(line?.perShop).toEqual([{ shopId: 'sA', name: 'Alpha Store', qty: 5 }]);
+    expect(line?.shops).toBe(1);
+  });
+
+  test('two DIFFERENT shops with the same name stay two piles', () => {
+    // Ordinary in this market, and merging them would send a double order to
+    // one street and nothing to the other.
+    const twin = { shopId: 'sZ', shopName: 'Alpha Store', items: [
+      { productId: 'p1', name: 'Face Wash', qty: 4, unitPrice: 900 },
+    ] };
+    const line = pickList([shopA, twin]).find(l => l.productId === 'p1');
+    expect(line?.perShop).toHaveLength(2);
+    expect(line?.shops).toBe(2);
+    expect(line?.qty).toBe(10);
+  });
+
+  test('the piles are sorted by shop name, whatever order they arrived in', () => {
+    const forwards = pickList([shopA, shopB]).find(l => l.productId === 'p2')?.perShop;
+    const backwards = pickList([shopB, shopA]).find(l => l.productId === 'p2')?.perShop;
+    expect(backwards).toEqual(forwards);
   });
 });

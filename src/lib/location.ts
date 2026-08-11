@@ -12,13 +12,28 @@ import Geolocation from '@react-native-community/geolocation';
 import type { GeoFix } from './geo';
 
 /**
- * Give up before the person does.
+ * Two attempts, because one was failing bookers in the field.
  *
- * A cold GPS chip indoors can take minutes and often never resolves at all.
- * Twenty seconds is long enough for a warm fix on a phone that has been
- * outside, and short enough that the spinner does not become the experience.
+ * The report: "registering a shop and pinning its location gives an error —
+ * sometimes, not always". That is the signature of a satellite fix, and the
+ * reason is where the man is standing. He pins the shop from INSIDE it, under
+ * a concrete roof in a packed bazaar, and a cold GPS chip in there routinely
+ * never resolves at all. One high-accuracy attempt with no fallback meant the
+ * only outcomes were a perfect pin or a refusal.
+ *
+ * So: ask the satellites first and briefly, then ask the phone what it knows
+ * from wifi and cell towers, which answers indoors in a second or two and is
+ * worth tens of metres rather than nothing. The pin screen already prints the
+ * accuracy and warns past 30 m, so the worse fix arrives labelled as one —
+ * and a shop pinned to the right street beats a shop not pinned at all, which
+ * is what the app was choosing before.
+ *
+ * The first timeout is SHORTER than the old single one. Waiting 20 seconds and
+ * then starting a fallback is a screen nobody stays on; 12 plus 10 gets a
+ * usable answer sooner than the old path got its refusal.
  */
-const FIX_TIMEOUT_MS = 20000;
+const PRECISE_TIMEOUT_MS = 12000;
+const COARSE_TIMEOUT_MS = 10000;
 
 /** Reasons a fix fails, each with something the person can actually do. */
 export class GeoError extends Error {
@@ -59,6 +74,22 @@ async function ensurePermission(): Promise<void> {
     PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
   );
   if (granted === PermissionsAndroid.RESULTS.GRANTED) return;
+  /**
+   * Android 12+ lets a person grant APPROXIMATE instead of precise, and when
+   * they do, a request for FINE comes back denied while COARSE is granted.
+   *
+   * Treating that as a refusal was a bug with exactly the reported shape —
+   * intermittent, because it depends on which button that person tapped
+   * months ago on that phone. The booker had granted location, and the app
+   * told him he had not, on a screen with no way to argue.
+   *
+   * Approximate is poor for a shop pin and the screen says so through the
+   * accuracy line. It is still miles better than refusing to pin.
+   */
+  const coarse = await PermissionsAndroid.check(
+    PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+  );
+  if (coarse) return;
   // NEVER_ASK_AGAIN means the system dialog will not appear again no matter
   // how many times the button is pressed, so say where the switch actually is.
   if (granted === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
@@ -80,6 +111,28 @@ async function ensurePermission(): Promise<void> {
 export async function getCurrentFix(): Promise<GeoFix> {
   configure();
   await ensurePermission();
+  try {
+    return await once(true, PRECISE_TIMEOUT_MS);
+  } catch (e) {
+    // Only a timeout earns the second attempt. Permission refused and
+    // location switched off both fail the same way twice, and retrying them
+    // just makes the person wait longer for the same sentence.
+    if (e instanceof GeoError && e.kind === 'timeout') return once(false, COARSE_TIMEOUT_MS);
+    throw e;
+  }
+}
+
+/**
+ * One attempt at a fix.
+ *
+ * `maximumAge: 0` on BOTH passes, on purpose: a cached fix from the last shop
+ * would silently pin this one to the previous doorway, and nothing downstream
+ * could ever tell the two apart. The fallback buys its speed by dropping
+ * ACCURACY, never by accepting a stale answer — a coarse fix taken now is
+ * honestly labelled, and an old precise one is a lie with a small number
+ * next to it.
+ */
+function once(precise: boolean, timeout: number): Promise<GeoFix> {
   return new Promise<GeoFix>((resolve, reject) => {
     Geolocation.getCurrentPosition(
       pos => {
@@ -95,8 +148,10 @@ export async function getCurrentFix(): Promise<GeoFix> {
       },
       err => {
         if (err.code === 3) {
+          // The precise pass's message is never read — `getCurrentFix` turns
+          // that one into the coarse retry. Only the last attempt speaks.
           reject(new GeoError(
-            'Could not get a GPS fix in time. Step outside, away from the roof, and try again.',
+            'Could not find this phone’s location. Step towards the doorway and try again — it needs either a little sky or a wifi network in range.',
             'timeout',
           ));
           return;
@@ -112,7 +167,7 @@ export async function getCurrentFix(): Promise<GeoFix> {
           'unavailable',
         ));
       },
-      { enableHighAccuracy: true, timeout: FIX_TIMEOUT_MS, maximumAge: 0 },
+      { enableHighAccuracy: precise, timeout, maximumAge: 0 },
     );
   });
 }

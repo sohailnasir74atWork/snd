@@ -29,6 +29,8 @@ import { AreaSweepScreen } from '../features/shops/AreaSweepScreen';
 import { EmployeesScreen } from '../features/admin/EmployeesScreen';
 import { SettingsScreen } from '../features/admin/SettingsScreen';
 import { ReportsScreen } from '../features/admin/ReportsScreen';
+import { BillsScreen } from '../features/admin/BillsScreen';
+import { OrderScreen } from '../features/admin/OrderScreen';
 import { ExpensesScreen } from '../features/admin/ExpensesScreen';
 
 const MoreStack = createNativeStackNavigator();
@@ -128,6 +130,8 @@ function AdminMoreStack() {
       <MoreStack.Screen name="Employees" component={EmployeesScreen} options={{ title: 'Employees' }} />
       <MoreStack.Screen name="TeamDay" component={TeamDayScreen} options={{ title: 'Team today' }} />
       <MoreStack.Screen name="Reports" component={ReportsScreen} options={{ title: 'Reports' }} />
+      <MoreStack.Screen name="Bills" component={BillsScreen} options={{ title: 'Bills' }} />
+      <MoreStack.Screen name="Order" component={OrderScreen} options={{ title: 'Order' }} />
       <MoreStack.Screen name="Expenses" component={ExpensesScreen} options={{ title: 'Expenses' }} />
       <MoreStack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
     </MoreStack.Navigator>

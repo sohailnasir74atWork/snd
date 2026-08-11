@@ -176,6 +176,35 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       return order;
     },
 
+    repriceOrder(orderId, prices) {
+      setState(st => {
+        const order = st.orders.find(o => o.id === orderId);
+        if (!order || (order.status !== 'booked' && order.status !== 'assigned')) return st;
+        const items = order.items.map(it => {
+          const next = prices.find(p => p.productId === it.productId);
+          // A price is money: integers only, never below zero, and an entry
+          // for a product that is not on this order is ignored rather than
+          // silently appended as a new line.
+          return next && Number.isFinite(next.unitPrice)
+            ? { ...it, unitPrice: Math.max(0, Math.round(next.unitPrice)) }
+            : it;
+        });
+        return {
+          ...st,
+          orders: st.orders.map(o => (o.id === orderId
+            ? {
+              ...o,
+              items,
+              // Recomputed, never patched: the stored discount percent and the
+              // company tax rate both have to be reapplied to the new prices,
+              // and doing that by hand in two stores is how they drift.
+              orderedTotals: computeTotals(items, o.discountPercent, false, st.settings.taxPercent),
+            }
+            : o)),
+        };
+      });
+    },
+
     cancelOrder(orderId) {
       setState(st => {
         const order = st.orders.find(o => o.id === orderId);

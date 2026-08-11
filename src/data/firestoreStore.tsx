@@ -843,6 +843,24 @@ export function FirestoreStoreProvider({
      * its committed stock walks free — otherwise a fat-fingered order
      * inflates the van list and committedQty forever (audit blocker).
      */
+    repriceOrder(orderId, prices) {
+      const order = orders.find(o => o.id === orderId);
+      if (!order || (order.status !== 'booked' && order.status !== 'assigned')) return;
+      const items = order.items.map(it => {
+        const next = prices.find(p => p.productId === it.productId);
+        // A price is money: integers only, never below zero, and an entry for
+        // a product that is not on this order is ignored rather than silently
+        // appended as a new line.
+        return next && Number.isFinite(next.unitPrice)
+          ? { ...it, unitPrice: Math.max(0, Math.round(next.unitPrice)) }
+          : it;
+      });
+      // Recomputed, never patched — same call, same arguments as devStore.
+      const orderedTotals = computeTotals(items, order.discountPercent, false, settings.taxPercent);
+      updateDoc(doc(db, `${base}/orders/${orderId}`), { items, orderedTotals })
+        .catch(writeRejected(`Reprice ${order.orderNo}`));
+    },
+
     cancelOrder(orderId) {
       const order = orders.find(o => o.id === orderId);
       if (!order || (order.status !== 'booked' && order.status !== 'assigned')) return;

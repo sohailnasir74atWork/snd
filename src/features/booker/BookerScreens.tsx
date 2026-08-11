@@ -16,8 +16,8 @@ import type { CollectionInput } from '../../data/store';
 import type { Order, OrderItem, Shop } from '../../data/models';
 import { todayKey } from '../../data/models';
 import {
-  computeTotals, discountPercentForPrice, discountPercentForTotal,
-  lowestPrice, netOfTax, totalWithTax,
+  computeTotals, discountAmountForPrice, discountPercentForPrice, discountPercentForTotal,
+  lowestPrice, netOfTax, priceForDiscountAmount, totalWithTax,
 } from '../../lib/order';
 import { formatAmount } from '../../lib/money';
 import { visitCycleDays } from '../../lib/assignment';
@@ -808,7 +808,23 @@ export function NewOrderScreen() {
    * the panel. Typing a price overrides that for this order only.
    */
   const [priceText, setPriceText] = React.useState('');
+  /**
+   * The same concession said the other way round — rupees OFF rather than the
+   * price after. The booker gets a box for each because the shopkeeper decides
+   * which sentence the haggle ends on, and doing the subtraction in his head
+   * across the counter is how a bill ends up a rupee away from what was
+   * promised. `priceText` stays the single source of truth for what gets
+   * stored; this one is an input, never an input to the arithmetic.
+   */
+  const [offText, setOffText] = React.useState('');
   const [priceOpen, setPriceOpen] = React.useState(false);
+  /**
+   * Both boxes empty together, always. They are two views of one number, and
+   * a cleared price beside a surviving "40 off" is a screen making a promise
+   * the order does not contain. Five call sites clear this — that is five
+   * chances to remember only one of them, so none of them gets the choice.
+   */
+  const clearPrice = React.useCallback(() => { setPriceText(''); setOffText(''); }, []);
   const [busy, setBusy] = React.useState(false);
   const [sharing, setSharing] = React.useState(false);
   const [confirmed, setConfirmed] = React.useState<{ order: Order; shop: Shop } | null>(null);
@@ -817,10 +833,10 @@ export function NewOrderScreen() {
     setShop(s);
     // A new shop is a new negotiation: the price panel closes and empties, so
     // the last shop's haggle cannot ride along to this one.
-    setPriceText('');
+    clearPrice();
     setPriceOpen(false);
     setDeliveryDay('tomorrow');
-  }, []);
+  }, [clearPrice]);
 
   /**
    * Is the van THIS shop's order would ride on already loaded?
@@ -855,14 +871,14 @@ export function NewOrderScreen() {
     const v = Math.max(0, Math.min(q, 9999));
     setQtys(prev => ({ ...prev, [productId]: v }));
     setQtyTexts(prev => ({ ...prev, [productId]: v > 0 ? String(v) : '' }));
-    setPriceText('');
+    clearPrice();
   };
 
   const typeQty = (productId: string, text: string) => {
     const digits = text.replace(/[^0-9]/g, '');
     setQtyTexts(prev => ({ ...prev, [productId]: digits }));
     setQtys(prev => ({ ...prev, [productId]: digits ? Math.min(parseInt(digits, 10), 9999) : 0 }));
-    setPriceText('');
+    clearPrice();
   };
 
   const items: OrderItem[] = store.products
@@ -904,6 +920,33 @@ export function NewOrderScreen() {
     : lowestPrice(subTotal, maxDiscount);
   /** What an empty box means: leave it alone and the shop pays this. */
   const pricePlaceholder = priceIsFinal ? totals.grandTotal : netOfTax(totals);
+  /** The most the owner's cap allows off, in the rupees the booker is typing. */
+  const maxOff = priceCeiling - priceFloor;
+
+  /**
+   * The two boxes follow each other on every KEYSTROKE, not on blur.
+   *
+   * A booker types 40 while the shopkeeper is watching the screen, and the
+   * price box has to already say 660 — updating on blur means the two boxes
+   * disagree for exactly as long as anyone is looking at them, which is the
+   * whole time. `priceText` remains what the order is computed from, so the
+   * off box can never introduce a number the stored rate does not reproduce.
+   *
+   * Both derive against `priceCeiling`, which is full price on whichever basis
+   * this company types in — goods, or goods with the tax already inside. Mix
+   * the bases and "40 off" quietly becomes 47 off at 17%.
+   */
+  const typePrice = (t: string) => {
+    const digits = t.replace(/[^0-9]/g, '');
+    setPriceText(digits);
+    setOffText(digits === '' ? '' : String(discountAmountForPrice(priceCeiling, toInt(digits))));
+  };
+
+  const typeOff = (t: string) => {
+    const digits = t.replace(/[^0-9]/g, '');
+    setOffText(digits);
+    setPriceText(digits === '' ? '' : String(priceForDiscountAmount(priceCeiling, toInt(digits))));
+  };
 
   /**
    * One line under the field, and it always says what the limits are rather
@@ -915,15 +958,17 @@ export function NewOrderScreen() {
     : typedPrice !== null && typedPrice > priceCeiling
       ? `Full price is Rs ${formatAmount(priceCeiling)} — you cannot charge above it.`
       : typedPrice !== null && typedPrice < priceFloor
-        ? `Owner's cap is ${maxDiscount}% — the lowest you can go is Rs ${formatAmount(priceFloor)}.`
-        : `Full price Rs ${formatAmount(priceCeiling)} · lowest Rs ${formatAmount(priceFloor)}${
+        // Quoted both ways round, because either box may be the one he is
+        // looking at when he hits the cap.
+        ? `Owner's cap is ${maxDiscount}% — at most Rs ${formatAmount(maxOff)} off, so Rs ${formatAmount(priceFloor)} is as low as you go.`
+        : `Full price Rs ${formatAmount(priceCeiling)} · up to Rs ${formatAmount(maxOff)} off, lowest Rs ${formatAmount(priceFloor)}${
           totals.taxTotal
             ? priceIsFinal ? ' · sales tax is inside this' : ' · sales tax is added on top'
             : ''}`;
 
   const reset = () => {
     setShop(null); setQtys({}); setQtyTexts({}); setConfirmed(null);
-    setDeliveryDay('tomorrow'); setPriceText(''); setPriceOpen(false);
+    setDeliveryDay('tomorrow'); clearPrice(); setPriceOpen(false);
   };
 
   const bookOrder = async () => {
@@ -1134,7 +1179,7 @@ export function NewOrderScreen() {
               onPress={() => setPriceOpen(o => !o)}
               hitSlop={14}
               accessibilityRole="button"
-              accessibilityLabel={priceOpen ? 'Hide price entry' : 'Change price'}
+              accessibilityLabel={priceOpen ? 'Hide price entry' : 'Give a discount or change the price'}
               style={styles.priceToggle}>
               <Icon name={priceOpen ? 'chevron-up' : 'chevron-down'} size={22} color={color.textFaint} />
             </Pressable>
@@ -1142,17 +1187,36 @@ export function NewOrderScreen() {
 
           {priceOpen && (
             <View style={styles.priceEditor}>
+              {/* Two boxes, one concession. A haggle ends on whichever sentence
+                  the shopkeeper happened to say — "take forty off" or "give it
+                  for six sixty" — and making the booker convert one into the
+                  other in his head, at a counter, is how a bill lands a rupee
+                  away from what he promised out loud. Type either; the other
+                  fills itself in. */}
+              <Text style={styles.fieldLabel}>Discount — rupees off</Text>
+              <TextInput
+                style={styles.input}
+                value={offText}
+                onChangeText={typeOff}
+                keyboardType="number-pad"
+                // Zero, not the live discount: this box is what he is TAKING
+                // off, and a basket with nothing off it has nothing to show.
+                placeholder="0"
+                placeholderTextColor={color.textFaint}
+                maxLength={9}
+                selectTextOnFocus
+              />
               {/* The label has to say WHICH number he is typing. In inclusive
                   mode the figure he agrees across the counter is the one the
                   shop hands over, and the card above splits the tax back out
                   of it line by line. */}
-              <Text style={styles.fieldLabel}>
+              <Text style={[styles.fieldLabel, styles.priceFieldGap]}>
                 {priceIsFinal ? 'Final price — sales tax included' : 'Discounted price'}
               </Text>
               <TextInput
                 style={styles.input}
                 value={priceText}
-                onChangeText={t => setPriceText(t.replace(/[^0-9]/g, ''))}
+                onChangeText={typePrice}
                 keyboardType="number-pad"
                 // The placeholder is the live total, so an empty field is
                 // visibly "no change" rather than "nothing decided".
@@ -1190,7 +1254,7 @@ export function NewOrderScreen() {
           <PrimaryButton variant="quiet" icon="arrow-left" label="Different shop"
             onPress={() => {
               setShop(null); setQtys({}); setQtyTexts({});
-              setPriceText(''); setPriceOpen(false);
+              clearPrice(); setPriceOpen(false);
               navigation.goBack();
             }} />
         </View>
@@ -1406,6 +1470,10 @@ const styles = StyleSheet.create({
   },
   readOnlyValue: { fontSize: font.body, fontWeight: '700', color: color.text, marginTop: 2 },
   priceHint: { fontSize: font.tiny, color: color.textSub, marginTop: space.xs, lineHeight: font.tiny + 5 },
+  // Air between the two boxes, so they read as a pair of choices rather than
+  // a form with two things to fill in. `fieldLabel` already carries a top
+  // margin; this is the extra that separates the second from the first.
+  priceFieldGap: { marginTop: space.m },
 
   ctaWrap: { paddingHorizontal: space.gutter, marginTop: space.s },
   ctaWrapWide: { alignSelf: 'stretch', marginTop: space.m },

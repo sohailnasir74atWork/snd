@@ -46,6 +46,27 @@ const ARRIVE_M = 40;
 /** Enough of the round to see the next stop and where you are. */
 const SPAN = 0.006;
 
+/**
+ * Hard caps on what this screen mounts, and the reason is a field report: on a
+ * real phone the Map tab froze, and a booker gave up pinning shops because of
+ * it.
+ *
+ * Every `<Marker>` is a NATIVE view. An area with a hundred pinned shops built
+ * a hundred of them, plus a Card each in a plain `ScrollView` that mounts
+ * everything it is given. On a 3GB handset that is not slow, it is stuck.
+ *
+ * These are hard caps rather than a "Show more" button. Route uses Show-more
+ * because a list that grows is only slower; here the thing being protected IS
+ * the frame rate, and a button that re-freezes the phone is not a kindness.
+ * Nothing is hidden silently — each cap prints what it is holding back, and
+ * the whole round is still in the list underneath.
+ *
+ * Twelve is about what fits on screen at sweep zoom before markers start
+ * overlapping into a smear, so the cap costs nothing anybody could see.
+ */
+const MAP_MARKERS = 12;
+const LIST_STOPS = 25;
+
 export function AreaSweepScreen() {
   const store = useStore();
   const dayKey = todayKey();
@@ -126,6 +147,12 @@ export function AreaSweepScreen() {
 
   const remaining = stops.filter(s => !done.has(s.id));
   const next = remaining[0] ?? null;
+  /**
+   * What the map is allowed to draw: the next few stops that actually have a
+   * pin, nearest-first in the order already frozen for this round.
+   */
+  const mapStops = remaining.filter(s => s.location).slice(0, MAP_MARKERS);
+  const mapHidden = remaining.filter(s => s.location).length - mapStops.length;
   const unpinned = areaName
     ? store.shops.filter(s => s.active && s.area === areaName && !s.location)
     : [];
@@ -303,14 +330,16 @@ export function AreaSweepScreen() {
             showsMyLocationButton={false}
             toolbarEnabled={false}
             onPanDrag={() => setFollowMe(false)}>
-            {stops.filter(s => s.location).map((s, i) => (
+            {/* The road ahead only. Shops already done are greyed markers
+                nobody navigates by — they are in the Done list below, which is
+                where you look to undo one. */}
+            {mapStops.map((s, i) => (
               <Marker
                 key={s.id}
                 coordinate={{ latitude: s.location!.lat, longitude: s.location!.lng }}
                 title={s.name}
-                description={done.has(s.id) ? 'Done' : s.id === next?.id ? 'Next stop' : `Stop ${i + 1}`}
-                opacity={done.has(s.id) ? 0.35 : 1}
-                pinColor={done.has(s.id) ? '#9aa0a6' : s.id === next?.id ? '#1a73e8' : undefined}
+                description={i === 0 ? 'Next stop' : `Stop ${i + 1}`}
+                pinColor={i === 0 ? '#1a73e8' : undefined}
               />
             ))}
             {/* The arrival ring is the honest version of "you have arrived":
@@ -331,6 +360,15 @@ export function AreaSweepScreen() {
           {!followMe && (
             <View style={styles.recenter}>
               <Chip small selected label="Follow me" onPress={() => setFollowMe(true)} />
+            </View>
+          )}
+          {/* The cap, said out loud. A map showing twelve pins on a round of
+              sixty otherwise reads as a round of twelve. */}
+          {mapHidden > 0 && (
+            <View style={styles.mapNote}>
+              <Text style={styles.mapNoteText}>
+                {`Next ${MAP_MARKERS} stops · ${mapHidden} more ahead`}
+              </Text>
             </View>
           )}
         </View>
@@ -364,7 +402,7 @@ export function AreaSweepScreen() {
         {remaining.length > 1 && (
           <>
             <SectionLabel>After that</SectionLabel>
-            {remaining.slice(1).map((s, i) => (
+            {remaining.slice(1, 1 + LIST_STOPS).map((s, i) => (
               <Card key={s.id}>
                 <View style={styles.rowBetween}>
                   <Text style={[styles.stopLine, styles.flexLabel]} numberOfLines={1}>
@@ -376,13 +414,20 @@ export function AreaSweepScreen() {
                 </View>
               </Card>
             ))}
+            {remaining.length - 1 > LIST_STOPS && (
+              <Text style={styles.capNote}>
+                {`+ ${remaining.length - 1 - LIST_STOPS} more on this round. They appear as you work down the list.`}
+              </Text>
+            )}
           </>
         )}
 
         {done.size > 0 && (
           <>
             <SectionLabel>{`Done (${done.size})`}</SectionLabel>
-            {stops.filter(s => done.has(s.id)).map(s => (
+            {/* Newest first and capped: Undo is for the one just marked by
+                mistake, not for something forty shops ago. */}
+            {stops.filter(s => done.has(s.id)).slice(-LIST_STOPS).reverse().map(s => (
               <Card key={s.id}>
                 <View style={styles.rowBetween}>
                   <Text style={[styles.stopDone, styles.flexLabel]} numberOfLines={1}>{s.name}</Text>
@@ -390,6 +435,9 @@ export function AreaSweepScreen() {
                 </View>
               </Card>
             ))}
+            {done.size > LIST_STOPS && (
+              <Text style={styles.capNote}>{`+ ${done.size - LIST_STOPS} more done earlier.`}</Text>
+            )}
           </>
         )}
 
@@ -460,6 +508,18 @@ const styles = StyleSheet.create({
   flexLabel: { flex: 1, minWidth: 0 },
   areaName: { fontSize: font.h2, fontWeight: '700', color: color.text },
   areaCount: { flexShrink: 0, fontSize: font.sub, color: color.textSub, marginLeft: space.s },
+  // What a cap is holding back. Never silent — a list that stops without
+  // saying so reads as a round that is shorter than it is.
+  mapNote: {
+    position: 'absolute', left: space.s, bottom: space.s,
+    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 6,
+    paddingHorizontal: space.s, paddingVertical: 3,
+  },
+  mapNoteText: { color: '#FFFFFF', fontSize: font.tiny },
+  capNote: {
+    fontSize: font.tiny, color: color.textSub, paddingHorizontal: space.gutter,
+    paddingVertical: space.s, lineHeight: font.tiny + 5,
+  },
   areaMeta: { fontSize: font.sub, color: color.textSub, lineHeight: font.sub + 6, marginTop: space.xs },
   // The one line read at arm's length, so it is the biggest thing on screen.
   guide: { fontSize: font.h2, fontWeight: '700', color: color.primary, marginTop: space.xs },

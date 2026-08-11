@@ -173,6 +173,24 @@ export interface StoreApi {
    * release its committed stock. Booker: own orders; owner: any.
    */
   cancelOrder(orderId: string): void;
+  /**
+   * Owner-only: change what the goods on an order COST, before the van goes.
+   *
+   * The booker negotiates a discount off a fixed trade price; this changes the
+   * trade price itself for this one order — the case the discount box cannot
+   * express, where the owner has agreed a different rate with a shop and the
+   * order was written at the standard one.
+   *
+   * Prices only. Quantities are deliberately not editable here: `committedQty`
+   * moves at booking and would have to move with them, and a stock correction
+   * hidden inside a price screen is how stock quietly stops matching the
+   * shelf. Cancel and rebook is the honest path for a changed basket.
+   *
+   * Refused once the order has left `booked`/`assigned` — after that the
+   * shop is holding paper with a number on it, and the rider is billing
+   * against delivered quantities.
+   */
+  repriceOrder(orderId: string, prices: { productId: string; unitPrice: number }[]): void;
   /** Shop closed today — push the stop to tomorrow (keeps stock committed). */
   deferOrder(orderId: string): void;
   /** Shop refused the goods — status 'returned', committed stock released. */

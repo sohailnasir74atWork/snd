@@ -454,8 +454,45 @@ export interface CompanySettings {
    */
   autoAssignRiderId?: string;
   receiptFooter?: string;
+  /**
+   * The small print at the foot of a bill — the trade warranty and returns
+   * terms, in the seller's own words.
+   *
+   * Distributors in this market print one: the pharma houses carry the Drugs
+   * Act 1976 Form 2A declaration, and a cosmetics distributor carries the
+   * equivalent for his own category. It is free text on purpose. A default is
+   * offered (`DEFAULT_WARRANTY`) because a blank box gets left blank, but the
+   * wording is a LEGAL statement about the goods this business sells and only
+   * its owner can say whether it is the right one — so it is editable, and
+   * clearing it prints no block at all rather than a wrong one.
+   */
+  warrantyText?: string;
   logoUrl?: string;
 }
+
+/**
+ * A starting point for `warrantyText`, written for COSMETICS.
+ *
+ * Deliberately a fraction of the length of the pharma Form 2A block it is
+ * modelled on: that one is long because the Drugs Act prescribes its wording
+ * almost clause for clause, and none of that prescription applies here.
+ * Cosmetics in Pakistan sit under the DRAP Act 2012 and the Cosmetics Rules
+ * 2020, not the Drugs Act 1976 — printing a drugs warranty on a face wash
+ * claims a compliance the goods were never assessed for.
+ *
+ * ⚠️ This is a TEMPLATE, not legal advice. It states the three things a trade
+ * buyer actually needs — that the goods are lawful and sealed, how long he has
+ * to complain, and what comes back — and it should be read by whoever advises
+ * the business before it goes on paper a shopkeeper keeps.
+ */
+export const DEFAULT_WARRANTY =
+  'WARRANTY (Form 6): We hereby give this warranty that the products supplied under this ' +
+  'invoice do not contravene in any way the provisions of the Drug Regulatory Authority of ' +
+  'Pakistan Act 2012 and the Alternative Medicine and Health Products (Enlistment) Rules 2014, ' +
+  'and are supplied in the original sealed packing of the manufacturer under whose enlistment ' +
+  'they are made. Claims for shortage, breakage or damage must be made within 24 hours of ' +
+  'delivery. Goods are not returnable except for a manufacturing defect or expiry, and then ' +
+  'only in original packing with this invoice.';
 
 export interface Expense {
   id: string;

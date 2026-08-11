@@ -11,7 +11,7 @@ import {
   Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Tile,
   color, font, radius, space,
 } from '../../components/ui';
-import { netOfTax } from '../../lib/order';
+import { netOfTax, totalQty } from '../../lib/order';
 import { useStore } from '../../data/store';
 import { strings } from '../../i18n/strings';
 
@@ -333,6 +333,30 @@ export function AdminDashboardScreen() {
   const withStaff = store.payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
   const outstanding = store.shops.filter(sh => sh.active).reduce((s, sh) => s + sh.outstanding, 0);
 
+  /**
+   * What the bookers WROTE today — a different set of orders from
+   * `todayOrders`, and deliberately so.
+   *
+   * `todayOrders` counts anything that moved today, which includes yesterday's
+   * bookings going out on today's van; that is the right denominator for a
+   * delivered ratio and the wrong one for "how much business did we take". An
+   * order booked this morning for Thursday belongs in this number and lands in
+   * neither of the two above.
+   *
+   * The dashboard had the count of these and nothing else, which answers "how
+   * busy were they" and not "at what". Twelve orders is a good morning or a
+   * poor one depending entirely on whether it is 40 pieces or 400, and the
+   * owner had to open Reports to find out which.
+   */
+  const bookedToday = store.orders.filter(o =>
+    o.status !== 'cancelled' && o.status !== 'returned' && o.bookedAt >= dayStart.getTime());
+  const bookedPieces = bookedToday.reduce((s, o) => s + totalQty(o.items), 0);
+  // Net of tax, for the same reason TODAY'S SALES is: the tax inside a booked
+  // order is money this business will collect and hand straight on, and a
+  // booked-value tile that quietly includes it disagrees with every sales
+  // figure on the screen above it by exactly the tax rate.
+  const bookedValue = bookedToday.reduce((s, o) => s + netOfTax(o.orderedTotals), 0);
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <LinearGradient
@@ -361,6 +385,14 @@ export function AdminDashboardScreen() {
       <View style={styles.tiles}>
         <Tile label="Orders today" value={`${todayOrders.length}`} icon="cart-outline" />
         <Tile label="Delivered" value={`${delivered.length}`} icon="check-circle-outline" />
+        {/* The two that answer "at WHAT" rather than "how many". They sit
+            together and in this order because pieces is the figure that moves
+            a van and rupees is the one that pays for it — an owner reading
+            them apart learns half of his own morning. Both say "booked" out
+            loud: they count what was written today, which is not the set of
+            orders the two tiles above them count. */}
+        <Tile label="Pieces booked today" value={bookedPieces.toLocaleString()} icon="package-variant-closed" />
+        <Tile label="Value booked today" value={`Rs ${bookedValue.toLocaleString()}`} icon="tag-outline" />
         <Tile label="Credit outstanding" value={`Rs ${outstanding.toLocaleString()}`} icon="alert-circle-outline" accent={outstanding > 0 ? color.danger : undefined} />
         <Tile label="With staff" value={`Rs ${withStaff.toLocaleString()}`} icon="clock-outline" accent={withStaff > 0 ? color.warn : undefined} />
       </View>
@@ -463,6 +495,10 @@ export function AdminMoreMenu({ navigation }: { navigation: { navigate: (r: stri
     {
       icon: 'chart-line', tint: color.success, bg: color.successSoft,
       title: 'Reports', sub: 'sales, collections, who owes me', route: 'Reports',
+    },
+    {
+      icon: 'printer-outline', tint: color.primary, bg: color.primarySoft,
+      title: 'Bills', sub: 'open one, or print many to a page', route: 'Bills',
     },
     {
       icon: 'receipt', tint: color.warn, bg: color.warnSoft,
