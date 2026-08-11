@@ -16,6 +16,7 @@ import { useStore } from '../../data/store';
 import type { Order } from '../../data/models';
 import { todayKey } from '../../data/models';
 import { computeTotals } from '../../lib/order';
+import { dueLabel } from '../../lib/day';
 import { amountInWordsLine } from '../../lib/money';
 import { isProvisional } from '../../lib/serials';
 import { strings } from '../../i18n/strings';
@@ -34,6 +35,30 @@ export function RiderRouteScreen() {
   const isDueNow = (o: Order) => (o.deliveryDate ?? today) <= today;
   const isOverdue = (o: Order) => (o.deliveryDate ?? today) < today;
   const stops = store.orders.filter(o => isDueNow(o) && (o.status === 'assigned' || o.status === 'out_for_delivery'));
+  /**
+   * Orders with his name on them that are NOT due today, grouped by the day
+   * they are due.
+   *
+   * Booking is hardcoded to Tomorrow (§1b), so every afternoon the whole of
+   * the next morning's work sits assigned to this rider and his screen said
+   * "No deliveries assigned yet — orders appear here as the booker confirms
+   * them". Nine orders worth Rs 12,000 existed, with his uid on them, and the
+   * screen told him nothing had been booked. That is a phone call to the
+   * booker every single day, caused entirely by wording.
+   *
+   * Shown, dated, and deliberately NOT actionable: `stops` is unchanged, so
+   * nothing here joins today's load, counts toward the day, or can be
+   * delivered early. He can see it; he cannot start it.
+   */
+  const upcoming = store.orders
+    .filter(o => !isDueNow(o) && (o.status === 'assigned' || o.status === 'booked'))
+    .reduce<Record<string, number>>((acc, o) => {
+      const d = o.deliveryDate ?? today;
+      acc[d] = (acc[d] ?? 0) + 1;
+      return acc;
+    }, {});
+  const upcomingDays = Object.entries(upcoming).sort(([a], [b]) => (a < b ? -1 : 1));
+  const upcomingTotal = upcomingDays.reduce((s, [, n]) => s + n, 0);
   // Counted by WHEN IT WAS DELIVERED, not by the day it was due. An overdue
   // stop left `stops` the moment it was delivered but never joined a
   // `=== today` list, so the header counted DOWN as the rider worked:
@@ -97,9 +122,32 @@ export function RiderRouteScreen() {
         {load.length === 0 && (
           <EmptyState
             icon="truck-outline"
-            title="No deliveries assigned yet"
-            hint="Orders appear here as the booker confirms them."
+            title={upcomingTotal > 0 ? 'Nothing to deliver today' : 'No deliveries assigned yet'}
+            hint={upcomingTotal > 0
+              ? 'Your next round is below. It opens on the day it is due.'
+              : 'Orders appear here as the booker confirms them.'}
           />
+        )}
+        {/* What is coming, and WHEN. A count with a date is the whole fix:
+            the rider stops wondering whether the app is broken, and stops
+            phoning the booker to ask. */}
+        {upcomingDays.length > 0 && (
+          <>
+            <SectionLabel>Coming up</SectionLabel>
+            <Card>
+              {upcomingDays.map(([date, n], i) => (
+                <ListRow
+                  key={date}
+                  icon="calendar-clock"
+                  tint={color.textSub}
+                  bg={color.surfaceAlt}
+                  title={dueLabel(date, today)}
+                  sub={`${n} ${n === 1 ? 'delivery' : 'deliveries'}`}
+                  right={i === 0 ? <Chip small label="Not today" /> : undefined}
+                />
+              ))}
+            </Card>
+          </>
         )}
         <View style={styles.ctaWrap}>
           <PrimaryButton

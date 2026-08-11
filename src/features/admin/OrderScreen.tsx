@@ -54,6 +54,7 @@ export function OrderScreen() {
   /** Keyed by productId. Absent means "unchanged" — never "zero". */
   const [edits, setEdits] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
+  const [cancelling, setCancelling] = React.useState(false);
 
   useFocusEffect(React.useCallback(() => {
     const id = consumePendingOrder();
@@ -119,6 +120,45 @@ export function OrderScreen() {
               Alert.alert('Not saved', e instanceof Error ? e.message : String(e));
             } finally {
               setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  /**
+   * Cancel, because delete does not exist and never will.
+   *
+   * `allow delete: if false` on orders — money history is crossed out, not
+   * removed. A cancelled order keeps its serial, its stock movement and its
+   * place in the record; a deleted one takes all three with it, and the
+   * shopkeeper turning up in three months holding a slip gets no answer.
+   *
+   * The booker could already cancel his own order and the owner could not,
+   * which was backwards. The store method and the rule both already existed;
+   * only the button was missing.
+   */
+  const cancel = () => {
+    if (busy || cancelling || !order) return;
+    Alert.alert(
+      'Cancel this order?',
+      `${shop?.name ?? 'This shop'} · ${order.orderNo} · Rs ${formatAmount(order.orderedTotals.grandTotal)}`
+      + '\n\nThe stock goes back to the shelf and the order stops appearing in every list. '
+      + 'It stays in the record marked cancelled — orders are never deleted.',
+      [
+        { text: 'Keep it', style: 'cancel' },
+        {
+          text: 'Cancel the order',
+          style: 'destructive',
+          onPress: () => {
+            setCancelling(true);
+            try {
+              store.cancelOrder(order.id);
+            } catch (e) {
+              Alert.alert('Not cancelled', e instanceof Error ? e.message : String(e));
+            } finally {
+              setCancelling(false);
             }
           },
         },
@@ -214,6 +254,16 @@ export function OrderScreen() {
             disabled={!changed}
             disabledReason="Change a price first"
             onPress={save}
+          />
+          {/* Quiet, and below the save. It is the rarer action and it should
+              not sit at thumb height next to the one used every time. */}
+          <PrimaryButton
+            variant="quiet"
+            icon="close-circle-outline"
+            label="Cancel this order"
+            busy={cancelling}
+            busyLabel="Cancelling…"
+            onPress={cancel}
           />
         </View>
       ) : (

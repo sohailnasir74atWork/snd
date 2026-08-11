@@ -246,14 +246,14 @@ describe('company logo on the letterhead', () => {
     })).toContain('class="logo"');
   });
 
-  test('without one the header is exactly what it always was', () => {
+  test('without one there is no broken image, just the name', () => {
     const html = billHtml({
       settings, shop, order,
       amountInWordsLine: 'Rupees nine thousand nine hundred only',
       received: 5000, previousBalance: 4400,
     });
-    // The CSS rule is always in the sheet; it is the markup that is optional.
-    expect(html).not.toContain('class="letterhead"');
+    // The masthead is always there — it is the pad. Only the picture is
+    // optional, and its absence must leave a gap rather than a broken icon.
     expect(html).not.toContain('<img');
     expect(html).toContain('Alpha Skin Care');
   });
@@ -524,5 +524,29 @@ describe('a business with no sales tax never sees the words', () => {
     const taxed = { ...order, billedTotals: { subTotal: 9900, discountTotal: 0, taxTotal: 1683, grandTotal: 11583 } };
     const html = billSheetHtml({ settings, bills: [{ ...bill, order: taxed }], perPage: 3 });
     expect(html).toContain('Sales tax');
+  });
+});
+
+describe('the warranty reaches every document a shop keeps', () => {
+  const withTerms = { ...settings, warrantyText: 'Goods once sold are not returnable.' };
+
+  test('the full A5 bill — the one the rider sends over WhatsApp', () => {
+    const html = billHtml({
+      settings: withTerms, order, shop,
+      amountInWordsLine: 'x', received: 0, previousBalance: 0,
+    });
+    expect(html).toContain('Goods once sold are not returnable.');
+  });
+
+  test('and the cut-out slips', () => {
+    const html = billSheetHtml({ settings: withTerms, bills: [{ order, shop, paid: 0 }], perPage: 3 });
+    expect(html).toContain('Goods once sold are not returnable.');
+  });
+
+  test('the order confirmation does NOT carry it', () => {
+    // It is not a bill and says so in bold. Trade warranty terms belong on the
+    // document that accompanies the goods, not on a slip that promises them.
+    expect(orderConfirmationHtml({ settings: withTerms, order, shop }))
+      .not.toContain('Goods once sold are not returnable.');
   });
 });

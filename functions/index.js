@@ -681,6 +681,50 @@ exports.pushHandoverConfirmed = onDocumentUpdated(
   },
 );
 
+// Every new order → every admin. The owner asked to know when work happens
+// rather than having to open the app and look.
+//
+// A SECOND trigger on the same document as pushOrderAssigned rather than an
+// extra send inside it: they are different audiences with different reasons.
+// The rider one is dead without `assignedTo`, and an unassigned order is
+// exactly the one the owner most needs to hear about — folding them together
+// would silence the alert precisely when it matters.
+exports.pushOrderBooked = onDocumentCreated(
+  { document: 'companies/{c}/orders/{o}', region: 'asia-south1' },
+  async (event) => {
+    const o = event.data?.data();
+    if (!o) return;
+    await push(
+      await adminTokens(event.params.c),
+      `Order booked — ${o.shopSnapshot?.name || 'shop'}`,
+      `${rs(o.orderedTotals?.grandTotal)} • ${o.assignedTo ? `deliver ${o.deliveryDay || 'today'}` : 'UNASSIGNED — no rider'}`,
+    );
+  },
+);
+
+// Delivered → every admin. Fires on the status EDGE, not on the value, so an
+// order written again for any other reason (a reprice, a payment landing)
+// cannot send this twice. `deliveredAt` is deliberately not used as the
+// trigger: it is written in the same update as the status and would race.
+exports.pushOrderDelivered = onDocumentUpdated(
+  { document: 'companies/{c}/orders/{o}', region: 'asia-south1' },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!after || before?.status === 'delivered' || after.status !== 'delivered') return;
+    const billed = after.billedTotals?.grandTotal ?? after.orderedTotals?.grandTotal;
+    const paid = Number(after.amountPaid || 0);
+    const owed = Number(billed || 0) - paid;
+    await push(
+      await adminTokens(event.params.c),
+      `Delivered — ${after.shopSnapshot?.name || 'shop'}`,
+      // The number the owner actually wants at that moment is not the bill, it
+      // is whether the cash came with it.
+      owed > 0 ? `${rs(billed)} • ${rs(owed)} still owed` : `${rs(billed)} • paid in full`,
+    );
+  },
+);
+
 // New reward claim → every admin (FR-16.5: only they can approve).
 exports.pushClaimPending = onDocumentCreated(
   { document: 'companies/{c}/rewardClaims/{id}', region: 'asia-south1' },

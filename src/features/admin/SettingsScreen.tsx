@@ -5,12 +5,14 @@
 import React from 'react';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import {
-  Card, IconTile, MoreFields, SectionLabel,
+  Card, Chip, Icon, IconTile, MoreFields, OptionBar, SectionLabel,
   color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen } from './AdminScreens';
 import { useStore } from '../../data/store';
 import { DEFAULT_WARRANTY } from '../../data/models';
+import type { MonthlyTarget } from '../../data/models';
+import { targetsOf } from '../../lib/target';
 import { LogoPicker } from './LogoPicker';
 
 /**
@@ -89,6 +91,47 @@ function Field({ label, value, onChange, placeholder, keyboardType, multiline, h
   );
 }
 
+/**
+ * One person's commission: how it is read, then how much.
+ *
+ * The mode sits ABOVE the number because it changes what the number means —
+ * "20" is twenty rupees a piece or twenty percent of the sale, and those are
+ * not close to each other. Reading order is the only thing stopping that
+ * mistake, so the prefix and suffix on the amount change with it too.
+ */
+function CommissionRows({ label, icon, mode, value, onMode, onValue, last }: {
+  label: string; icon: string; mode: 'fixed' | 'percent'; value: number;
+  onMode: (m: 'fixed' | 'percent') => void; onValue: (v: number) => void; last?: boolean;
+}) {
+  return (
+    <View style={!last ? styles.ruleDivider : undefined}>
+      <View style={styles.ruleRow}>
+        <View style={styles.ruleHead}>
+          <IconTile name={icon} size={34} />
+          <Text style={styles.ruleLabel} numberOfLines={2}>{label}</Text>
+        </View>
+        <OptionBar
+          options={['fixed', 'percent'] as const}
+          value={mode}
+          onChange={onMode}
+          render={m => (m === 'fixed' ? 'Rs per piece' : '% of sale')}
+        />
+      </View>
+      <NumberRow
+        icon={mode === 'fixed' ? 'cash' : 'percent'}
+        label={mode === 'fixed' ? `${label} — rupees per piece` : `${label} — percent of the sale`}
+        value={value}
+        prefix={mode === 'fixed' ? 'Rs' : undefined}
+        suffix={mode === 'percent' ? '%' : undefined}
+        min={0}
+        max={mode === 'fixed' ? 100000 : 100}
+        onCommit={onValue}
+        last
+      />
+    </View>
+  );
+}
+
 function SwitchRow({ icon, tint, bg, title, sub, value, onToggle, last }: {
   icon: string; tint?: string; bg?: string; title: string; sub: string;
   value: boolean; onToggle: () => void; last?: boolean;
@@ -129,6 +172,16 @@ export function SettingsScreen() {
    * on his next bill.
    */
   const [warranty, setWarranty] = React.useState(s.warrantyText ?? DEFAULT_WARRANTY);
+  /**
+   * Held locally and written as a whole array on every change — the list is
+   * three rows at most, and a partial write of a targets array is how one
+   * target silently disappears while another is being edited.
+   */
+  const [targets, setTargetsState] = React.useState<MonthlyTarget[]>(targetsOf(s.monthlyTargets));
+  const setTargets = (next: MonthlyTarget[]) => {
+    setTargetsState(next);
+    store.updateSettings({ monthlyTargets: next });
+  };
 
   // Nothing on this screen needs a busy guard: there is no save button, and
   // every control writes the whole value it shows, so a repeated tap writes
@@ -250,6 +303,112 @@ export function SettingsScreen() {
         claims it for him; you approve it.
       </Text>
 
+      {/* YOUR men, not the shop's — a separate card on purpose. The row above
+          is claimed and approved one at a time; these are worked out from
+          orders the app already records and nobody claims them. */}
+      {/* Targets. An array on the model, so the owner can run a lump-sum goal
+          and a product-wise one at the same time — which is how a distributor
+          actually pushes a slow line without dropping the overall number. */}
+      <SectionLabel>Monthly target</SectionLabel>
+      <Card style={styles.tightCard}>
+        {targets.map((t, i) => (
+          <View key={i} style={i < targets.length - 1 ? styles.ruleDivider : undefined}>
+            <View style={styles.ruleRow}>
+              <View style={styles.ruleHead}>
+                <IconTile name="target" size={34} />
+                <Text style={styles.ruleLabel} numberOfLines={2}>
+                  {t.productId
+                    ? store.products.find(p2 => p2.id === t.productId)?.name ?? 'Product'
+                    : t.metric === 'collection' ? 'Cash collected' : 'All products'}
+                </Text>
+              </View>
+              <Pressable onPress={() => setTargets(targets.filter((_, j) => j !== i))} hitSlop={12}>
+                <Icon name="close-circle-outline" size={22} color={color.textFaint} />
+              </Pressable>
+            </View>
+            <OptionBar
+              options={['pieces', 'value', 'collection'] as const}
+              value={t.metric}
+              onChange={m => setTargets(targets.map((x, j) => (j === i ? { ...x, metric: m } : x)))}
+              render={m => (m === 'pieces' ? 'Pieces' : m === 'value' ? 'Sales Rs' : 'Collected Rs')}
+            />
+            <NumberRow
+              icon={t.metric === 'pieces' ? 'package-variant' : 'cash'}
+              label={t.metric === 'pieces' ? 'Pieces this month' : 'Rupees this month'}
+              value={t.value}
+              prefix={t.metric === 'pieces' ? undefined : 'Rs'}
+              suffix={t.metric === 'pieces' ? 'pcs' : undefined}
+              min={0}
+              max={99999999}
+              onCommit={v => setTargets(targets.map((x, j) => (j === i ? { ...x, value: v } : x)))}
+              last
+            />
+            {/* Product-wise is meaningless on collection — money does not
+                arrive labelled by product — so the picker hides itself. */}
+            {t.metric !== 'collection' && (
+              <MoreFields label={t.productId ? 'Change product' : 'Narrow to one product'} count={1}>
+                <View style={styles.chipWrap}>
+                  <Chip
+                    label="All products"
+                    selected={!t.productId}
+                    onPress={() => setTargets(targets.map((x, j) => (j === i ? { ...x, productId: undefined } : x)))}
+                  />
+                  {store.products.filter(p2 => p2.active).map(p2 => (
+                    <Chip
+                      key={p2.id}
+                      label={p2.name}
+                      selected={t.productId === p2.id}
+                      onPress={() => setTargets(targets.map((x, j) => (j === i ? { ...x, productId: p2.id } : x)))}
+                    />
+                  ))}
+                </View>
+              </MoreFields>
+            )}
+          </View>
+        ))}
+        {targets.length === 0 && (
+          <Text style={styles.taxHint}>No target set — the booker's screen shows none.</Text>
+        )}
+      </Card>
+      <View style={styles.chipWrap}>
+        <Chip
+          label="+ Add a target"
+          onPress={() => setTargets([...targets, { metric: 'pieces', value: 500 }])}
+        />
+      </View>
+      <Text style={styles.taxHint}>
+        What each booker is aiming at this month. Pieces is what he can push
+        hardest; Collected is the only one that says the money came home.
+        Sales and Pieces can be narrowed to a single product.
+      </Text>
+
+      <SectionLabel>Your team's commission</SectionLabel>
+      <Card style={styles.tightCard}>
+        <CommissionRows
+          label="Order booker"
+          icon="cart-outline"
+          mode={s.bookerCommissionMode ?? 'fixed'}
+          value={s.bookerCommissionValue ?? 0}
+          onMode={m => store.updateSettings({ bookerCommissionMode: m })}
+          onValue={v => store.updateSettings({ bookerCommissionValue: v })}
+        />
+        <CommissionRows
+          label="Delivery rider"
+          icon="truck-outline"
+          last
+          mode={s.riderCommissionMode ?? 'fixed'}
+          value={s.riderCommissionValue ?? 0}
+          onMode={m => store.updateSettings({ riderCommissionMode: m })}
+          onValue={v => store.updateSettings({ riderCommissionValue: v })}
+        />
+      </Card>
+      <Text style={styles.taxHint}>
+        Leave at 0 to show no commission at all. A percentage is taken on the
+        sale net of sales tax — nobody earns a share of the government's money.
+        It counts as earned only once the goods are delivered AND the bill is
+        paid.
+      </Text>
+
       <SectionLabel>Switches</SectionLabel>
       <Card style={styles.tightCard}>
         <SwitchRow
@@ -331,6 +490,12 @@ export function SettingsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bg },
   content: { paddingTop: space.s, paddingBottom: space.xl + space.l },
+  // Chips wrap rather than scroll: a product list of thirty must not hide the
+  // thirtieth behind a gesture nobody knows is there.
+  chipWrap: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: space.s,
+    paddingHorizontal: space.gutter, paddingBottom: space.s,
+  },
   taxHint: {
     fontSize: font.sub, color: color.textSub,
     paddingHorizontal: space.l, paddingBottom: space.m,

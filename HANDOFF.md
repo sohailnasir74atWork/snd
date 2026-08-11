@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-11 (§1h — three field bugs fixed, the bill book, `versionCode 22`)
+**Written:** 2026-08-09 · **Last updated:** 2026-08-11 (§1i — the pad, commission, targets, owner push)
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -17,7 +17,7 @@ and `PROGRESS.md` (the SRS-facing plan).
 | Version | `versionCode 22` / `versionName "2.6"` — built 2026-08-11, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
-| Unit tests | **202 / 202**, 14 suites |
+| Unit tests | **238 / 238**, 16 suites |
 | Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
 | Device | debug build driven on the emulator (§1b); §1d driven on the emulator in **both debug and a real release build** (R8 on — see §4.0b). ❗ **Nothing in §1c or §1d has been on a real phone** — see §4.1 before publishing |
@@ -179,6 +179,105 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1i. The company pad, what a man earns, and what he is aiming at
+
+2026-08-11, later the same day. 238 tests, 0 tsc, 0 lint. **None of it has
+been on a device.**
+
+### Every document is the letterhead now
+
+The owner sent his printed pad and the documents were rebuilt on it. The
+palette is **sampled from that PDF**, not chosen — navy `#205088`, accent
+`#3880C0`, rule `#98B0C8` — and lives in `PAD` at the top of `templates.ts`,
+deliberately NOT in `components/theme.ts`. That palette dresses an app and
+changes when the app does; a bill printed last year must not stop matching the
+letterhead because a button went a different blue.
+
+Structure copied in the pad's own order: navy corner wedge and masthead, navy
+rule, `Ref No` / `Date` row, the document type in a navy pill, a details panel
+with a thick blue left edge, navy table header with faint zebra, navy TOTAL
+bar, signature lines, footer band with a blue wedge.
+
+**Monospace is gone from the body.** It was there so the same markup would read
+on a 58mm thermal printer; nothing in this app has ever printed to one, and it
+made every document look like a till receipt. Only the NUMBERS stay monospace —
+a column of figures has to line up on the decimal.
+
+> ⚠️ **Two traps, both of which cost time here.**
+>
+> **Never put a backtick in a CSS comment.** The CSS lives inside a JS template
+> literal and one backtick ends the string. It broke the whole file, and the
+> symptom was the suite dropping from 238 tests to 189 with NO failure message
+> — a suite that fails to parse simply does not run. Watch the COUNT, not just
+> the colour.
+>
+> **`table.items th` outranks a bare `.num`** — a class plus two elements beats
+> one class. The Qty heading sat left while its column ran right. Corrections
+> have to match the specificity of the rule they are fixing.
+
+### Commission — `lib/commission.ts`
+
+One rate per role, owner-set, and he picks how it reads: `fixed` (rupees per
+piece) or `percent` (share of the sale). Both exist because distributors run
+both, and a business paying Rs 20 a piece cannot express that as a percent.
+
+- **Percent is taken NET OF TAX.** Paying a share of sales tax would mean the
+  company funds commission out of its own pocket, and a rate change would
+  silently change what a man earns.
+- **Fixed pays on DELIVERED pieces** once the van has been. A short delivery
+  pays for what reached a shop.
+- **Confirmed = delivered AND paid in full.** Delivery alone is not enough:
+  a shop holding goods and not paying is where the owner carries the risk, and
+  telling the booker he has earned that invites him to stop chasing it.
+  Cancelled and returned earn nothing, not even unconfirmed.
+
+NOT `rewardPerPiece`, which pays the SHOPKEEPER's counter staff through claims
+the owner approves one at a time. These are worked out from orders and nobody
+claims them.
+
+### Targets — `lib/target.ts`
+
+`settings.monthlyTargets` is an ARRAY, because a distributor sets these three
+ways and often several at once: pieces (lump sum), pieces of ONE product, and
+rupees collected. `metric` says what is counted, `productId` narrows it.
+
+- Absent → 500 pieces (`DEFAULT_TARGETS`). An EMPTY array is a deliberate "no
+  targets" and is respected — never asked and answered "none" are different.
+- **`collection` counts CONFIRMED payments only.** Cash in a rider's satchel
+  has not come home; a target ticking up at collection would be met by money
+  still walking around a bazaar. `productId` is ignored there rather than
+  pretending money arrives labelled.
+- A test asserts the product-wise parts ADD UP to the lump sum. If they ever
+  disagree, a split target is lying about the same month.
+
+My Day shows a bar per target with a hairline marking how much of the MONTH has
+gone. 60% on the 12th is ahead; 60% on the 28th is behind. The bar without that
+line tells a man he is doing well when he is not.
+
+### Deployed 2026-08-11 — owner push
+
+`pushOrderBooked` and `pushOrderDelivered`, `asia-south1`, `Deploy complete`.
+Both are NEW; the 8 existing functions were untouched.
+
+`pushOrderBooked` is a second trigger on the same document as
+`pushOrderAssigned` rather than an extra send inside it: that one returns early
+with no `assignedTo`, and an unassigned order is exactly the one the owner most
+needs to hear about. `pushOrderDelivered` fires on the status EDGE, so a
+reprice or a payment cannot send it twice.
+
+### Also
+
+- The rider's screen shows **Coming up** with a dated count instead of "No
+  deliveries assigned yet" — booking is hardcoded to Tomorrow, so every
+  afternoon his whole next morning sat assigned to him while the screen said
+  nothing had been booked. `lib/day.ts` holds the date maths, pure and tested.
+- The owner can **cancel** an order (More → Bills → Edit). The rule and the
+  store method already existed; only the button was missing, so the booker
+  could cancel his own order and the owner could not.
+- `displayName` is presentation only and still not written back.
 
 ---
 

@@ -21,6 +21,8 @@ import {
 } from '../../lib/order';
 import { formatAmount } from '../../lib/money';
 import { visitCycleDays } from '../../lib/assignment';
+import { commissionSplit } from '../../lib/commission';
+import { allProgress, monthPace, targetsOf } from '../../lib/target';
 import { isProvisional } from '../../lib/serials';
 import { strings } from '../../i18n/strings';
 import { orderConfirmationHtml } from '../../documents/templates';
@@ -1278,6 +1280,63 @@ export function MyDayScreen() {
 
   // The booker's own evening: exception cash he is carrying (audit blocker —
   // he ended the day blind), then hand over and watch for the confirm.
+  /**
+   * His own week, and what he has earned.
+   *
+   * The screen used to open on a list of today's orders and nothing else — a
+   * man could not tell from it whether he had had a good morning or a bad one,
+   * because there was no yesterday on it to compare against. These are the
+   * four numbers he actually asks about.
+   *
+   * All of it is HIS orders already: the read rule on `orders` is
+   * `isBooker && resource.data.bookedBy == request.auth.uid`, so a booker's
+   * client never receives anybody else's. Re-filtering by `bookedBy` here
+   * would need his uid on the store, which is not there, and would protect
+   * against nothing the rules do not already refuse.
+   */
+  const mineAll = store.orders;
+  const yStart = startOfDay.getTime() - 86400_000;
+  const yesterday = mineAll.filter(o => o.bookedAt >= yStart && o.bookedAt < startOfDay.getTime()
+    && o.status !== 'cancelled' && o.status !== 'returned');
+  const yesterdayTotal = yesterday.reduce((s2, o) => s2 + netOfTax(o.billedTotals ?? o.orderedTotals), 0);
+  const todayNet = mine
+    .filter(o => o.status !== 'cancelled' && o.status !== 'returned')
+    .reduce((s2, o) => s2 + netOfTax(o.billedTotals ?? o.orderedTotals), 0);
+  /** Booked today FOR tomorrow — the work already lined up. */
+  const forTomorrow = mineAll.filter(o =>
+    (o.deliveryDate ?? today) > today && o.status !== 'cancelled' && o.status !== 'returned');
+
+  /**
+   * Commission, split into money that is his and money that is not yet.
+   *
+   * A rate of 0 hides the whole block rather than showing four zeroes — a
+   * company that does not pay commission should not have a commission panel.
+   */
+  const rate = {
+    mode: store.settings.bookerCommissionMode ?? 'fixed',
+    value: store.settings.bookerCommissionValue ?? 0,
+  } as const;
+  // The month, because that is the period a man is paid over.
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+  const monthOrders = mineAll.filter(o => o.bookedAt >= monthStart.getTime());
+  const earned = commissionSplit(monthOrders, rate);
+  /**
+   * The month's targets, and where he has got to.
+   *
+   * Pace matters as much as progress: 60% of a target on the 12th is ahead,
+   * and 60% on the 28th is behind. Showing the bar without the day of the
+   * month tells a man he is doing well when he is not.
+   */
+  const monthPayments = store.payments.filter(pm => pm.createdAt >= monthStart.getTime());
+  const targets = allProgress(targetsOf(store.settings.monthlyTargets), monthOrders, monthPayments);
+  const pace = monthPace(new Date());
+  const productName = (id?: string) =>
+    id ? store.products.find(pr => pr.id === id)?.name ?? 'product' : null;
+
+  const monthNet = monthOrders
+    .filter(o => o.status !== 'cancelled' && o.status !== 'returned')
+    .reduce((s2, o) => s2 + netOfTax(o.billedTotals ?? o.orderedTotals), 0);
+
   const myCash = store.payments.filter(p => !p.confirmed && !p.voided);
   const myCashTotal = myCash.reduce((s, p) => s + p.amount, 0);
   // cancelOrder and handOver are fire-and-forget writes: the status only comes
@@ -1310,6 +1369,110 @@ export function MyDayScreen() {
         <Text style={styles.sub}>
           {mine.length} orders today{vis.bookerSeesOwnTotals ? ` • Rs ${todayTotal.toLocaleString()}` : ''}
         </Text>
+
+        {/* Today against yesterday, because a number on its own says nothing.
+            Hidden entirely when the owner has turned own-totals off — this is
+            the same information that switch exists to withhold. */}
+        {vis.bookerSeesOwnTotals && (
+          <Card>
+            <View style={styles.dayRow}>
+              <View style={styles.dayCell}>
+                <Text style={styles.dayValue}>Rs {todayNet.toLocaleString()}</Text>
+                <Text style={styles.dayLabel}>today · {mine.length} orders</Text>
+              </View>
+              <View style={styles.dayDivider} />
+              <View style={styles.dayCell}>
+                <Text style={styles.dayValueQuiet}>Rs {yesterdayTotal.toLocaleString()}</Text>
+                <Text style={styles.dayLabel}>yesterday · {yesterday.length} orders</Text>
+              </View>
+            </View>
+            {yesterdayTotal > 0 && (
+              <Text style={[styles.dayDelta, todayNet >= yesterdayTotal ? styles.deltaUp : styles.deltaDown]}>
+                {todayNet >= yesterdayTotal
+                  ? `↑ Rs ${(todayNet - yesterdayTotal).toLocaleString()} ahead of yesterday`
+                  : `↓ Rs ${(yesterdayTotal - todayNet).toLocaleString()} behind yesterday`}
+              </Text>
+            )}
+            {forTomorrow.length > 0 && (
+              <Text style={styles.dayNext}>
+                {forTomorrow.length} {forTomorrow.length === 1 ? 'order' : 'orders'} already lined up for delivery
+              </Text>
+            )}
+          </Card>
+        )}
+
+        {/* The goal, and the pace. A bar on its own says "60% done"; the day
+            of the month is what turns that into ahead or behind. */}
+        {targets.length > 0 && vis.bookerSeesOwnTotals && (
+          <>
+            <SectionLabel>This month's target</SectionLabel>
+            <Card>
+              {targets.map((t, i) => {
+                const ahead = t.fraction >= pace.fraction;
+                const name = productName(t.target.productId);
+                return (
+                  <View key={i} style={i > 0 ? styles.targetGap : undefined}>
+                    <View style={styles.rowBetween}>
+                      <Text style={[styles.targetName, styles.flexLabel]} numberOfLines={1}>
+                        {name ?? (t.target.metric === 'collection' ? 'Cash collected' : 'All products')}
+                      </Text>
+                      <Text style={styles.targetNum}>
+                        {t.label} / {t.target.metric === 'pieces'
+                          ? `${t.target.value.toLocaleString()} pcs`
+                          : `Rs ${t.target.value.toLocaleString()}`}
+                      </Text>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <View style={[
+                        styles.barFill,
+                        { width: `${Math.round(t.fraction * 100)}%` },
+                        ahead ? styles.barAhead : styles.barBehind,
+                      ]} />
+                      {/* Where the month is. The bar has to reach this line to
+                          be on pace, and it is drawn ON the bar rather than
+                          written underneath so the comparison is one glance. */}
+                      <View style={[styles.barPace, { left: `${Math.round(pace.fraction * 100)}%` }]} />
+                    </View>
+                    <Text style={[styles.targetHint, ahead ? styles.deltaUp : styles.deltaDown]}>
+                      {Math.round(t.fraction * 100)}% done · day {pace.day} of {pace.days}
+                      {' · '}{ahead ? 'on track' : 'behind pace'}
+                    </Text>
+                  </View>
+                );
+              })}
+            </Card>
+          </>
+        )}
+
+        {/* Commission. Confirmed is money the shop has actually paid for;
+            unconfirmed is work done that has not turned into cash yet, and
+            keeping the two apart is the whole point — a man told he has
+            earned money nobody has handed over stops chasing it. */}
+        {rate.value > 0 && vis.bookerSeesOwnTotals && (
+          <>
+            <SectionLabel>My commission this month</SectionLabel>
+            <Card>
+              <View style={styles.dayRow}>
+                <View style={styles.dayCell}>
+                  <Text style={styles.earnConfirmed}>Rs {earned.confirmed.toLocaleString()}</Text>
+                  <Text style={styles.dayLabel}>confirmed · {earned.confirmedOrders} paid</Text>
+                </View>
+                <View style={styles.dayDivider} />
+                <View style={styles.dayCell}>
+                  <Text style={styles.earnPending}>Rs {earned.unconfirmed.toLocaleString()}</Text>
+                  <Text style={styles.dayLabel}>waiting · {earned.unconfirmedOrders} orders</Text>
+                </View>
+              </View>
+              <Text style={styles.dayNext}>
+                {rate.mode === 'fixed'
+                  ? `Rs ${rate.value} per piece delivered`
+                  : `${rate.value}% of the sale`}
+                {' · '}confirmed once the shop has paid
+              </Text>
+              <Text style={styles.dayNext}>Rs {monthNet.toLocaleString()} booked this month</Text>
+            </Card>
+          </>
+        )}
         {mine.map(o => (
           <Card key={o.id}>
             <View style={styles.rowBetween}>
@@ -1470,6 +1633,32 @@ const styles = StyleSheet.create({
   },
   readOnlyValue: { fontSize: font.body, fontWeight: '700', color: color.text, marginTop: 2 },
   priceHint: { fontSize: font.tiny, color: color.textSub, marginTop: space.xs, lineHeight: font.tiny + 5 },
+  targetGap: { marginTop: space.l, paddingTop: space.l, borderTopWidth: 1, borderTopColor: color.cardEdge },
+  targetName: { fontSize: font.body, fontWeight: '700', color: color.text },
+  targetNum: { fontSize: font.sub, fontWeight: '700', color: color.textSub, marginLeft: space.s },
+  barTrack: {
+    height: 10, borderRadius: 5, backgroundColor: color.surfaceAlt,
+    marginTop: space.s, overflow: 'hidden', position: 'relative',
+  },
+  barFill: { height: '100%', borderRadius: 5 },
+  barAhead: { backgroundColor: color.success },
+  barBehind: { backgroundColor: color.warn },
+  // A hairline showing how much of the MONTH has gone. Absolute, on top of the
+  // fill, so "am I past it" is answered without reading a number.
+  barPace: { position: 'absolute', top: 0, bottom: 0, width: 2, backgroundColor: color.text },
+  targetHint: { fontSize: font.tiny, marginTop: space.xs, fontWeight: '700' },
+  dayRow: { flexDirection: 'row', alignItems: 'center' },
+  dayCell: { flex: 1, minWidth: 0 },
+  dayDivider: { width: 1, alignSelf: 'stretch', backgroundColor: color.cardEdge, marginHorizontal: space.m },
+  dayValue: { fontSize: font.stat, fontWeight: '800', color: color.text },
+  dayValueQuiet: { fontSize: font.stat, fontWeight: '800', color: color.textSub },
+  dayLabel: { fontSize: font.tiny, color: color.textSub, marginTop: 1 },
+  dayDelta: { fontSize: font.sub, fontWeight: '700', marginTop: space.s },
+  deltaUp: { color: color.success },
+  deltaDown: { color: color.danger },
+  dayNext: { fontSize: font.tiny, color: color.textSub, marginTop: space.s, lineHeight: font.tiny + 4 },
+  earnConfirmed: { fontSize: font.stat, fontWeight: '800', color: color.success },
+  earnPending: { fontSize: font.stat, fontWeight: '800', color: color.warn },
   // Air between the two boxes, so they read as a pair of choices rather than
   // a form with two things to fill in. `fieldLabel` already carries a top
   // margin; this is the extra that separates the second from the first.

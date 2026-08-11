@@ -340,6 +340,28 @@ export const EMPTY_DAY = (date = todayKey()): DayState => ({
   date, routeStarted: false, handedOver: false, handoverConfirmed: false,
 });
 
+/**
+ * What a target counts.
+ *
+ * `pieces`   — units booked. What a man can influence most directly.
+ * `value`    — rupees of sales, net of tax, on what he booked.
+ * `collection` — cash actually confirmed in. The hardest of the three and the
+ *   only one that reflects whether the money came home; it is not the same as
+ *   `value` and a business that cares about its khata should set this one.
+ */
+export type TargetMetric = 'pieces' | 'value' | 'collection';
+
+export interface MonthlyTarget {
+  metric: TargetMetric;
+  value: number;
+  /**
+   * Narrow it to ONE product. Absent means every product together — the lump
+   * sum. Meaningless on `collection`, where money does not arrive labelled by
+   * product; `lib/target.ts` ignores it there rather than pretending.
+   */
+  productId?: string;
+}
+
 export interface Employee {
   email: string;
   name: string;
@@ -433,6 +455,40 @@ export interface CompanySettings {
   rewardApprovalLimit: number;
   /** Rs paid to counter-staff per piece sold (FR-16) — Rs 40 by default. */
   rewardPerPiece: number;
+  /**
+   * What the distributor's OWN men earn — one rate each for the booker and the
+   * rider, and the owner picks how each is read.
+   *
+   * Not to be confused with `rewardPerPiece` directly above, which pays the
+   * SHOPKEEPER's counter staff through claims the owner approves one at a
+   * time. These are not claimed and not approved: they are worked out from
+   * orders the app already records.
+   *
+   * `fixed` is rupees per piece, `percent` is a share of the sale net of tax.
+   * Both modes exist because distributors run both, and a business paying
+   * Rs 20 a piece cannot express that as a percent of anything.
+   *
+   * Absent or 0 means no commission is shown at all, so every company that
+   * predates this is unchanged and nobody has to turn it off.
+   */
+  /**
+   * What each man is aiming at this month.
+   *
+   * An ARRAY, not one number, because a distributor sets these three ways and
+   * often more than one at once: "500 pieces this month" (lump sum), "300
+   * pieces of Sunblock" (product-wise), and "Rs 400,000 collected" (payment).
+   * One shape holds all of them — `metric` says what is counted and
+   * `productId` says whether it is narrowed to one line.
+   *
+   * Absent means the default in `lib/target.ts` (500 pieces), so a business
+   * that has never opened the screen still has something to aim at. An empty
+   * array is a deliberate "no targets" and is respected as one.
+   */
+  monthlyTargets?: MonthlyTarget[];
+  bookerCommissionMode?: 'fixed' | 'percent';
+  bookerCommissionValue?: number;
+  riderCommissionMode?: 'fixed' | 'percent';
+  riderCommissionValue?: number;
   acceptCheques: boolean;
   sendConfirmations: boolean;
   visibility: VisibilitySettings;

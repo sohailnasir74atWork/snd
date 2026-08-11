@@ -14,6 +14,29 @@ import { computeTotals, formatDiscountPercent, pickList } from '../lib/order';
 import { isProvisional } from '../lib/serials';
 import { displayName } from '../lib/name';
 
+/**
+ * The company pad, in three colours.
+ *
+ * Sampled off the owner's own printed letterhead rather than picked: the
+ * bills, the letters and the compliment slips a shop receives should look like
+ * they came from one business. `#205088` is the navy of the masthead and the
+ * headings, `#3880C0` the lighter blue of the logo mark and the accents, and
+ * `#98B0C8` the muted rule that separates without shouting.
+ *
+ * Deliberately NOT read from `components/theme.ts`. That palette dresses an
+ * app — it changes when the app's design changes, and a bill printed last year
+ * must not stop matching the letterhead because a button went a different
+ * blue. Paper is its own brand surface.
+ */
+const PAD = {
+  navy: '#205088',
+  blue: '#3880C0',
+  rule: '#98B0C8',
+  panel: '#F5F8FC',
+  ink: '#1B2733',
+  quiet: '#5A6B7C',
+};
+
 // ---------------------------------------------------------------- helpers
 
 /** Escape user-entered text (shop names, product names, footer) for HTML. */
@@ -33,7 +56,21 @@ function formatDate(ms: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-/** Shared A5 sheet + print CSS wrapper. */
+/**
+ * Shared A5 sheet + print CSS, cut to the company's own letterhead.
+ *
+ * The pad it copies: a navy masthead rule under the business name, the
+ * document type in a navy pill, details in a light panel with a thick blue
+ * left edge, and a footer band carrying the address. A shop that receives a
+ * letter from this business and a bill from it should not have to be told they
+ * came from the same place.
+ *
+ * The body font is now a real typeface rather than monospace. Monospace was
+ * chosen so the same markup read well on a 58mm thermal printer; nothing in
+ * this app has ever printed to one, and it made every document look like a
+ * receipt from a machine instead of paper from a company. Only the NUMBERS
+ * stay monospace — a column of figures has to line up on the decimal.
+ */
 function sheet(title: string, body: string): string {
   return `<!DOCTYPE html>
 <html>
@@ -45,54 +82,118 @@ function sheet(title: string, body: string): string {
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #E9EEEC; }
   .sheet {
-    width: 148mm; min-height: 210mm; margin: 0 auto; padding: 10mm 9mm;
-    background: #FFFFFF; color: #14201B;
-    font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
-    font-size: 12px; line-height: 1.5;
+    width: 148mm; min-height: 210mm; margin: 0 auto;
+    background: #FFFFFF; color: ${PAD.ink};
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-size: 11px; line-height: 1.45;
+    display: flex; flex-direction: column;
   }
   @media print { html, body { background: #FFFFFF; } .sheet { margin: 0; } }
-  .brand { font-size: 19px; font-weight: 800; letter-spacing: 0.5px; }
-  .brand-sub { color: #4A5A54; }
-  .letterhead { display: flex; align-items: center; gap: 8px; }
+  .body { padding: 6mm 9mm 4mm; flex: 1 1 auto; }
+  /* ---- masthead ---------------------------------------------------- */
+  .mast { padding: 6mm 9mm 0; position: relative; }
+  /* The navy wedge in the pad's top-left corner. A gradient rather than a
+     border triangle: the PDF renderer draws gradients reliably and clips
+     borders at the page edge. */
+  .mast::before {
+    content: ''; position: absolute; top: 0; left: 0; width: 26mm; height: 9mm;
+    background: linear-gradient(135deg, ${PAD.navy} 0 50%, transparent 50% 100%);
+  }
+  /* Centred against the mark rather than top-aligned: a 26mm logo beside a
+     two-line name looks dropped in when their tops line up. */
+  .letterhead { display: flex; align-items: center; gap: 8px; min-height: 26mm; }
+  .brand { font-size: 25px; font-weight: 800; letter-spacing: 0.3px; color: ${PAD.navy}; line-height: 1.1; }
+  .brand-sub { color: ${PAD.quiet}; font-size: 10px; }
+  .brand-ntn { color: ${PAD.navy}; font-size: 10px; font-weight: 700; margin-top: 1px; }
   /* Bounded on BOTH axes and never stretched: a wide logo and a tall one both
      have to sit in the same header without pushing the address off the sheet. */
-  .logo { width: 20mm; height: 20mm; object-fit: contain; flex: 0 0 auto; }
-  .doc-title { margin: 10px 0 2px; font-size: 15px; font-weight: 800; letter-spacing: 1px; }
-  .doc-note { font-weight: 700; color: #B3261E; margin-bottom: 8px; }
-  .prov {
-    font-size: 10px; font-weight: 800; letter-spacing: 0.5px; color: #B3261E;
-    border: 1px solid #B3261E; border-radius: 3px; padding: 0 3px; white-space: nowrap;
+  /* Bigger than the text beside it is tall. On the printed pad the mark is
+     the thing you recognise across a counter before you read anything, and at
+     18mm it read as a bullet point next to the name. Bounded on BOTH axes and
+     never stretched, so a wide logo and a tall one both sit in the same
+     header without pushing the rule down the sheet. */
+  .logo { width: 26mm; height: 26mm; object-fit: contain; flex: 0 0 auto; margin-left: auto; }
+  .rule { border: 0; border-top: 2px solid ${PAD.navy}; margin: 3mm 0 0; }
+  .rule-soft { border: 0; border-top: 1px dashed ${PAD.rule}; margin: 8px 0; }
+  /* ---- reference row + title pill ---------------------------------- */
+  .refrow {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-size: 10px; color: ${PAD.ink}; margin-bottom: 4mm;
   }
-  .prov-note { margin-top: 4px; color: #B3261E; font-size: 11px; line-height: 1.4; }
-  .rule { border: 0; border-top: 2px solid #14201B; margin: 8px 0; }
-  .rule-soft { border: 0; border-top: 1px dashed #9AA8A2; margin: 8px 0; }
+  .refrow b { color: ${PAD.navy}; }
+  .doc-title {
+    display: block; margin: 0 auto 4mm; padding: 2mm 6mm; width: fit-content;
+    background: ${PAD.navy}; color: #FFFFFF; border-radius: 3px;
+    font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-align: center;
+  }
+  .doc-note { font-weight: 700; color: #B3261E; margin: -2mm 0 3mm; text-align: center; }
+  /* ---- the details panel ------------------------------------------- */
+  .panel {
+    background: ${PAD.panel}; border-left: 3px solid ${PAD.navy};
+    border-radius: 2px; padding: 3mm 4mm; margin-bottom: 4mm;
+  }
+  .panel-title {
+    color: ${PAD.navy}; font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    padding-bottom: 1.5mm; margin-bottom: 1.5mm; border-bottom: 1px solid ${PAD.rule};
+  }
   .meta { width: 100%; border-collapse: collapse; }
   .meta td { padding: 1px 0; vertical-align: top; }
-  .meta .label { color: #4A5A54; padding-right: 8px; white-space: nowrap; }
-  table.items { width: 100%; border-collapse: collapse; margin: 6px 0; }
+  .meta .label { color: ${PAD.quiet}; padding-right: 10px; white-space: nowrap; font-weight: 600; }
+  .prov {
+    font-size: 9px; font-weight: 800; letter-spacing: 0.5px; color: #B3261E;
+    border: 1px solid #B3261E; border-radius: 3px; padding: 0 3px; white-space: nowrap;
+  }
+  .prov-note { margin-top: 4px; color: #B3261E; font-size: 10px; line-height: 1.4; }
+  /* ---- items ------------------------------------------------------- */
+  table.items { width: 100%; border-collapse: collapse; margin: 0 0 3mm; }
   table.items th {
-    text-align: left; border-bottom: 1px solid #14201B; padding: 3px 4px;
-    font-size: 11px; letter-spacing: 0.5px;
+    text-align: left; padding: 2mm 2mm; font-size: 9px; letter-spacing: 0.8px;
+    background: ${PAD.navy}; color: #FFFFFF; font-weight: 700;
   }
-  table.items td { padding: 3px 4px; border-bottom: 1px dashed #C7D0CC; }
-  .num { text-align: right; white-space: nowrap; }
-  table.totals { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  table.totals td { padding: 2px 4px; }
+  table.items td { padding: 1.6mm 2mm; border-bottom: 1px solid #E3EAF2; }
+  /* Zebra, faint. On a twenty-line order the eye loses the row it is on. */
+  table.items tbody tr:nth-child(even) td { background: #FAFCFE; }
+  .num { text-align: right; white-space: nowrap; font-family: 'Menlo', 'Consolas', monospace; }
+  /* A th selector carrying a class plus two elements outranks a bare .num, so
+     the heading sat left while its column ran right. The correction has to
+     match that specificity — a plain .num here silently loses and the columns
+     drift apart again. (No backticks in this comment: the CSS lives inside a
+     JS template literal and one would end the string.) */
+  table.items th.num { text-align: right; font-family: inherit; }
+  /* ---- totals ------------------------------------------------------ */
+  table.totals { width: 60%; margin-left: auto; border-collapse: collapse; }
+  table.totals td { padding: 1.2mm 2mm; }
+  table.totals td:last-child { text-align: right; font-family: 'Menlo', 'Consolas', monospace; }
   table.totals .grand td {
-    border-top: 2px solid #14201B; border-bottom: 2px solid #14201B;
-    font-size: 14px; font-weight: 800; padding: 4px;
+    background: ${PAD.navy}; color: #FFFFFF;
+    font-size: 13px; font-weight: 800; padding: 2mm;
   }
-  .words { margin: 6px 0 10px; font-style: italic; color: #2F3E38; }
-  .big { font-size: 16px; font-weight: 800; }
-  .footer { margin-top: 14px; text-align: center; color: #4A5A54; }
-  .footer .strong { color: #14201B; font-weight: 700; }
+  .words { margin: 3mm 0 0; font-style: italic; color: ${PAD.quiet}; font-size: 10px; }
+  .big { font-size: 15px; font-weight: 800; color: ${PAD.navy}; }
+  /* ---- signatures + footer band ------------------------------------ */
+  .signs { display: flex; justify-content: space-between; gap: 10mm; margin-top: 12mm; }
+  .signline {
+    flex: 1 1 0; border-top: 1px solid ${PAD.ink}; padding-top: 1.5mm;
+    font-size: 9px; color: ${PAD.quiet};
+  }
+  .footer { margin-top: 4mm; text-align: center; color: ${PAD.quiet}; font-size: 10px; }
+  .footer .strong { color: ${PAD.navy}; font-weight: 700; }
   /* Small print, and it should LOOK like small print: set apart above the
      line, smaller than the bill, and justified so a dense paragraph does not
-     end in a ragged half-line. It is a legal statement, not a message — the
-     thank-you footer below it keeps the warmer voice. */
+     end in a ragged half-line. It is a legal statement, not a message. */
   .warranty {
-    margin-top: 12px; padding-top: 6px; border-top: 1px solid #9AA8A2;
-    font-size: 9px; line-height: 1.35; color: #2F3E38; text-align: justify;
+    margin-top: 4mm; padding-top: 2mm; border-top: 1px solid ${PAD.rule};
+    font-size: 8px; line-height: 1.35; color: ${PAD.quiet}; text-align: justify;
+  }
+  /* The pad's footer band, with the blue wedge at its right end. */
+  .band {
+    margin-top: auto; background: ${PAD.panel}; border-top: 2px solid ${PAD.navy};
+    padding: 2.5mm 9mm; display: flex; justify-content: space-between; gap: 6px;
+    font-size: 9px; color: ${PAD.navy}; position: relative; overflow: hidden;
+  }
+  .band::after {
+    content: ''; position: absolute; right: 0; bottom: 0; width: 18mm; height: 100%;
+    background: linear-gradient(225deg, ${PAD.blue} 0 50%, transparent 50% 100%);
   }
 </style>
 </head>
@@ -114,18 +215,37 @@ ${body}
  * logos existed, and a bill must never fail over a picture.
  */
 function headerBlock(settings: CompanySettings, logo?: string): string {
-  const text: string[] = [`<div class="brand">${esc(settings.brandName)}</div>`];
-  if (settings.address) text.push(`<div class="brand-sub">${esc(settings.address)}</div>`);
-  if (settings.phone) text.push(`<div class="brand-sub">Phone: ${esc(settings.phone)}</div>`);
-  if (settings.taxNumber) text.push(`<div class="brand-sub">Tax number: ${esc(settings.taxNumber)}</div>`);
-  if (!logo) return text.join('\n');
-  // The logo sits beside the name rather than above it: an A5 sheet has one
-  // header's worth of room and the business name must stay the biggest thing
-  // on the page. `alt` is empty on purpose — it is decoration, and a broken
-  // image should leave a gap, not the word "logo".
-  return `<div class="letterhead">
-  <img class="logo" src="${esc(logo)}" alt="" />
-  <div>${text.join('\n')}</div>
+  const sub: string[] = [];
+  if (settings.address) sub.push(`<div class="brand-sub">${esc(settings.address)}</div>`);
+  if (settings.phone) sub.push(`<div class="brand-sub">Phone: ${esc(settings.phone)}</div>`);
+  return `<div class="mast">
+  <div class="letterhead">
+    <div>
+      <div class="brand">${esc(settings.brandName)}</div>
+      ${settings.taxNumber ? `<div class="brand-ntn">NTN No. ${esc(settings.taxNumber)}</div>` : ''}
+    </div>
+    ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}
+  </div>
+  <hr class="rule" />
+</div>`;
+}
+
+/** The address strip along the foot of the pad. */
+function footerBand(settings: CompanySettings): string {
+  // No email on CompanySettings, and this is not the place to invent one — the
+  // pad carries what the business has already told the app about itself.
+  const bits = [settings.address, settings.phone, settings.taxNumber && `NTN ${settings.taxNumber}`]
+    .filter(Boolean)
+    .map(x => `<span>${esc(String(x))}</span>`);
+  if (bits.length === 0) return '';
+  return `<div class="band">${bits.join('')}</div>`;
+}
+
+/** Ref number on the left, date on the right — the pad's own top row. */
+function refRow(ref: string, dateMs: number): string {
+  return `<div class="refrow">
+  <span><b>Ref No:</b> ${esc(ref)}</span>
+  <span><b>Date:</b> ${esc(formatDate(dateMs))}</span>
 </div>`;
 }
 
@@ -342,16 +462,21 @@ export function billHtml(args: BillArgs): string {
   const totalOutstanding = remainingPrevious + balanceThisBill;
 
   const body = `${headerBlock(settings, logo)}
-<hr class="rule" />
-<div class="doc-title">BILL</div>
-<table class="meta">
+<div class="body">
+${refRow(order.invoiceNo ?? order.orderNo, order.deliveredAt ?? order.bookedAt)}
+<div class="doc-title">SALES INVOICE</div>
+<div class="panel">
+  <div class="panel-title">BILL TO</div>
+  <table class="meta">
+${metaRow('Shop', displayName(shop.name))}
+${metaRow('Area', shop.area)}
+${shop.phone ? metaRow('Phone', shop.phone) : ''}
 ${serialRow('Bill no', order.invoiceNo ?? '—')}
 ${serialRow('Order no', order.orderNo)}
 ${metaRow('Booked', formatDate(order.bookedAt))}
 ${metaRow('Delivered', order.deliveredAt !== undefined ? formatDate(order.deliveredAt) : '—')}
-${metaRow('Shop', displayName(shop.name))}
-${metaRow('Area', shop.area)}
-</table>
+  </table>
+</div>
 ${provisionalNote(order.invoiceNo, order.orderNo)}
 ${itemsTable(rows, symbol)}
 <table class="totals">
@@ -366,8 +491,14 @@ ${totalRow('Balance this bill', balanceThisBill, symbol)}
 ${totalRow('Previous balance', previousBalance, symbol)}
 ${totalRow('TOTAL OUTSTANDING', totalOutstanding, symbol, true)}
 </table>
+<div class="signs">
+  <div class="signline">Received in good order</div>
+  <div class="signline">For ${esc(settings.brandName)}</div>
+</div>
 ${warrantyBlock(settings, 'warranty')}
-${settings.receiptFooter ? `<div class="footer">${esc(settings.receiptFooter)}</div>` : ''}`;
+${settings.receiptFooter ? `<div class="footer"><span class="strong">${esc(settings.receiptFooter)}</span></div>` : ''}
+</div>
+${footerBand(settings)}`;
 
   return sheet(`Bill ${order.invoiceNo ?? order.orderNo}`, body);
 }
@@ -600,6 +731,7 @@ function slipBody(slip: BillSlip, settings: CompanySettings, layout: SheetLayout
   <div>${esc(billNo)}${prov} · ${esc(order.deliveredAt !== undefined ? formatDate(order.deliveredAt) : formatDate(order.bookedAt))}</div>
 </div>
 <table class="s-items">
+<tr><th>Product</th><th class="s-num">Qty</th><th class="s-num">Amount</th></tr>
 ${itemLines}
 ${moreLine}
 ${blankRows}
@@ -676,8 +808,8 @@ export function billSheetHtml(args: BillSheetArgs): string {
   .page:last-child { page-break-after: auto; break-after: auto; }
   .cell {
     padding: ${layout.pad}mm; overflow: hidden;
-    font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
-    font-size: ${layout.font}px; line-height: 1.35; color: #14201B;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-size: ${layout.font}px; line-height: 1.35; color: ${PAD.ink};
     /* The cut guides. Dashed, hairline, and grey rather than black: it is a
        line to aim scissors at, not part of the document. */
     border-right: 1px dashed #8A9A94; border-bottom: 1px dashed #8A9A94;
@@ -685,21 +817,40 @@ export function billSheetHtml(args: BillSheetArgs): string {
   /* No guide along the paper's own edge — there is nothing to cut there. */
   .cell:nth-child(${layout.cols}n) { border-right: none; }
   .cell:nth-child(n+${cells - layout.cols + 1}) { border-bottom: none; }
-  .s-head { display: flex; align-items: center; gap: 4px; }
-  .s-logo { width: ${layout.font + 6}px; height: ${layout.font + 6}px; object-fit: contain; flex: 0 0 auto; }
-  .s-brand { font-weight: 800; font-size: ${layout.font + 1}px; flex: 1 1 auto; }
-  .s-tag { font-size: ${layout.font - 2}px; font-weight: 800; letter-spacing: 0.5px; color: #4A5A54; }
-  .s-meta { margin: 3px 0; padding-bottom: 2px; border-bottom: 1px solid #14201B; }
+  /* The pad, compressed. Same navy, same order of things — masthead, rule,
+     panel, items, totals, band — just at a size that survives being cut out. */
+  .s-head { display: flex; align-items: center; gap: 4px; padding-bottom: 2px;
+            border-bottom: 1.5px solid ${PAD.navy}; }
+  .s-logo { width: ${layout.font + 12}px; height: ${layout.font + 12}px; object-fit: contain; flex: 0 0 auto; }
+  .s-brand { font-weight: 800; font-size: ${layout.font + 3}px; flex: 1 1 auto; color: ${PAD.navy}; }
+  .s-tag {
+    font-size: ${layout.font - 2}px; font-weight: 800; letter-spacing: 1px;
+    background: ${PAD.navy}; color: #FFFFFF; border-radius: 2px; padding: 1px 5px;
+  }
+  .s-meta {
+    margin: 3px 0; padding: 2px 4px; background: ${PAD.panel};
+    border-left: 2px solid ${PAD.navy}; border-radius: 1px;
+  }
   .s-prov { color: #B3261E; font-weight: 800; }
   .s-items { width: 100%; border-collapse: collapse; margin-bottom: 2px; }
-  .s-items td { padding: 1px 0; border-bottom: 1px dotted #C7D0CC; }
+  .s-items th {
+    background: ${PAD.navy}; color: #FFFFFF; font-size: ${Math.max(layout.font - 2.5, 5)}px;
+    text-align: left; padding: 1px 3px; letter-spacing: 0.5px; font-weight: 700;
+  }
+  /* Same specificity trap as the A5 table above: the th selector beats a bare
+     .s-num, so the heading is corrected at its own weight. */
+  .s-items th.s-num { text-align: right; font-family: inherit; }
+  .s-items td { padding: 1.5px 3px; border-bottom: 1px solid #E3EAF2; }
+  .s-items tbody tr:nth-child(even) td { background: #FAFCFE; }
   .s-name { word-break: break-word; }
-  .s-num { text-align: right; white-space: nowrap; padding-left: 4px; }
+  .s-num { text-align: right; white-space: nowrap; padding-left: 4px;
+           font-family: 'Menlo', 'Consolas', monospace; }
   .s-more { font-style: italic; color: #B3261E; border-bottom: none; }
   .s-tot { width: 100%; border-collapse: collapse; }
   .s-tot td { padding: 1px 0; }
-  .s-grand td { border-top: 1.5px solid #14201B; font-weight: 800; font-size: ${layout.font + 1}px; }
-  .s-bal td { font-weight: 800; border-top: 1px solid #14201B; }
+  .s-tot td { padding: 1.2px 3px; }
+  .s-grand td { background: ${PAD.navy}; color: #FFFFFF; font-weight: 800; font-size: ${layout.font + 1}px; padding: 2px 3px; }
+  .s-bal td { font-weight: 800; border-top: 1px solid ${PAD.navy}; }
   /* These slips get CUT APART and handed to shops, so the terms travel with
      each one — a warranty that only exists on the sheet the owner keeps is a
      warranty the buyer never received. Sized down hard: it must not push the
@@ -744,18 +895,20 @@ export function billSheetHtml(args: BillSheetArgs): string {
   .s-foot { margin-top: auto; }
   .s-who {
     display: flex; justify-content: space-between; gap: 6px;
-    padding-bottom: 3px; font-size: ${Math.max(layout.font - 1, 6)}px; color: #2F3E38;
+    padding: 2px 4px; margin-bottom: 3px; background: ${PAD.panel};
+    border-left: 2px solid ${PAD.blue};
+    font-size: ${Math.max(layout.font - 1, 6)}px; color: ${PAD.ink};
   }
   .s-sign { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
   /* A line to sign ON. Drawn with a border rather than underscores so it is
      the same length whatever the font does. */
   .s-signline {
-    flex: 1 1 0; border-top: 1px solid #14201B; padding-top: 2px;
+    flex: 1 1 0; border-top: 1px solid ${PAD.ink}; padding-top: 2px;
     margin-top: 22px; font-size: ${Math.max(layout.font - 2, 5.5)}px; color: #4A5A54;
     text-align: center;
   }
   .s-warranty {
-    margin-top: 3px; padding-top: 2px; border-top: 1px solid #8A9A94;
+    margin-top: 3px; padding-top: 2px; border-top: 1px solid ${PAD.rule};
     font-size: ${Math.max(layout.font - 2.5, 5)}px; line-height: 1.25;
     color: #2F3E38; text-align: justify;
   }
