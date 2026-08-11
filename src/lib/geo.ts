@@ -62,6 +62,35 @@ export interface Placed {
 }
 
 /**
+ * Does this thing carry a pin a map can actually draw?
+ *
+ * Every gate in this app used to be truthiness — `!!shop.location` — and the
+ * store spreads a Firestore document straight onto a `Shop` with no shape
+ * check, while the rules validate which KEYS may be written and never the
+ * shape of `location`. So `{ lat: null }` is a document this app will happily
+ * hand to a native map.
+ *
+ * What that costs, at each stage: `distanceM` returns NaN, so the shop is
+ * never picked as nearest and quietly sits wherever it was; `formatDistance`
+ * returns an empty string; `bearingLabel` indexes an array at NaN and the
+ * guide line reads "head undefined"; and the round picker still counts the
+ * shop as pinned, so the card claims every shop is on the map. Then the camera
+ * animates: `animateToRegion` serialises the region to JSON, `NaN` becomes
+ * `null`, and the native side's `getDouble` throws inside a catch that
+ * rethrows as a RuntimeException — a crash no JavaScript can catch.
+ *
+ * One predicate, applied where a shop becomes a stop, removes all of it. A
+ * shop that fails lands in the existing "Not on the map" list, which is
+ * exactly where a broken pin belongs.
+ */
+export function isPlaced<T extends Placed>(s: T): s is T & { location: ShopLocation } {
+  const l = s.location;
+  return !!l
+    && Number.isFinite(l.lat) && Number.isFinite(l.lng)
+    && Math.abs(l.lat) <= 90 && Math.abs(l.lng) <= 180;
+}
+
+/**
  * Put the stops in the order a person would actually walk them: nearest to
  * where you are, then nearest to that, and so on.
  *
@@ -78,7 +107,10 @@ export interface Placed {
  * nobody could find.
  */
 export function orderByNearest<T extends Placed>(from: GeoFix | ShopLocation, items: T[]): T[] {
-  const remaining = items.filter((i): i is T & { location: ShopLocation } => !!i.location);
+  // isPlaced, not truthiness: this is the choke point that decides what
+  // becomes a stop at all, so a malformed pin is dropped here and never
+  // reaches a marker, a circle, a polyline or the camera.
+  const remaining = items.filter(isPlaced);
   const ordered: T[] = [];
   let cursor: GeoFix | ShopLocation = from;
   while (remaining.length > 0) {

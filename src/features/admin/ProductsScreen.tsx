@@ -4,7 +4,7 @@
  * disabled-with-reason instead of error popups).
  */
 import React from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   Card, Chip, EmptyState, Icon, IconTile, Money, MoreFields, OptionBar, PrimaryButton,
   Reveal, Tag,
@@ -193,6 +193,31 @@ export function ProductsScreen() {
           title="Add your first product"
           hint="Bookers can only sell what you list here."
         />
+      )}
+
+      {/* The repair tool. `committedQty` is a running counter moved by
+          increment() from several phones at once, which is right for
+          concurrent writes and has one weakness: anything that removes an
+          order WITHOUT going through the app decrements nothing, and the
+          counter drifts up and stays there. Nothing in the app can cause it —
+          every path is symmetric — so this is a button, not a scheduled job. */}
+      {store.products.length > 0 && (
+        <View style={styles.recountRow}>
+          <Chip
+            label="Recount committed stock"
+            onPress={() => Alert.alert(
+              'Recount committed stock?',
+              'Counts every order that is still booked, with the rider, or out for delivery, '
+              + 'and sets each product\'s committed figure to that.\n\n'
+              + 'Use it if committed looks too high — that happens when an order is removed '
+              + 'outside the app. It does not touch stock on hand.',
+              [
+                { text: 'Leave it', style: 'cancel' },
+                { text: 'Recount', onPress: () => store.recountCommitted() },
+              ],
+            )}
+          />
+        </View>
       )}
 
       {store.products.map(p => (
@@ -390,6 +415,7 @@ const styles = StyleSheet.create({
   stockRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
   stockLabel: { fontSize: font.sub, color: color.textFaint, marginRight: space.s },
   stock: { flex: 1, minWidth: 0, fontSize: font.sub, fontWeight: '600', color: color.text },
+  recountRow: { paddingHorizontal: space.gutter, paddingBottom: space.s },
   dim: { opacity: 0.45 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center' },

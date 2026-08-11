@@ -222,6 +222,25 @@ export interface StoreApi {
   // admin management
   addProduct(p: ProductInput): void;
   updateProduct(id: string, patch: Partial<Product>): void;
+  /**
+   * Recount `committedQty` for every product from the orders that are actually
+   * live, and write back whatever the count says.
+   *
+   * `committedQty` is a running counter, moved by `increment()` from several
+   * phones at once — booking adds, cancelling and delivering subtract. That is
+   * the right design for concurrent writes and it has one weakness: anything
+   * that removes an order WITHOUT going through the app decrements nothing,
+   * and the counter drifts up and stays there. A console delete during testing
+   * does exactly that, and the owner is then told 144 pieces are committed
+   * when 15 are.
+   *
+   * Nothing in the app can cause this — every path is symmetric — so this is a
+   * repair tool, not a scheduled job. It is owner-only and it reads the orders
+   * already on the device rather than re-querying: the windowed slice
+   * (lib/window.ts) always contains every unpaid and undelivered order, which
+   * is precisely the set that can be committed.
+   */
+  recountCommitted(): void;
   /** Supplier delivery or a count correction — atomic increment, logged. */
   adjustStock(productId: string, delta: number, note: string): void;
   addShop(s: ShopInput): void;

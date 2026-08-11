@@ -32,8 +32,20 @@ export function PinShopScreen({
   onSave: (fix: GeoFix) => void;
   onCancel: () => void;
 }) {
-  const [fix, setFix] = React.useState<GeoFix | null>(existing ?? null);
-  const [locating, setLocating] = React.useState(!existing);
+  /**
+   * Seeded only from a pin the map can actually draw. A half-written document
+   * ({lat: null}) reaching `initialRegion` or a `coordinate` is a native
+   * `getDouble` throw, and on the region path it is uncatchable — see
+   * `isPlaced` in lib/geo.ts. A broken existing pin is treated as no pin,
+   * which puts this screen straight into "read the phone", which is the
+   * repair the shop needs anyway.
+   */
+  const usable = existing && Number.isFinite(existing.lat) && Number.isFinite(existing.lng)
+    && Math.abs(existing.lat) <= 90 && Math.abs(existing.lng) <= 180
+    ? existing
+    : null;
+  const [fix, setFix] = React.useState<GeoFix | null>(usable);
+  const [locating, setLocating] = React.useState(!usable);
   const [error, setError] = React.useState<string | null>(null);
   // Dragging the marker means the person is overriding the chip with their
   // own eyes, so the phone's accuracy number no longer describes the pin.
@@ -57,8 +69,8 @@ export function PinShopScreen({
   React.useEffect(() => {
     // Ask the moment the screen opens: the person is standing at the door
     // right now, and every second of tapping is a second they are not.
-    if (!existing) void locate();
-  }, [existing, locate]);
+    if (!usable) void locate();
+  }, [usable, locate]);
 
   const region: Region | undefined = fix
     ? { latitude: fix.lat, longitude: fix.lng, latitudeDelta: SPAN, longitudeDelta: SPAN }

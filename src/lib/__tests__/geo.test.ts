@@ -1,4 +1,4 @@
-import { distanceM, formatDistance, formatAccuracy, orderByNearest } from '../geo';
+import { distanceM, formatAccuracy, formatDistance, isPlaced, orderByNearest } from '../geo';
 
 // Real Lahore coordinates: the pin maths has to hold at the latitude the
 // business actually works at, not at the equator where longitude is widest.
@@ -124,5 +124,69 @@ describe('orderByNearest — the walking order for one round', () => {
     const input = [far, near, mid];
     orderByNearest(start, input);
     expect(input.map(s => s.id)).toEqual(['far', 'near', 'mid']);
+  });
+});
+
+/**
+ * `isPlaced` is the gate between a Firestore document and a native map view.
+ * Firestore is spread onto Shop with no shape check and the rules validate
+ * which keys may be written, never the shape of `location` — so a half-written
+ * document is reachable, and one of the five native sites it feeds
+ * (animateToRegion) rethrows as an uncatchable RuntimeException.
+ */
+describe('isPlaced — what may reach a native map', () => {
+  const at = (lat: unknown, lng: unknown) =>
+    ({ location: { lat, lng, accuracyM: 5, savedAt: 1, savedBy: 'u' } } as never);
+
+  test('a real pin passes', () => {
+    expect(isPlaced(at(31.52, 74.35))).toBe(true);
+  });
+
+  test('no location at all fails', () => {
+    expect(isPlaced({})).toBe(false);
+    expect(isPlaced({ location: undefined })).toBe(false);
+  });
+
+  test('a half-written document fails — this is the crash case', () => {
+    expect(isPlaced(at(null, 74.35))).toBe(false);
+    expect(isPlaced(at(31.52, undefined))).toBe(false);
+    expect(isPlaced(at(undefined, undefined))).toBe(false);
+  });
+
+  test('NaN fails — it serialises to null and native getDouble throws', () => {
+    expect(isPlaced(at(Number.NaN, 74.35))).toBe(false);
+    expect(isPlaced(at(31.52, Number.NaN))).toBe(false);
+  });
+
+  test('Infinity fails', () => {
+    expect(isPlaced(at(Number.POSITIVE_INFINITY, 0))).toBe(false);
+  });
+
+  test('a string that looks like a number fails — no coercion', () => {
+    expect(isPlaced(at('31.52', '74.35'))).toBe(false);
+  });
+
+  test('out of range fails', () => {
+    expect(isPlaced(at(91, 0))).toBe(false);
+    expect(isPlaced(at(0, 181))).toBe(false);
+  });
+
+  test('0,0 PASSES — it is off West Africa, not invalid', () => {
+    // Deliberate. Treating null island as "unset" would silently drop a real
+    // pin, and no shop in this business is within a thousand miles of it.
+    expect(isPlaced(at(0, 0))).toBe(true);
+  });
+
+  test('the exact bounds pass', () => {
+    expect(isPlaced(at(90, 180))).toBe(true);
+    expect(isPlaced(at(-90, -180))).toBe(true);
+  });
+
+  test('orderByNearest drops a malformed pin instead of routing to it', () => {
+    const good = { id: 'a', location: { lat: 31.5, lng: 74.3, accuracyM: 5, savedAt: 1, savedBy: 'u' } };
+    const bad = { id: 'b', location: { lat: null, lng: 74.3, accuracyM: 5, savedAt: 1, savedBy: 'u' } };
+    const out = orderByNearest({ lat: 31.5, lng: 74.3, accuracyM: 5 }, [good, bad] as never[]);
+    expect(out).toHaveLength(1);
+    expect((out[0] as { id: string }).id).toBe('a');
   });
 });

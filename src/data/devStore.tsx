@@ -176,6 +176,24 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       return order;
     },
 
+    recountCommitted() {
+      setState(st => {
+        const live = st.orders.filter(o =>
+          o.status === 'booked' || o.status === 'assigned' || o.status === 'out_for_delivery');
+        const count = new Map<string, number>();
+        for (const o of live) {
+          for (const it of o.items) count.set(it.productId, (count.get(it.productId) ?? 0) + it.qty);
+        }
+        return {
+          ...st,
+          // Every product, not just the ones with orders — a product whose
+          // last live order was deleted needs setting back to zero, and it is
+          // the one that would otherwise stay wrong forever.
+          products: st.products.map(p2 => ({ ...p2, committedQty: count.get(p2.id) ?? 0 })),
+        };
+      });
+    },
+
     repriceOrder(orderId, prices) {
       setState(st => {
         const order = st.orders.find(o => o.id === orderId);

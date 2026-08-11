@@ -308,7 +308,7 @@ export function BillsScreen({ navigation }: { navigation?: { navigate: (r: strin
                   {tab === 'done' && (
                     <Text style={styles.doneAt}>Printed {daysAgo(log[o.id] ?? now, now)}</Text>
                   )}
-                  <View style={styles.spacer} />
+
                   {/* The way back. An owner who printed a batch by mistake
                       would otherwise have no way to put it in front of
                       himself again except by remembering it forever. */}
@@ -411,9 +411,17 @@ const styles = StyleSheet.create({
   note: { fontSize: font.tiny, color: color.textSub, marginBottom: space.m, lineHeight: font.tiny + 5 },
   actionRow: { flexDirection: 'row', alignItems: 'center', marginBottom: space.s },
   pickedNote: { marginLeft: space.m, fontSize: font.sub, color: color.textSub, fontWeight: '700' },
-  rowFoot: { flexDirection: 'row', alignItems: 'center', marginTop: space.s, gap: space.s },
+  /**
+   * WRAPS. A row can carry a FOR THE RIDER tag, a PROVISIONAL tag, "Printed
+   * today", and three chips — on a 720px phone the last of them ran off the
+   * right edge with no scroll and no way to reach it. `flexWrap` is the whole
+   * fix: the row becomes two lines when it has to rather than hiding a button.
+   */
+  rowFoot: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
+    marginTop: space.s, gap: space.s,
+  },
   doneAt: { fontSize: font.tiny, color: color.textSub },
-  spacer: { flex: 1 },
   ctaWrap: { marginTop: space.m },
   pickBlock: { paddingVertical: space.s },
   pickRow: { flexDirection: 'row', alignItems: 'center' },

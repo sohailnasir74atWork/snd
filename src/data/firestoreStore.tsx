@@ -843,6 +843,23 @@ export function FirestoreStoreProvider({
      * its committed stock walks free — otherwise a fat-fingered order
      * inflates the van list and committedQty forever (audit blocker).
      */
+    recountCommitted() {
+      const live = orders.filter(o =>
+        o.status === 'booked' || o.status === 'assigned' || o.status === 'out_for_delivery');
+      const count = new Map<string, number>();
+      for (const o of live) {
+        for (const it of o.items) count.set(it.productId, (count.get(it.productId) ?? 0) + it.qty);
+      }
+      const batch = writeBatch(db);
+      // A plain set, NOT increment(): this is the one place that deliberately
+      // overwrites the counter rather than nudging it, because the whole point
+      // is that the running total is wrong and the recount is the truth.
+      for (const p2 of products) {
+        batch.update(doc(db, `${base}/products/${p2.id}`), { committedQty: count.get(p2.id) ?? 0 });
+      }
+      batch.commit().catch(writeRejected('Recount committed stock'));
+    },
+
     repriceOrder(orderId, prices) {
       const order = orders.find(o => o.id === orderId);
       if (!order || (order.status !== 'booked' && order.status !== 'assigned')) return;

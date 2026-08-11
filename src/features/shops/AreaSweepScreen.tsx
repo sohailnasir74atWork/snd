@@ -28,7 +28,7 @@ import {
 import { useStore } from '../../data/store';
 import { todayKey } from '../../data/models';
 import type { Shop } from '../../data/models';
-import { distanceM, formatDistance, orderByNearest } from '../../lib/geo';
+import { distanceM, formatDistance, isPlaced, orderByNearest } from '../../lib/geo';
 import type { GeoFix } from '../../lib/geo';
 import { GeoError, bearingLabel, getCurrentFix, watchFix } from '../../lib/location';
 import { clearDone, loadDone, saveDone } from './sweepProgress';
@@ -65,6 +65,16 @@ const SPAN = 0.006;
  * overlapping into a smear, so the cap costs nothing anybody could see.
  */
 const MAP_MARKERS = 12;
+
+/**
+ * Marker colours, spelled out rather than defaulted.
+ *
+ * `pinColor` must always be a real colour string — see the note at the Marker
+ * itself. These are the two states the map draws: the stop you are heading to,
+ * and the ones after it. Done stops are not on the map at all.
+ */
+const PIN_NEXT = '#1a73e8';
+const PIN_AHEAD = '#EA4335';
 const LIST_STOPS = 25;
 
 export function AreaSweepScreen() {
@@ -90,7 +100,9 @@ export function AreaSweepScreen() {
       .filter(n => n.trim().length > 0)
       .map(name => {
         const inArea = store.shops.filter(s => s.active && s.area === name);
-        return { name, total: inArea.length, pinned: inArea.filter(s => s.location).length };
+        // Same predicate the round uses, or the picker claims "every shop is
+        // on the map" while the round silently drops one.
+        return { name, total: inArea.length, pinned: inArea.filter(isPlaced).length };
       })
       .filter(a => a.total > 0)
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -112,7 +124,7 @@ export function AreaSweepScreen() {
       setError(e instanceof GeoError ? e.message : 'Could not read this phone’s location.');
       // Still open the round: the ordering needs GPS, the shops and their pins
       // do not, and someone who knows the area can work from the list.
-      setOrderedIds(store.shops.filter(s => s.active && s.area === name && s.location).map(s => s.id));
+      setOrderedIds(store.shops.filter(s => s.active && s.area === name && isPlaced(s)).map(s => s.id));
       setDone(loadDone(name, dayKey));
       setAreaName(name);
     } finally {
@@ -129,7 +141,13 @@ export function AreaSweepScreen() {
     React.useCallback(() => {
       if (!areaName) return undefined;
       const stop = watchFix(
-        fix => { setHere(fix); setHereAt(Date.now()); },
+        // Cleared CONDITIONALLY: a healthy phone ticks a fix every few seconds
+        // and an unconditional setError(null) would write state on every one.
+        fix => {
+          setHere(fix);
+          setHereAt(Date.now());
+          setError(prev => (prev ? null : prev));
+        },
         e => setError(e.message),
       );
       return stop;
@@ -151,13 +169,15 @@ export function AreaSweepScreen() {
    * What the map is allowed to draw: the next few stops that actually have a
    * pin, nearest-first in the order already frozen for this round.
    */
-  const mapStops = remaining.filter(s => s.location).slice(0, MAP_MARKERS);
-  const mapHidden = remaining.filter(s => s.location).length - mapStops.length;
+  const mapStops = remaining.filter(isPlaced).slice(0, MAP_MARKERS);
+  const mapHidden = remaining.filter(isPlaced).length - mapStops.length;
+  // A pin that cannot be drawn belongs in this list, not on the map — which is
+  // what makes `isPlaced` the right test here rather than `!s.location`.
   const unpinned = areaName
-    ? store.shops.filter(s => s.active && s.area === areaName && !s.location)
+    ? store.shops.filter(s => s.active && s.area === areaName && !isPlaced(s))
     : [];
 
-  const toNext = here && next?.location ? distanceM(here, next.location) : null;
+  const toNext = here && next && isPlaced(next) ? distanceM(here, next.location) : null;
   const arrived = toNext !== null && toNext <= ARRIVE_M;
   // A fix older than half a minute is not where you are any more.
   const stale = hereAt !== null && Date.now() - hereAt > 30000;
@@ -166,8 +186,18 @@ export function AreaSweepScreen() {
   // next shop the moment one is marked done.
   React.useEffect(() => {
     if (!followMe || !mapRef.current) return;
-    const target = here ?? (next?.location ? { lat: next.location.lat, lng: next.location.lng } : null);
-    if (!target) return;
+    const target = here ?? (next && isPlaced(next)
+      ? { lat: next.location.lat, lng: next.location.lng }
+      : null);
+    /**
+     * The TARGET is guarded, not the shop — `here` is a GeoFix straight off
+     * the sensor and has no `location` to test. This is the one site where a
+     * bad number is uncatchable: `animateToRegion` JSON-serialises the region,
+     * NaN becomes null, and the native `getDouble` throws inside a catch that
+     * rethrows as a RuntimeException. An early return costs nothing; the
+     * alternative takes the whole app down.
+     */
+    if (!target || !Number.isFinite(target.lat) || !Number.isFinite(target.lng)) return;
     mapRef.current.animateToRegion(
       { latitude: target.lat, longitude: target.lng, latitudeDelta: SPAN, longitudeDelta: SPAN },
       600,
@@ -314,6 +344,12 @@ export function AreaSweepScreen() {
             {stops.length > 0 ? 'Round complete — every stop is done.' : 'Nothing on the map in this round yet.'}
           </Text>
         )}
+        {/* The ONLY place this was drawn sat inside the round-picker branch,
+            which returns before the sweep ever renders. `begin()` sets the
+            error and opens the round in the same tick, so every permission
+            failure showed as "Waiting for your location…" forever and every
+            actionable sentence lib/location.ts writes was thrown away. */}
+        {error ? <Text style={styles.errorLine}>{error}</Text> : null}
       </View>
 
       {initial ? (
@@ -339,7 +375,18 @@ export function AreaSweepScreen() {
                 coordinate={{ latitude: s.location!.lat, longitude: s.location!.lng }}
                 title={s.name}
                 description={i === 0 ? 'Next stop' : `Stop ${i + 1}`}
-                pinColor={i === 0 ? '#1a73e8' : undefined}
+                // NEVER undefined. Under the New Architecture the generated
+                // MarkerManager unboxes this to a Java Integer and calls
+                // .intValue() on it, so a missing value is a hard
+                // NullPointerException rather than a fall back to the default
+                // pin — which is the crash reported from the field on v2.7:
+                //
+                //   NullPointerException: 'int java.lang.Integer.intValue()'
+                //     at com.rnmaps.fabric.MarkerManager.setPinColor
+                //
+                // The old Paper bridge tolerated null here. Fabric does not.
+                // Every colour on this screen is now an explicit string.
+                pinColor={i === 0 ? PIN_NEXT : PIN_AHEAD}
               />
             ))}
             {/* The arrival ring is the honest version of "you have arrived":

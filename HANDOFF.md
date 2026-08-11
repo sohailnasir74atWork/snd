@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-11 (§1i — the pad, commission, targets, owner push)
+**Written:** 2026-08-09 · **Last updated:** 2026-08-11 (§1j — the map audit; **21 findings still open, see `MAP-AUDIT.md`**)
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -179,6 +179,87 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1j. The map audit — 36 findings, 15 fixed, 21 open
+
+2026-08-11. A second crash came off the owner's phone on `versionCode 23`, so
+the whole map/location subsystem was audited by six independent reviewers, each
+finding then put through an adversarial pass that tried to refute it. **36
+findings survived.** The full report is in **`MAP-AUDIT.md`** — read that
+before touching any of this; it quotes the native sources line by line.
+
+### The rule, stated once — Fabric does not tolerate a null prop
+
+`newArchEnabled=true`. Confirmed in the installed native source
+(`react-native-maps/android/.../fabric/MarkerManager.java:222`):
+
+```java
+public void setPinColor(MapMarker view, @Nullable Integer value) {
+    Color.colorToHSV(value, hsv);   // unboxes -> NPE when value is null
+```
+
+> A prop KEY PRESENT with the value `undefined` reaches the Java setter as
+> `null` and unboxes to an NPE. A prop OMITTED never enters the props map and
+> the native default stands. So `pinColor={x ? BLUE : undefined}` crashes and
+> writing no `pinColor` at all is safe. **Do not "harden" `PinShopScreen`'s
+> Marker by adding `pinColor={undefined}` — that would CREATE the crash.**
+> `CircleManager` and `PolylineManager` have the same shape.
+
+### Fixed and in `versionCode 24`
+
+1. **Location was dead on every fresh install on Android 12+.**
+   `ensurePermission` requested FINE alone; from targetSdk 31 the framework
+   ignores that — no dialog, denied callback, and RN reports `never_ask_again`
+   because the phone was never prompted. The app then told the man location was
+   blocked, about a dialog he never saw. Now one `requestMultiple([FINE,
+   COARSE])`. **This is the real answer to "sometimes he cannot pin a shop".**
+2. **The coarse fallback could never fire for the person it was written for.**
+   A coarse-only grant makes `enableHighAccuracy: true` a guaranteed refusal —
+   `getValidProvider(true)` picks GPS, does not fall back because GPS is
+   enabled, fails its FINE check, returns POSITION_UNAVAILABLE, never a
+   timeout. The retry only fired on timeout. Switching GPS OFF made it work.
+3. **Two permission dialogs inside one second** — the button's, then the watch's
+   the instant `begin()` opened the round anyway. Two denials is what Android
+   turns into "don't ask again". `watchFix` now CHECKS only; only a button asks.
+4. **Every location error rendered nowhere.** The one `{error}` sat inside the
+   round-picker branch, which returns before the sweep renders. Permission
+   failures showed as "Waiting for your location…" forever.
+5. **`isPlaced()`** (`lib/geo.ts`) — a document with `location: {lat: null}`
+   reached five native sites, and `animateToRegion` rethrows as an UNCATCHABLE
+   RuntimeException. One predicate at the choke point, 10 tests.
+6. `pinColor` on the sweep markers — the reported crash.
+
+### STILL OPEN — tomorrow's work
+
+Ordered as the report orders them. Every line number is in `MAP-AUDIT.md`
+along with the fix.
+
+| # | What | Where |
+|---|---|---|
+| 6 | `dayKey` recomputed every render — a round open at MIDNIGHT writes its progress into tomorrow's key and loses the day | `AreaSweepScreen.tsx:82`, `:200` |
+| 7 | A failed GPS re-read replaces the nearest-first route with Firestore document order, silently | `AreaSweepScreen.tsx:125` |
+| 8 | The arrival gate ignores GPS accuracy; the staleness warning can essentially never render | `AreaSweepScreen.tsx:171`, `:318` |
+| 9 | Re-pinning never reads the phone, shows a months-old accuracy as a live reading, and Save re-stamps it as freshly verified | `PinShopScreen.tsx:36`, `:60`, `:135` |
+| 10 | A photo upload resolving after "Save shop" attaches the PREVIOUS shop's shopfront to the next one | `ShopPlace.tsx:36` |
+| 11 | "Done (N)" counts ids that are no longer stops | `AreaSweepScreen.tsx:446` |
+| 12 | "Read location again" moves the marker but never the camera | `PinShopScreen.tsx:92` |
+| 13 | "Skip for now" marks the shop VISITED and inflates the progress counter | `AreaSweepScreen.tsx:413` |
+| 14 | "Not on the map" is the one uncapped list on a screen built entirely of hard caps | `AreaSweepScreen.tsx:475` |
+| 15 | `stops` does a linear `Array.find` per ordered id | `AreaSweepScreen.tsx:154` |
+
+Findings 9 and 10 write WRONG DATA TO A PERMANENT RECORD and should go first.
+
+### Deliberately NOT fixing
+
+- **MMKV growth in `sweepProgress.ts`.** One key per day×area, never pruned —
+  but a 60-shop round is ~1.4 KB and a `getAllKeys()` walk risks deleting a
+  live round's key for no measurable win.
+- **Cancelling the in-flight fix in `PinShopScreen`.** The library exposes no
+  cancel for `getCurrentPosition`; an AbortSignal would settle the JS promise
+  and leave the native request running anyway. The setState-after-unmount calls
+  are React 18 no-ops.
 
 ---
 
