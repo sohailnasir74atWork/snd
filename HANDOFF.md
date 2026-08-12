@@ -1,7 +1,9 @@
 # Handoff — SnD Manager
 
 **Written:** 2026-08-09 · **Last updated:** 2026-08-12 (§1j — the map audit; **all 15 findings fixed, none of the last 10 on a device or in a build**)
-**Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
+**Read this first**, then **`BUSINESS.md`** (2026-08-12 — whether this can be
+sold, what blocks revenue, and the order to do it in; the work items themselves
+live in §4 here), then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
 

@@ -296,7 +296,22 @@ export function AdminActionScreen() {
             <IconTile name="alert-circle-outline" tint={color.danger} bg={color.dangerSoft} />
             <View style={styles.rowBody}>
               <Text style={styles.cardTitle} numberOfLines={2}>{s.name} — credit</Text>
-              <Text style={styles.meta} numberOfLines={2}>{s.area} • {s.ownerName} • {s.collectionFlagged ? 'rider will collect' : 'not yet flagged'}</Text>
+              {/* Joined by filtering, not by hardcoded bullets. `ownerName` is
+                  optional on a shop and usually absent — a shop is registered
+                  with a name and a mobile, and the man behind the counter gets
+                  asked about on the second visit if at all. Written inline the
+                  separators survived the missing value and the row rendered
+                  "New City Phase 1 & 2 •  • not yet flagged", which is how a
+                  screen tells the owner something is broken about a shop when
+                  nothing is. Same `.filter(Boolean).join(' • ')` the Route card
+                  has always used. */}
+              <Text style={styles.meta} numberOfLines={2}>
+                {[
+                  s.area,
+                  s.ownerName,
+                  s.collectionFlagged ? 'rider will collect' : 'not yet flagged',
+                ].filter(Boolean).join(' • ')}
+              </Text>
             </View>
             <View style={styles.rowRight}>
               <Money amount={s.outstanding} bold color={color.danger} />
