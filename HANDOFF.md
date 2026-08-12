@@ -182,6 +182,55 @@ back up without putting the rate where the booker can see it.
 
 ---
 
+## 1l. The owner has never received a push notification ❗ NOT DEPLOYED
+
+2026-08-12, found from a console warning the owner noticed on his own phone:
+
+```
+[snd] fcm token save NativeFirebaseError: [firestore/not-found]
+      Some requested document was not found.
+```
+
+That message names no document and no consequence. Both are worse than it
+sounds. **There is no `companies/e1Wt5vq2zzcFCBUlnUb2/users/iXuh8Jn…` document
+for the owner at all** — only the booker and the rider have one — and
+`adminTokens()` finds admins with `where('role','==','admin')` over exactly
+that collection. It matches nothing, `push()` returns early on an empty list,
+and **every owner notification `pushOrderBooked` / `pushOrderDelivered` has sent
+to nobody since it deployed on 2026-08-11** (§1i). No error, no log, no send.
+
+### Why it cannot fix itself
+
+`users/{uid}` is `allow create: if false` — the server owns it. The phone's
+token save is an `update`, so on a missing document it throws `not-found`
+rather than creating one, and a merging `set` would be refused as a create. The
+phone is structurally unable to repair this.
+
+And `admitSignIn` created the document **only inside `if (!dir.uid)`** — the
+first-ever directory bind. The owner's directory row has carried a uid for
+months, so the one branch that could have written it can never run again. Any
+person whose document is missing for any reason stays missing forever.
+
+### The fix
+
+`ensureUserDoc(companyId, uid, email, dir)`, called on **every** admitted
+sign-in rather than only the first bind. Create-if-missing, not a merge: a
+merge on every sign-in would re-stamp `createdAt` and re-assert `name`/`role`
+over whatever the company has since changed. Signing out and back in now
+repairs the account.
+
+> ❗ **This is a Cloud Function change and it is NOT DEPLOYED.** Nothing is
+> fixed in the live project until `firebase deploy --only functions:admitSignIn`
+> runs and the owner signs out and back in. Until then he still gets no push.
+> Note the deploy log's warning that Node 20 is decommissioned **2026-10-30**
+> (§4.5) — deploys still work today.
+
+The client-side warning now names the document and says what it costs, because
+the next person to see it should not have to trace `adminTokens` to find out
+that push is dead.
+
+---
+
 ## 1k. Finding a shop is work, and a day starts before the first order
 
 2026-08-12, the owner's two asks. 256 tests (up 8), 0 tsc, 0 lint errors, 243
@@ -269,11 +318,26 @@ and the half nobody was looking at was wrong. Fixed in the same pass.
 registered *Rehman Store* in Cantt and My Day went to **"0 orders today • 1 new
 shop • Rs 0"** on the same tick, singular correct.
 
-❗ **The app-open start has not been seen on a screen.** It is covered by six
-unit tests and by nothing else: preview keeps one shared day document with no
-`staffId`, so Team Today has no row to attach it to, and the real path needs a
-signed-in staff member across a real morning. The first thing to check against
-Firestore is that `appOpenedAt` lands on `days/{uid}_{date}` at all.
+✅ **The app-open write was checked against the LIVE project**, signed in as the
+owner on the emulator (2026-08-12 17:34):
+
+```
+companies/e1Wt5vq2zzcFCBUlnUb2/days/iXuh8JnWadbuHJ8RjcDITEXkNRg2_2026-08-12
+  date=2026-08-12  staffId=iXuh8Jn…  appOpenedAt=1786538067416  (17:34:27)
+```
+
+- It reaches Firestore, on `days/{uid}_{date}`, and **the rules accept it** —
+  no `permission-denied`, which is the half that was reasoned rather than run.
+- **The MMKV latch holds.** Force-stopped the app, relaunched it five minutes
+  later, re-read the document: still `17:34:27`. A restart does not push the
+  morning later, which is the whole reason the latch is not the day document.
+- The OTHER staff member's day doc for the same date has no `appOpenedAt` at
+  all — his phone runs an older build. Backward-compatible, as intended.
+
+❗ Still NOT seen: `appOpenedAt` turning into a start time **on a screen**.
+That needs a booker with a real morning's work behind him — the owner has no
+`stamps`, so his day correctly computes to nothing at all. Team Today's
+`FROM APP OPEN` tag has been rendered by no one.
 
 ---
 

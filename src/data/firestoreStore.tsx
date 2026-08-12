@@ -516,9 +516,25 @@ export function FirestoreStoreProvider({
         // The token is saved either way: a refusal is not permanent, and the
         // moment the person turns notifications on in system settings the
         // already-registered token starts working.
+        // `update`, not a merging `set`, and it has to stay that way: the
+        // rules are `allow create: if false` on this collection, so a merge
+        // set on a missing document is refused as a CREATE. The phone cannot
+        // repair this — only admitSignIn can, and since 2026-08-12 it does, on
+        // every sign-in rather than only the first.
+        //
+        // The old message was the raw Firebase string, "Some requested
+        // document was not found", which names no document and no consequence.
+        // The consequence is that this person receives NO push notifications
+        // at all, for as long as it lasts — and for an owner that is silent in
+        // both directions, because adminTokens() matches nothing and push()
+        // returns early on an empty list rather than failing.
         const save = (token: string) =>
           updateDoc(doc(db, `${base}/users/${user.uid}`), { fcmToken: token })
-            .catch(e => console.warn('[snd] fcm token save', e));
+            .catch(e => console.warn(
+              `[snd] fcm token not saved — no users/${user.uid} document, so this `
+              + 'phone will receive no push notifications. Sign out and back in: '
+              + 'admitSignIn recreates it. Underlying error:', e,
+            ));
         await save(await getToken(m));
         stop = onTokenRefresh(m, t => { void save(t); });
       } catch (e) {

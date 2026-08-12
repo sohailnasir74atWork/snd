@@ -125,6 +125,49 @@ async function claimDefaultRider(companyId, uid) {
 }
 
 /**
+ * Make sure this person has a users/{uid} document, on EVERY admitted sign-in.
+ *
+ * This used to happen only inside the `if (!dir.uid)` first-bind branch, which
+ * assumed the document, once written, is there forever. It is not, and the
+ * failure is silent in both directions:
+ *
+ *  - Clients cannot repair it. `users/{uid}` is `allow create: if false` — the
+ *    server owns it — and the phone's token save is an `update`, which throws
+ *    `not-found` rather than creating anything. The only trace is a console
+ *    warning saying "Some requested document was not found", on a phone nobody
+ *    is watching, about a document it does not name.
+ *  - Push then dies quietly. `tokenOf` returns null and `adminTokens` runs a
+ *    `where('role','==','admin')` query that simply matches nothing, and
+ *    `push()` returns early on an empty list. No error, no log, no send.
+ *
+ * Found on 2026-08-12 in the live project: the OWNER had no users/{uid} at all,
+ * so `adminTokens` returned [] and every owner notification shipped in §1i had
+ * been going nowhere since the day it deployed. His directory row already
+ * carried a uid, so the one branch that creates the document could never run
+ * again.
+ *
+ * Create-if-missing rather than a merge: a merge on every sign-in would
+ * re-stamp `createdAt` and re-assert `name`/`role` over whatever the company
+ * has since changed. The counters start at 0 because that is the only honest
+ * answer available — there is no prior document to read them from, which is
+ * exactly the situation this repairs.
+ */
+async function ensureUserDoc(companyId, uid, email, dir) {
+  const ref = db.doc(`companies/${companyId}/users/${uid}`);
+  if ((await ref.get()).exists) return;
+  await ref.set({
+    name: dir.name || '',
+    email,
+    companyId,
+    role: dir.role,
+    active: true,
+    cashUnconfirmed: 0,
+    floatOutstanding: 0,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
+/**
  * Called right after Firebase Auth sign-in.
  * data: { createBusinessName?: string }  — present only from the
  * "Create a new business" flow (FR-1.7), where the typed name is the
@@ -166,20 +209,11 @@ exports.admitSignIn = onCall({ region: 'asia-south1' }, async (request) => {
       // the owner's own assignments, so unassigned orders are now surfaced to
       // the owner in-app instead of being redirected behind his back.
       if (dir.role === 'rider') await claimDefaultRider(dir.companyId, uid);
-      await db.doc(`companies/${dir.companyId}/users/${uid}`).set(
-        {
-          name: dir.name || '',
-          email,
-          companyId: dir.companyId,
-          role: dir.role,
-          active: true,
-          cashUnconfirmed: 0,
-          floatOutstanding: 0,
-          createdAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
     }
+    // OUTSIDE the first-bind branch on purpose — see ensureUserDoc. A person
+    // whose directory row already carries a uid used to skip this entirely,
+    // and nothing anywhere would ever create the document again.
+    await ensureUserDoc(dir.companyId, uid, email, dir);
     await getAuth().setCustomUserClaims(uid, { companyId: dir.companyId, role: dir.role });
 
     // Came through "Create a new business" while already on a list.
