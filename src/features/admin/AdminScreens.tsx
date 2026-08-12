@@ -79,16 +79,61 @@ export function KeyboardScreen({ children, style, contentContainerStyle }: {
   );
 }
 
+/**
+ * How many cards any one section of the Action screen may mount.
+ *
+ * The screen is a plain ScrollView, so every card it is given is built whether
+ * or not anybody scrolls to it — and this is the first screen the owner sees.
+ * Eight was already the cap on the unassigned-orders list; it is now the cap on
+ * all of them, because a number that appears once is a magic number and a
+ * number that appears five times is a decision.
+ *
+ * Eight is about a screenful. Past that the owner is not reading, he is
+ * scrolling, and the place to read a long list is the screen built for it —
+ * Reports for money, More → Shops for balances.
+ */
+const ACTION_CARDS = 8;
+
 export function AdminActionScreen() {
   const store = useStore();
   // Every card on this screen moves money, and every one of them stays on
   // screen until the server round-trip lands — the window a second tap fits in.
   const { isBusy, run } = useWriteGuard();
   const withStaff = store.payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
-  const oldCredit = store.shops.filter(s => s.active && s.outstanding > 0);
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-  const problems = store.orders.filter(o =>
+  /**
+   * Who owes money — BIGGEST FIRST, and capped.
+   *
+   * This was every active shop with a balance, in whatever order the snapshot
+   * arrived, mounted all at once in a plain ScrollView. At 22 shops that is
+   * nothing. At 500 shops with 200 carrying a balance it is 200 cards on the
+   * FIRST screen the owner sees when he opens the app — which is exactly what
+   * froze the Map tab on a real phone (§1h), and exactly the uncapped list the
+   * map audit caught on the sweep (§1j, finding 14). Every other list in this
+   * app has a hard cap; these four had escaped it.
+   *
+   * Sorted descending because the order is the point: an owner scanning this
+   * acts on the biggest debt, not on whichever shop Firestore returned first.
+   * Nothing is hidden — the cap note below carries the count AND the rupees
+   * held back, which is the number he would otherwise have to add up himself.
+   */
+  const credit = React.useMemo(() => {
+    const owing = store.shops.filter(s => s.active && s.outstanding > 0)
+      .sort((a, b) => b.outstanding - a.outstanding);
+    return {
+      shown: owing.slice(0, ACTION_CARDS),
+      hidden: Math.max(0, owing.length - ACTION_CARDS),
+      hiddenTotal: owing.slice(ACTION_CARDS).reduce((s, x) => s + x.outstanding, 0),
+      count: owing.length,
+    };
+  }, [store.shops]);
+  const oldCredit = credit.shown;
+  // Cancelled and sent-back orders fall off after 7 days on their own — this
+  // list is bounded by the CLOCK but not by how bad a week was, so it takes
+  // the same cap as the rest.
+  const allProblems = store.orders.filter(o =>
     (o.status === 'returned' || o.status === 'cancelled') && o.bookedAt >= dayStart.getTime() - 6 * 86400_000);
+  const problems = allProblems.slice(0, ACTION_CARDS);
 
   // One card PER PERSON who has handed over: the owner counts one pile of
   // cash and confirms exactly that pile (FR-7.11).
@@ -114,6 +159,20 @@ export function AdminActionScreen() {
   }));
   const pendingTotal = pending.reduce((s, h) => s + h.amount, 0);
   const stillOut = withStaff - pendingTotal; // collected but not yet handed over
+  /**
+   * These two are deliberately NOT capped.
+   *
+   * They do not scale with the size of the business, they scale with what the
+   * owner has not dealt with yet — an exception payment is confirmed and gone,
+   * a claim is approved and gone, both usually the same day. A list bounded by
+   * the owner's own inbox stays short because he empties it.
+   *
+   * And each row is a decision about money he has to make individually. Hiding
+   * the ninth one behind a cap would take a payment or a claim off the only
+   * screen that offers it, which is worse than a long list. Credit and
+   * cancellations are capped because they scale with shops and orders; these
+   * do not.
+   */
   const exceptions = store.payments.filter(p => p.exception && !p.confirmed && !p.voided);
   const claims = store.rewardClaims.filter(c => c.status === 'pending');
   // Orders no van is carrying. Loud, because a rider's read rule keys on
@@ -319,6 +378,18 @@ export function AdminActionScreen() {
           </View>
         </Card>
       ))}
+
+      {/* What the cap is holding back, in the two units the owner thinks in:
+          how many shops, and how much money. A list that simply stopped at
+          eight would read as a business that is owed less than it is — which
+          is the one direction this number must never be wrong in. */}
+      {credit.hidden > 0 && (
+        <Text style={styles.capNote}>
+          {`+ ${credit.hidden} more ${credit.hidden === 1 ? 'shop owes' : 'shops owe'} `
+            + `Rs ${credit.hiddenTotal.toLocaleString()}. Biggest first here; the full list is `
+            + `More → Reports → who owes me.`}
+        </Text>
+      )}
 
       {calm && (
         <EmptyState icon="check-circle-outline" title="Nothing needs you" hint="A calm day." />
@@ -590,6 +661,13 @@ const styles = StyleSheet.create({
   rowRight: { flexShrink: 0, marginLeft: space.s, alignItems: 'flex-end' },
   cardTitle: { fontSize: font.h2 - 1, fontWeight: '700', color: color.text },
   meta: { fontSize: font.sub, color: color.textSub, marginTop: 2 },
+  // What a cap is holding back. Never silent — a list that stops without
+  // saying so reads as a shorter list, and on this screen that means a
+  // business that is owed less than it is.
+  capNote: {
+    fontSize: font.tiny, color: color.textSub,
+    paddingHorizontal: space.gutter, paddingVertical: space.s, lineHeight: font.tiny + 5,
+  },
 
   exceptionCard: { borderWidth: 1, borderColor: color.danger },
   tagRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.s },
