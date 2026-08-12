@@ -16,7 +16,7 @@ and `PROGRESS.md` (the SRS-facing plan).
 | Branch | **`booker-screens-pass`**, 26 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 25` / `versionName "2.9"` — built 2026-08-12, see §5 |
+| Version | `versionCode 26` / `versionName "2.10"` — built 2026-08-12, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
 | Unit tests | **256 / 256**, 16 suites |
@@ -181,6 +181,65 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1m. A shop owed money it had paid, and a void could not be undone
+
+2026-08-12. The owner looked at his Action screen and said Makkah+ pharmacy
+owed nothing — it had cleared its bill — but the row read **Rs 1,360 credit**.
+He assumed it came from the cancelled order beside it. It did not.
+
+The trail, read off the live database:
+
+| Time | What happened |
+|---|---|
+| 13:21:35 | `ORD-2026-0012` delivered — Rs 1,360 |
+| 13:21:35 | Rider took Rs 1,360 cash — `RCP-2026-0008`, allocated correctly to that one order |
+| — | Owner confirmed the cash |
+| **13:59:12** | **The owner's own account voided the receipt** |
+
+**The app was right.** Voiding is meant to put the money back on the khata and
+it did exactly that: `outstanding` +1,360, the order back to `unpaid`,
+`amountPaid` 0. The cancelled order (`ORD-2026-0020`, Rs 6,440) was clean —
+stock released, nothing owed — and `ORD-2026-0021` at Rs 7,290 is only
+assigned, so it is not owed yet either.
+
+### What was actually wrong
+
+**There was no way back.** `voidPayment` returns early on an already-voided row
+and nothing else writes the flag, so an accidental void was permanent. A shop
+that had paid showed as owing, on the owner's own landing screen, and **no
+screen anywhere said why** — the Action row says "credit", not "a receipt for
+this was voided at 1:59". The only routes left were inventing a second payment
+the shop never made, or editing the database by hand.
+
+`restorePayment` is the exact inverse, so Void and Undo-void can be pressed
+alternately forever without the khata drifting, and it mirrors the same
+`!p.exception || p.confirmed` guard — an unconfirmed exception payment never
+moved the khata, so undoing its void must not move it either. **Undo void**
+sits beside **Void** on Reports, behind the same busy latch.
+
+> **No rules change, deliberately.** The rules whitelist five keys on an admin
+> payment update (`confirmed`, `voided`, `voidedBy`, `voidedAt`, `orderIds`),
+> so there is nowhere to record who undid it without widening them — and that
+> would make the app depend on a deploy landing first. The backend may run
+> ahead of the app safely; the app may not run ahead of the backend. So
+> `voidedAt`/`voidedBy` stay on the row as the record that a void happened and
+> was undone, and `voided` remains the only flag anything tests.
+
+❗ **The owner's Rs 1,360 is still wrong in the database.** Writing to live
+money records from the tooling was blocked, correctly. He repairs it himself:
+Reports → `RCP-2026-0008` → **Undo void**, on `versionCode 26` or later. That
+puts the correction through the app's own audited path instead of a hand edit.
+
+### Worth taking as a lesson, not just a fix
+
+The screen that raised the alarm could not answer the question it raised. An
+owner staring at "credit" has no way to learn that the debt is there because
+somebody cancelled a receipt — he has to ask. Two of the three things offered
+alongside this fix are still not built: saying WHY a shop owes, and warning
+what voiding will do before it happens.
 
 ---
 
@@ -1618,16 +1677,16 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 25` / `versionName "2.9"` — `2.9` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
-| File | `builds/SnD-Manager-v2.9-build25.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Version | `versionCode 26` / `versionName "2.10"` — `2.10` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
+| File | `builds/SnD-Manager-v2.10-build26.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
-| Built | 2026-08-12 21:02, from `booker-screens-pass` — **not from `main`** |
+| Built | 2026-08-12 22:0x, from `booker-screens-pass` — **not from `main`** |
 | Reproducible | ✅ from the commit before the version bump; the tree was clean. |
 | Needs | the rules deployed — done. `admitSignIn` is deployed too (§1l), which `versionCode 25` does NOT depend on but the owner's push notifications do. |
-| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24 and 25. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
+| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24, 25 and 26. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
 
-> **`versionCode 25` is the first build that contains any of 2026-08-12.** That
+> **`versionCode 26` adds the Undo-void (§1m) on top of `versionCode 25`, which was the first build to contain any of 2026-08-12.** That
 > is all fifteen map-audit findings (§1j), the new-shop count and the app-open
 > start (§1k), the compact bill rows, the welcome-screen changes, and the type
 > scale. It is also the first build anyone can put on a real phone to find out
