@@ -62,13 +62,29 @@ export const color = {
  * constraint, not a taste, and `tiny` is deliberately unchanged because it was
  * already sitting on it.
  */
+/**
+ * A THIRD step down, 2026-08-12, the owner's call after seeing the second.
+ *
+ * This is the floor. `sub` has landed on 10 and `tiny` was already there, so
+ * the bottom two rungs of the scale are now the same number — below this the
+ * hierarchy has to be carried by colour and weight alone, which it already
+ * partly is (`textSub` against `textFaint`). There is no fourth step that does
+ * not take secondary text under 10pt, and 10pt is where a man in his fifties
+ * reading a khata in a bazaar stops being able to.
+ *
+ * If the app still reads large after this, the remaining cause is NOT the type
+ * scale — it is the phone's own font-size setting, which is capped in
+ * `components/ui` and is the thing to check first. Shrinking these numbers
+ * further would only make the app unreadable on every phone set to normal in
+ * order to fix one that is not.
+ */
 export const font = {
-  h1: 18,
-  h2: 15,
-  body: 13,
-  sub: 11,
+  h1: 17,
+  h2: 14,
+  body: 12,
+  sub: 10,
   tiny: 10,
-  stat: 17,
+  stat: 16,
 } as const;
 
 export const radius = {
