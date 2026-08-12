@@ -22,10 +22,10 @@
  */
 import React from 'react';
 import {
-  FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View,
+  FlatList, Modal, Pressable, StyleSheet, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Icon, PrimaryButton, color, font, radius, space } from './ui';
+import { Icon, PrimaryButton, Text, TextInput, color, font, radius, space } from './ui';
 import { useStore } from '../data/store';
 
 const NO_AREA = '__none__';

@@ -9,10 +9,10 @@
  * cost the person nothing but the ability to double-check.
  */
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import type { Region } from 'react-native-maps';
-import { Icon, PrimaryButton, color, font, space } from '../../components/ui';
+import { Icon, PrimaryButton, Text, color, font, space } from '../../components/ui';
 import { POOR_ACCURACY_M, formatAccuracy, isPlaced } from '../../lib/geo';
 import type { GeoFix } from '../../lib/geo';
 import { GeoError, getCurrentFix } from '../../lib/location';

@@ -7,10 +7,9 @@
  * an approved claim is paid from the booker's cash float.
  */
 import React from 'react';
-import { Alert, Image, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Image, StyleSheet, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag,
-  color, font, radius, space,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { useNeed, useStore } from '../../data/store';
 import { capturePhotoBase64 } from '../../lib/photos';

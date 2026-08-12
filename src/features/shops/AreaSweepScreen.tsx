@@ -18,12 +18,11 @@
  * is worse than a slightly longer one they can trust. Re-ordering is a button.
  */
 import React from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, View } from 'react-native';
 import MapView, { Circle, Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  Card, Chip, EmptyState, Icon, PrimaryButton, SectionLabel,
-  color, font, radius, space,
+  Card, Chip, EmptyState, Icon, PrimaryButton, SectionLabel, Text, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import { todayKey } from '../../data/models';

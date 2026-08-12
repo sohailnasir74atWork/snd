@@ -44,18 +44,31 @@ export const color = {
 } as const;
 
 /**
- * One step down from the first pass. The screens carry a lot of numbers per
- * card, and the old scale pushed rows into two lines and clipped labels in
- * the joined option bars. Nothing here goes below 10pt — these phones are
- * read at arm's length in daylight.
+ * Two steps down from the first pass, and the second step is 2026-08-12.
+ *
+ * The owner put this app beside Vyapar on his own handset and the type was
+ * visibly larger on every screen — which reads as a simpler app rather than a
+ * clearer one, because size is what a phone uses to signal importance and a
+ * screen where everything is large signals nothing. Vyapar's menu label sits
+ * around 15pt with no subtitle; ours was 15pt bold with a 12pt line under it,
+ * so our rows were half again as tall for the same information.
+ *
+ * Every size here moved down one step together. That is the whole reason this
+ * is a scale and not a pile of numbers: the RATIOS carry the hierarchy, so
+ * shifting the scale keeps every relationship that was designed on top of it.
+ *
+ * Nothing goes below 10pt. These phones are read at arm's length in daylight,
+ * in a bazaar, by someone who is not going to squint — that floor is a field
+ * constraint, not a taste, and `tiny` is deliberately unchanged because it was
+ * already sitting on it.
  */
 export const font = {
-  h1: 20,
-  h2: 16,
-  body: 14,
-  sub: 12,
+  h1: 18,
+  h2: 15,
+  body: 13,
+  sub: 11,
   tiny: 10,
-  stat: 18,
+  stat: 17,
 } as const;
 
 export const radius = {

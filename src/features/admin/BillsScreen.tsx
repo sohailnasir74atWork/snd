@@ -12,10 +12,9 @@
  * shops' copies should not have to throw away thirty-seven pages to get them.
  */
 import React from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, Icon, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
-  color, font, space,
+  Card, Chip, EmptyState, Icon, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag, Text, color, font, space,
 } from '../../components/ui';
 import { useNeed, useStore } from '../../data/store';
 import type { Order } from '../../data/models';

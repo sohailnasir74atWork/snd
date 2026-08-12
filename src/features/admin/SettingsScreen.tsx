@@ -3,10 +3,9 @@
  * writes through updateSettings immediately; there is no save button.
  */
 import React from 'react';
-import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, View } from 'react-native';
 import {
-  Card, Chip, Icon, IconTile, MoreFields, OptionBar, SectionLabel,
-  color, font, radius, space,
+  Card, Chip, Icon, IconTile, MoreFields, OptionBar, SectionLabel, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen } from './AdminScreens';
 import { useStore } from '../../data/store';

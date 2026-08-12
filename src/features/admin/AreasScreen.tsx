@@ -9,10 +9,9 @@
  * different screens, and this is the first one.
  */
 import React from 'react';
-import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, ListRow, PrimaryButton, Tag,
-  color, font, radius, space,
+  Card, Chip, EmptyState, IconTile, ListRow, PrimaryButton, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';

@@ -3,16 +3,13 @@
  * nothing used daily more than two taps from home.
  */
 import React from 'react';
-import {
-  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView,
-  StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { strings } from '../i18n/strings';
-import { Icon, color, font, radius, shadow, space } from '../components/ui';
+import { Icon, Text, TextInput, color, font, radius, shadow, space } from '../components/ui';
 import { BrandHero, StaffHero } from '../components/BrandHero';
 import type { Role } from './types';
 import {

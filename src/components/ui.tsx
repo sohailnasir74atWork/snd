@@ -5,12 +5,61 @@
  * pill CTA per screen, quiet secondary text.
  */
 import React from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import {
+  ActivityIndicator, Animated, Pressable, StyleSheet,
+  Text as RNText, TextInput as RNTextInput, View, ViewStyle,
+} from 'react-native';
+import type { TextProps, TextInputProps } from 'react-native';
 import MCIcon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { formatAmount } from '../lib/money';
 import { color, font, radius, shadow, space } from './theme';
 
 export { color, font, radius, shadow, space } from './theme';
+
+/**
+ * How far the PHONE's own font setting may stretch this app.
+ *
+ * 2026-08-12, and this is the answer to "our text is bigger than Vyapar's on
+ * the same handset". It was — but not because the type scale was wrong. React
+ * Native multiplies every `fontSize` by the system font-size setting, and
+ * nothing in this app capped it: on a phone set to Large, our 14pt body became
+ * 18pt while Vyapar's stayed put, and the icon tiles beside it did not grow at
+ * all, which is what made the rows look unbalanced rather than merely big.
+ * Verified by setting `font_scale` to 1.3 on the emulator and reproducing the
+ * owner's screenshot exactly.
+ *
+ * 1.15 rather than 1.0. Refusing to scale at all is what Vyapar appears to do
+ * and it would match them exactly, but it also tells a shopkeeper with poor
+ * eyesight that his phone's accessibility setting does not apply here — and
+ * the people using this app are middle-aged men reading a khata in daylight.
+ * 15% is enough to help and small enough that no row goes to two lines.
+ *
+ * **This is the only number to change if the app still reads too large.** Put
+ * it to 1.0 to match Vyapar exactly; do not shrink the type scale to
+ * compensate, or phones at the normal setting get an app nobody can read.
+ */
+export const MAX_FONT_SCALE = 1.15;
+
+/**
+ * `Text`, capped — and the reason every screen imports Text from here rather
+ * than from react-native.
+ *
+ * The cap is a prop, and React Native offers no global for it: `defaultProps`
+ * is gone in React 19, and monkey-patching `Text.render` breaks silently on an
+ * upgrade with no compile error to catch it. One wrapper is duller and it is
+ * checked by the type system.
+ *
+ * The default is spread BEFORE props, so a caller that genuinely wants a
+ * different cap can still pass one.
+ */
+export function Text(props: TextProps) {
+  return <RNText maxFontSizeMultiplier={MAX_FONT_SCALE} {...props} />;
+}
+
+/** Same cap, same reason — a field that grows past its box is worse than text. */
+export function TextInput(props: TextInputProps) {
+  return <RNTextInput maxFontSizeMultiplier={MAX_FONT_SCALE} {...props} />;
+}
 // Back-compat aliases (screens written before the design pass).
 export const ACCENT = color.primary;
 export const DANGER = color.danger;
@@ -22,7 +71,20 @@ export function Icon({ name, size = 20, color: c = color.text }: { name: string;
 }
 
 /** Pastel rounded-square icon tile — the Quick Links look. */
-export function IconTile({ name, tint = color.primary, bg = color.primarySoft, size = 38 }: {
+/**
+ * The pastel square behind an icon.
+ *
+ * Smaller and with a larger glyph inside it than it used to be (38 at 0.55,
+ * so a 21pt icon in a 38pt box). Beside Vyapar the old tile read as the loudest
+ * thing in a row — a big block of pastel with a small mark floating in the
+ * middle of it — and on the More screen that is nine blocks of colour down the
+ * left before a single word is read. The tile is meant to hold the icon, not
+ * to be the icon.
+ *
+ * 32 at 0.6 keeps the same glyph SIZE while dropping the block around it, so
+ * rows get shorter and the mark itself is no less legible.
+ */
+export function IconTile({ name, tint = color.primary, bg = color.primarySoft, size = 32 }: {
   name: string; tint?: string; bg?: string; size?: number;
 }) {
   return (
@@ -30,7 +92,7 @@ export function IconTile({ name, tint = color.primary, bg = color.primarySoft, s
       width: size, height: size, borderRadius: radius.tile,
       backgroundColor: bg, alignItems: 'center', justifyContent: 'center',
     }}>
-      <MCIcon name={name} size={size * 0.55} color={tint} />
+      <MCIcon name={name} size={size * 0.6} color={tint} />
     </View>
   );
 }

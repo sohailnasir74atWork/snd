@@ -11,8 +11,8 @@
  * small "preview" link keeps the offline demo available.
  */
 import React from 'react';
-import { ActivityIndicator, Alert, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
-import { Icon, IconTile, color, font, radius, shadow, space } from './src/components/ui';
+import { ActivityIndicator, Alert, Pressable, StatusBar, StyleSheet, View } from 'react-native';
+import { Icon, IconTile, Text, color, font, radius, shadow, space } from './src/components/ui';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppNavigation, StaffSignInScreen, WelcomeScreen } from './src/app/navigation';

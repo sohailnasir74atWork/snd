@@ -5,12 +5,9 @@
  * evening handover (FR-7.9/7.11).
  */
 import React from 'react';
+import { Alert, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import {
-  Alert, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
-import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, ProvisionalNote,
-  SectionLabel, Tag, color, font, radius, space,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, ProvisionalNote, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { Order } from '../../data/models';

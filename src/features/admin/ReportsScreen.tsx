@@ -3,8 +3,10 @@
  * Every computation lives in a small pure helper so it can be unit-tested later.
  */
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, color, font, space } from '../../components/ui';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  Card, Chip, Icon, IconTile, ListRow, Money, OptionBar, SectionLabel, Text, color, font, space,
+} from '../../components/ui';
 // (Alert imported above with react-native)
 import { useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';

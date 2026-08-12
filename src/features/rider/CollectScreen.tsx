@@ -4,12 +4,9 @@
  * other way money enters the app is a delivery close-out.
  */
 import React from 'react';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import {
-  Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
-import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, ProvisionalNote,
-  SectionLabel, Tag, color, font, radius, space,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, ProvisionalNote, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { CollectionInput } from '../../data/store';

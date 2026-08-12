@@ -4,11 +4,9 @@
  * disabled-with-reason instead of error popups).
  */
 import React from 'react';
-import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, MoreFields, OptionBar, PrimaryButton,
-  Reveal, Tag,
-  color, font, radius, space,
+  Card, Chip, EmptyState, Icon, IconTile, Money, MoreFields, OptionBar, PrimaryButton, Reveal, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';

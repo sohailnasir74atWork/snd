@@ -12,10 +12,9 @@
  * someone should know which number he is holding.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import {
-  Card, EmptyState, Icon, IconTile, Money, SectionLabel, Tag,
-  color, font, space,
+  Card, EmptyState, Icon, IconTile, Money, SectionLabel, Tag, Text, color, font, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import { computeWorkday, clockTime, durationLabel } from '../../lib/workday';

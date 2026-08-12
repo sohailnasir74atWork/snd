@@ -3,13 +3,10 @@
  * My Day. Zero typing: everything is chips and tiles.
  */
 import React from 'react';
-import {
-  Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, ProvisionalNote,
-  SectionLabel, Tag, color, font, radius, space,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, ProvisionalNote, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { CollectionInput } from '../../data/store';

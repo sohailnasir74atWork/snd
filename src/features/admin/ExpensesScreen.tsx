@@ -3,11 +3,9 @@
  * One-off expenses with a petrol double-count guard, plus fixed monthly charges.
  */
 import React from 'react';
-import { Alert, StyleSheet, Text, TextInput, View, Pressable } from 'react-native';
+import { Alert, StyleSheet, View, Pressable } from 'react-native';
 import {
-  Card, Chip, EmptyState, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton,
-  SectionLabel, Tag, Tile,
-  color, font, radius, space,
+  Card, Chip, EmptyState, Icon, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag, Text, TextInput, Tile, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useNeed, useStore } from '../../data/store';

@@ -5,12 +5,10 @@
  * safety prompt (a lost account must have a way back in).
  */
 import React from 'react';
-import { Alert, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, Share, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  Card, Chip, Icon, IconTile, ListRow, Money, MoreFields, OptionBar, PrimaryButton,
-  Reveal, SectionLabel, Tag,
-  color, font, radius, space,
+  Card, Chip, Icon, IconTile, ListRow, Money, MoreFields, OptionBar, PrimaryButton, Reveal, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useNeed, useStore } from '../../data/store';

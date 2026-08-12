@@ -6,7 +6,10 @@
  * field worker with a dead app has no second device and no support desk.
  */
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+// Capped like every other screen — see MAX_FONT_SCALE. The crash screen is the
+// one place a phone set to Large must NOT push the message off the viewport.
+import { Text } from './ui';
 import { getCrashlytics, recordError } from '@react-native-firebase/crashlytics';
 import { Icon, PrimaryButton, color, font, radius, space } from './ui';
 

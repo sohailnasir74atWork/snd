@@ -13,10 +13,9 @@
  * erroring).
  */
 import React from 'react';
-import { Alert, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Share, StyleSheet, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
-  color, font, radius, space,
+  Card, Chip, EmptyState, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useNeed, useStore } from '../../data/store';

@@ -9,8 +9,8 @@
  * broken app.
  */
 import React from 'react';
-import { Alert, Image, StyleSheet, Text, View } from 'react-native';
-import { Chip, IconTile, color, font, radius, space } from '../../components/ui';
+import { Alert, Image, StyleSheet, View } from 'react-native';
+import { Chip, IconTile, Text, color, font, radius, space } from '../../components/ui';
 import { useStore } from '../../data/store';
 import { pickLogoBase64 } from '../../lib/photos';
 import { uploadPhotoBase64 } from '../../lib/storage';

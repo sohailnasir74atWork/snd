@@ -4,12 +4,9 @@
  */
 import React from 'react';
 import LinearGradient from 'react-native-linear-gradient';
+import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import {
-  Image, KeyboardAvoidingView, Platform, ScrollView, StyleProp, StyleSheet, Text, View, ViewStyle,
-} from 'react-native';
-import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Tile,
-  color, font, radius, space,
+  Card, Chip, EmptyState, IconTile, ListRow, Money, PrimaryButton, SectionLabel, Tag, Text, Tile, color, font, radius, space,
 } from '../../components/ui';
 import { netOfTax, totalQty } from '../../lib/order';
 import { useStore } from '../../data/store';

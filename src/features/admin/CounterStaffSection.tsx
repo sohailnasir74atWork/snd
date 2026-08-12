@@ -17,8 +17,10 @@
  * away from the shop it was about.
  */
 import React from 'react';
-import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Card, Chip, ListRow, PrimaryButton, Tag, color, font, radius, space } from '../../components/ui';
+import { Alert, StyleSheet, View } from 'react-native';
+import {
+  Card, Chip, ListRow, PrimaryButton, Tag, Text, TextInput, color, font, radius, space,
+} from '../../components/ui';
 import { useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { RewardStaff, Shop } from '../../data/models';

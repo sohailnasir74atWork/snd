@@ -15,11 +15,10 @@
  * quietly stops matching the shelf. A changed basket is a cancel and a rebook.
  */
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  Card, EmptyState, Money, PrimaryButton, SectionLabel, Tag,
-  color, font, space,
+  Card, EmptyState, Money, PrimaryButton, SectionLabel, Tag, Text, TextInput, color, font, space,
 } from '../../components/ui';
 import { useStore } from '../../data/store';
 import type { Order } from '../../data/models';
