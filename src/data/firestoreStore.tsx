@@ -41,7 +41,7 @@ import { allocateFifo } from '../lib/fifo';
 import { mergeById, windowStartDate, windowStartKey } from '../lib/window';
 import { riderForShop, shopsForBooker, unassignedOf } from '../lib/assignment';
 import { formatSerial, type SerialKind } from '../lib/serials';
-import { nextLocalRef } from '../lib/kv';
+import { markAppOpened, nextLocalRef } from '../lib/kv';
 import { uploadPhotoBase64 } from '../lib/storage';
 import type { Role, SessionUser } from '../app/types';
 
@@ -357,6 +357,12 @@ export function FirestoreStoreProvider({
             id: d.id, ...(data as unknown as Omit<Shop, 'id'>),
             lastVisitAt: toMillis(data.lastVisitAt),
             lastShelfCountAt: data.lastShelfCountAt ? toMillis(data.lastShelfCountAt) : undefined,
+            // Written since the collection existed, converted only now. Left
+            // UNDEFINED when absent rather than 0: `toMillis` returns 0 for a
+            // missing value, and 0 is a real instant in 1970 that falls inside
+            // no day window — but "created at the epoch" is a lie where "we do
+            // not know when this shop was added" is the truth.
+            createdAt: data.createdAt ? toMillis(data.createdAt) : undefined,
             // Screens read this boolean. Prefer the stored flag (visible the
             // instant it is written, even offline) and fall back to the
             // timestamp for shops flagged by an older build.
@@ -767,6 +773,7 @@ export function FirestoreStoreProvider({
   };
 
   const api: StoreApi = {
+    myUid: user.uid,
     products: productsView, shops, areas, orders, payments, settings, employees,
     staffDays, staffNames, expenses, fixedCharges,
     rewardStaff, rewardClaims, floatMovements, day, ready,
@@ -939,6 +946,21 @@ export function FirestoreStoreProvider({
       setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
         date: day.date, routeStarted: false, staffId: user.uid,
       }, { merge: true }).catch(writeRejected('Undo start route'));
+    },
+
+    noteAppOpen() {
+      // The MMKV latch, not the day document, is what makes this once-a-day.
+      // The day doc arrives over a listener that has not necessarily landed
+      // when the app starts, so trusting `day.appOpenedAt` here would write a
+      // later time over the morning's on every cold start with no signal —
+      // which is the exact morning this number is supposed to be right about.
+      if (!markAppOpened(day.date)) return;
+      setDoc(doc(db, `${base}/days/${dayDocId(user.uid)}`), {
+        // Client clock for the same reason startRoute uses one: this is read
+        // straight back on his own phone, and a pending server value reads as
+        // "never opened" for as long as he has no signal.
+        ...EMPTY_DAY(day.date), appOpenedAt: Date.now(), staffId: user.uid,
+      }, { merge: true }).catch(writeRejected('App open'));
     },
 
     riderRouteStarted: riderRouteStartedNow,
@@ -1524,6 +1546,23 @@ export function FirestoreStoreProvider({
         .reduce((s, f) => s + (f.kind === 'issue' ? f.amount : -f.amount), 0);
     },
   };
+
+  /**
+   * Stamp the day's first app-open, here rather than on a screen.
+   *
+   * A screen would have to remember to call it, and the one that forgot would
+   * be whichever screen the app happened to land on that morning — which for a
+   * booker who was on My Day when he closed the app yesterday is My Day, and
+   * for a rider is his route.
+   *
+   * Keyed on the WORKING day, not on mount, so a phone left on overnight
+   * stamps the new day when the day rolls rather than carrying yesterday's.
+   * The MMKV latch inside makes it once-a-day regardless; `api` is rebuilt on
+   * every render, so it is deliberately not a dependency.
+   */
+  const noteOpen = React.useRef(api.noteAppOpen);
+  noteOpen.current = api.noteAppOpen;
+  React.useEffect(() => { noteOpen.current(); }, [day.date]);
 
   return <StoreContext.Provider value={api}>{children}</StoreContext.Provider>;
 }

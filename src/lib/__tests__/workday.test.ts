@@ -1,5 +1,5 @@
 import { computeWorkday, clockTime, durationLabel } from '../workday';
-import type { DayState, Order, Payment, RewardClaim } from '../../data/models';
+import type { DayState, Order, Payment, RewardClaim, Shop } from '../../data/models';
 
 // A fixed working day so nothing here depends on when the tests run.
 const DAY_START = new Date('2026-08-09T00:00:00Z').getTime();
@@ -18,6 +18,10 @@ const payment = (p: Partial<Payment>): Payment => ({
   id: 'p', receiptNo: 'R1', shopId: 's1', orderIds: [], amount: 1000, mode: 'cash',
   collectedBy: 'rider1', confirmed: false, createdAt: at(12), ...p,
 } as Payment);
+
+const shop = (s: Partial<Shop>): Shop => ({
+  id: 's1', name: 'Shop', phone: '', area: 'Cantt', outstanding: 0, active: true, ...s,
+} as Shop);
 
 const base = {
   staffId: 'booker1', dayStartMs: DAY_START, dayEndMs: DAY_END,
@@ -135,6 +139,109 @@ describe('computeWorkday — reading a day off the work', () => {
     const w = computeWorkday({ ...base, orders: [order({ bookedAt: at(17, 55) })], day }, at(18, 1));
     expect(w.stillWorking).toBe(false);
     expect(w.lastActionAt).toBe(at(18));
+  });
+});
+
+describe('computeWorkday — shops registered today', () => {
+  test('a shop he registered is work, and it is counted separately from orders', () => {
+    const w = computeWorkday({
+      ...base,
+      shops: [
+        shop({ id: 'n1', createdBy: 'booker1', createdAt: at(10) }),
+        shop({ id: 'n2', createdBy: 'booker1', createdAt: at(11) }),
+      ],
+    }, at(18));
+    expect(w.shopsAdded).toBe(2);
+    // Finding counters and booking nothing is still a morning's work — this is
+    // the case that read as "did not turn up" before shops were stamps.
+    expect(w.startedAt).toBe(at(10));
+    expect(w.lastActionAt).toBe(at(11));
+    expect(w.ordersBooked).toBe(0);
+    expect(w.startSource).toBe('derived');
+  });
+
+  test("somebody else's new shop is not his, and yesterday's is not today's", () => {
+    const w = computeWorkday({
+      ...base,
+      shops: [
+        shop({ id: 'mine', createdBy: 'booker1', createdAt: at(9) }),
+        shop({ id: 'his', createdBy: 'booker2', createdAt: at(9) }),
+        shop({ id: 'yesterday', createdBy: 'booker1', createdAt: DAY_START - 3600_000 }),
+        // Every shop that predates the field. Unknown is not today.
+        shop({ id: 'ancient', createdBy: 'booker1' }),
+      ],
+    }, at(18));
+    expect(w.shopsAdded).toBe(1);
+  });
+
+  test('a shop registered and then ordered from is ONE shop touched, not two', () => {
+    const w = computeWorkday({
+      ...base,
+      shops: [shop({ id: 'shopA', createdBy: 'booker1', createdAt: at(9) })],
+      orders: [order({ shopId: 'shopA', bookedAt: at(9, 20) })],
+    }, at(18));
+    expect(w.shopsTouched).toBe(1);
+    expect(w.shopsAdded).toBe(1);
+    expect(w.ordersBooked).toBe(1);
+  });
+});
+
+describe('computeWorkday — the app-open start', () => {
+  const openedAt = (ms: number): DayState => ({
+    date: '2026-08-09', staffId: 'booker1', routeStarted: false,
+    handedOver: false, handoverConfirmed: false, appOpenedAt: ms,
+  });
+
+  test('the app-open starts the day when it is earlier than the first booking', () => {
+    const w = computeWorkday({
+      ...base,
+      orders: [order({ bookedAt: at(10) })],
+      day: openedAt(at(8, 30)),
+    }, at(18));
+    expect(w.startedAt).toBe(at(8, 30));
+    expect(w.startSource).toBe('appOpen');
+    // The hour and a half of riding in that used to be invisible.
+    expect(w.activeMs).toBe(90 * 60_000);
+  });
+
+  test('an app-open AFTER the first booking changes nothing and claims nothing', () => {
+    const w = computeWorkday({
+      ...base,
+      orders: [order({ bookedAt: at(9) })],
+      // A re-install or a phone swap mid-round.
+      day: openedAt(at(13)),
+    }, at(18));
+    expect(w.startedAt).toBe(at(9));
+    expect(w.startSource).toBe('derived');
+  });
+
+  test("the rider's pressed button still beats it — that one is a real bracket", () => {
+    const w = computeWorkday({
+      ...base,
+      staffId: 'rider1',
+      orders: [order({ assignedTo: 'rider1', deliveredAt: at(11), status: 'delivered' })],
+      day: { ...openedAt(at(8, 45)), staffId: 'rider1', routeStarted: true, routeStartedAt: at(8) },
+    }, at(18));
+    expect(w.startedAt).toBe(at(8));
+    expect(w.startSource).toBe('explicit');
+  });
+
+  test('opening the app and doing nothing is not a working day', () => {
+    const w = computeWorkday({ ...base, day: openedAt(at(7)) }, at(18));
+    expect(w.startedAt).toBeNull();
+    expect(w.activeMs).toBe(0);
+    expect(w.startSource).toBe('none');
+    expect(w.stillWorking).toBe(false);
+  });
+
+  test("yesterday's app-open does not start today", () => {
+    const w = computeWorkday({
+      ...base,
+      orders: [order({ bookedAt: at(10) })],
+      day: openedAt(DAY_START - 7200_000),
+    }, at(18));
+    expect(w.startedAt).toBe(at(10));
+    expect(w.startSource).toBe('derived');
   });
 });
 

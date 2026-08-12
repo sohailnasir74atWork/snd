@@ -94,6 +94,16 @@ export interface RewardClaimInput {
 }
 
 export interface StoreApi {
+  /**
+   * Whose phone this is.
+   *
+   * Most screens never need it: the read rules already narrow orders to the
+   * booker who wrote them, so his own screens are his by construction. Shops
+   * are the exception — every shop in the company is readable by design, since
+   * the picker searches company-wide — so anything that asks "which of these
+   * did *I* do" has to say who I am. `'demo'` in preview.
+   */
+  myUid: string;
   // live data
   products: Product[];
   shops: Shop[];
@@ -199,6 +209,20 @@ export interface StoreApi {
   startRoute(): void;
   /** Tapped too early — allowed until the first close-out of the day. */
   undoStartRoute(): void;
+  /**
+   * Stamp the first app-open of this working day, once.
+   *
+   * Called by the store provider on mount, not by a screen — every screen would
+   * have to remember, and the one that forgot would be the one somebody opened
+   * first. Idempotent per device per day through an MMKV latch, so a phone
+   * restarted at noon does not overwrite the morning with a later time and no
+   * write goes out at all on the second open.
+   *
+   * This is not a clock-in. Nobody presses anything and it records when the app
+   * was opened, which `computeWorkday` reports as its own `startSource` rather
+   * than passing off as a measured start.
+   */
+  noteAppOpen(): void;
   /**
    * Has THAT rider started his route? (the van freeze — FR-6.2, cross-phone).
    *

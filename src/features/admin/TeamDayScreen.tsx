@@ -48,6 +48,7 @@ export function TeamDayScreen() {
         orders: store.orders,
         payments: store.payments,
         rewardClaims: store.rewardClaims,
+        shops: store.shops,
         day: store.staffDays.find(d => d.staffId === staffId),
       }, now))
       // Still out first — that is the only row anyone acts on. Then whoever
@@ -58,7 +59,7 @@ export function TeamDayScreen() {
         return (a.startedAt ?? 0) - (b.startedAt ?? 0);
       });
   }, [store.staffNames, store.orders, store.payments, store.rewardClaims, store.staffDays,
-      dayStartMs, dayEndMs, now]);
+      store.shops, dayStartMs, dayEndMs, now]);
 
   const working = people.filter(p => p.stillWorking);
   const started = people.filter(p => p.startedAt !== null);
@@ -89,12 +90,20 @@ export function TeamDayScreen() {
       <View style={styles.tagRow}>
         {w.stillWorking && <Tag label="OUT NOW" tone="success" />}
         {w.handedOver && <Tag label="HANDED OVER" tone="primary" />}
-        {/* The honest caveat: this start is the first shop, not the depot. */}
+        {/* The honest caveat, and which one it is. Neither start is a clock-in;
+            saying where the number came from is what keeps it from being read
+            as one. FROM FIRST SHOP is late by the whole ride in; FROM APP OPEN
+            is close, but it is when the phone was opened, not when he left. */}
         {w.startSource === 'derived' && <Tag label="FROM FIRST SHOP" tone="warn" />}
+        {w.startSource === 'appOpen' && <Tag label="FROM APP OPEN" tone="primary" />}
       </View>
 
       <View style={styles.stats}>
         {w.shopsTouched > 0 && <Stat label="shops" value={String(w.shopsTouched)} />}
+        {/* Kept out of `shops` rather than folded into it: finding a counter
+            nobody had sold to is the work this company grows on, and it is
+            invisible on a screen that only counts orders. */}
+        {w.shopsAdded > 0 && <Stat label="new shops" value={String(w.shopsAdded)} />}
         {w.ordersBooked > 0 && <Stat label="booked" value={String(w.ordersBooked)} />}
         {w.deliveries > 0 && <Stat label="delivered" value={String(w.deliveries)} />}
         {w.claims > 0 && <Stat label="claims" value={String(w.claims)} />}

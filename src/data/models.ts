@@ -135,6 +135,21 @@ export interface Shop {
    */
   counterStaff?: CounterStaff[];
   active: boolean;
+  /**
+   * When this shop was registered, and by whom.
+   *
+   * Both have been WRITTEN by `addShop` since the collection existed; neither
+   * was on this type, so nothing could read them and the snapshot never
+   * converted `createdAt` out of its Firestore Timestamp. Declared now because
+   * finding a new counter is work — often the most valuable work a booker does
+   * in a bazaar the company has never sold into — and until this it was the one
+   * kind of work that appeared on no screen at all.
+   *
+   * Optional because every shop created before the field existed has neither,
+   * and those shops still have to read correctly. Absent is not "added today".
+   */
+  createdAt?: number;
+  createdBy?: string;
 }
 
 export interface OrderItem {
@@ -320,6 +335,21 @@ export interface DayState {
    */
   routeStartedAt?: number;
   handedOverAt?: number;
+  /**
+   * The first time the app was opened on this working day.
+   *
+   * The rider brackets his own day with [Start route] and [Hand over]. The
+   * booker presses nothing, so his day was read off his first BOOKING — which
+   * is late by the whole ride into the bazaar and the first conversation at a
+   * counter, and on a morning spent registering new shops rather than booking
+   * it could be hours late or missing entirely.
+   *
+   * This is earlier and it is free: he opens the app on the way, not at the
+   * first counter. It is NOT a clock-in — nobody presses it, and it says when
+   * the app was opened, which is why `startSource` reports it as its own thing
+   * rather than dressing it up as a measured start.
+   */
+  appOpenedAt?: number;
 }
 
 /** Today as 'YYYY-MM-DD' in the phone's local time (§12.1). */

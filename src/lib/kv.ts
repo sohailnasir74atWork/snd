@@ -39,3 +39,25 @@ export function nextLocalRef(kind: SerialKind): string {
   kv.set(LOCAL_SERIAL_KEY, n);
   return localRef(kind, n);
 }
+
+/**
+ * First app-open of a working day — true once, then false all day.
+ *
+ * The latch is device-local and synchronous for the same reason the counter
+ * above is: the answer has to be right in the tick the app starts, before any
+ * listener has landed. A phone restarted at noon must not overwrite the
+ * morning's stamp with a later one, and the cheapest way to guarantee that is
+ * to never make the second write at all.
+ *
+ * One key per day, and the previous day's is cleared as the new one is set —
+ * so this can never grow past two entries, unlike the sweep's progress keys
+ * where the trade was argued the other way.
+ */
+export function markAppOpened(dayKey: string): boolean {
+  const key = `snd.appOpened.${dayKey}`;
+  if (kv.getBoolean(key)) return false;
+  const previous = kv.getAllKeys().filter(k => k.startsWith('snd.appOpened.') && k !== key);
+  previous.forEach(k => kv.remove(k));
+  kv.set(key, true);
+  return true;
+}

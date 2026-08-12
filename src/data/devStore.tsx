@@ -107,6 +107,9 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
 
   const api: StoreApi = {
     ...state,
+    // The demo is one person wearing three hats, so everything he creates is
+    // his. Matches the `'demo'` already stamped on pins and counter staff.
+    myUid: 'demo',
     ready: true,
     demo: true,
     // Nothing in preview mode ever leaves the phone, so nothing is ever queued.
@@ -270,11 +273,24 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
     },
 
     startRoute() {
-      setState(st => ({ ...st, day: { ...st.day, routeStarted: true } }));
+      // `routeStartedAt` too, exactly as firestoreStore does it. It was missing
+      // here, which is the two-stores-one-interface trap: Team Today read a
+      // real start time against Firestore and fell back to "FROM FIRST SHOP"
+      // in the demo, for no reason a screen could see.
+      setState(st => ({ ...st, day: { ...st.day, routeStarted: true, routeStartedAt: Date.now() } }));
     },
 
     undoStartRoute() {
       setState(st => ({ ...st, day: { ...st.day, routeStarted: false } }));
+    },
+
+    noteAppOpen() {
+      // No MMKV latch here: the demo store is in memory and dies with the
+      // preview, so "first open" is the first call by construction. Guarded on
+      // the value itself so a re-mount does not push the time later.
+      setState(st => (st.day.appOpenedAt
+        ? st
+        : { ...st, day: { ...st.day, appOpenedAt: Date.now() } }));
     },
 
     riderRouteStarted() {
@@ -427,6 +443,10 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
             : {}),
           // Stamped by the store, exactly as firestoreStore does it.
           ...(location ? { location: { ...location, savedAt: Date.now(), savedBy: 'demo' } } : {}),
+          // Same, and for the same reason: a shop registered in the demo has to
+          // count on the demo's own "new shops today" line, or the tile is the
+          // one thing on the screen that preview cannot show working.
+          createdAt: Date.now(), createdBy: 'demo',
         }],
       }));
     },
@@ -714,6 +734,12 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
         .reduce((s, f) => s + (f.kind === 'issue' ? f.amount : -f.amount), 0);
     },
   };
+
+  // Same trigger as firestoreStore, so the demo's Team Today reads the same
+  // way the real one does.
+  const noteOpen = React.useRef(api.noteAppOpen);
+  noteOpen.current = api.noteAppOpen;
+  React.useEffect(() => { noteOpen.current(); }, [state.day.date]);
 
   return <StoreContext.Provider value={api}>{children}</StoreContext.Provider>;
 }

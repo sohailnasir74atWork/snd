@@ -1305,6 +1305,20 @@ export function MyDayScreen() {
   /** Booked today FOR tomorrow — the work already lined up. */
   const forTomorrow = mineAll.filter(o =>
     (o.deliveryDate ?? today) > today && o.status !== 'cancelled' && o.status !== 'returned');
+  /**
+   * Shops HE registered today.
+   *
+   * Filtered by uid, unlike everything else on this screen. Orders arrive
+   * already narrowed — the read rule is `bookedBy == request.auth.uid` — but
+   * every shop in the company is readable on purpose, because the picker
+   * searches company-wide, so without `myUid` this would count the whole
+   * team's new shops and tell a man he had found eleven counters on a morning
+   * he found two.
+   */
+  const newShopsToday = store.shops.filter(s =>
+    s.createdBy === store.myUid
+    && typeof s.createdAt === 'number'
+    && s.createdAt >= startOfDay.getTime()).length;
 
   /**
    * Commission, split into money that is his and money that is not yet.
@@ -1367,7 +1381,16 @@ export function MyDayScreen() {
     <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView style={styles.screen} contentContainerStyle={styles.screenContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.sub}>
-          {mine.length} orders today{vis.bookerSeesOwnTotals ? ` • Rs ${todayTotal.toLocaleString()}` : ''}
+          {mine.length} orders today
+          {/* Not behind `bookerSeesOwnTotals`: that switch withholds MONEY, and
+              how many counters he found is not money. Hidden at zero rather
+              than printed as "0 new shops" — a man who worked an established
+              round all morning did nothing wrong and does not need a nought
+              held up to him. */}
+          {newShopsToday > 0
+            ? ` • ${newShopsToday} new ${newShopsToday === 1 ? 'shop' : 'shops'}`
+            : ''}
+          {vis.bookerSeesOwnTotals ? ` • Rs ${todayTotal.toLocaleString()}` : ''}
         </Text>
 
         {/* Today against yesterday, because a number on its own says nothing.

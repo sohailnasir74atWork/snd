@@ -11,13 +11,13 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 17 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
+| Branch | **`booker-screens-pass`**, 19 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
 | Version | `versionCode 24` / `versionName "2.8"` — built 2026-08-11, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
-| Unit tests | **248 / 248**, 16 suites |
+| Unit tests | **256 / 256**, 16 suites |
 | Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
 | Device | debug build driven on the emulator (§1b); §1d driven on the emulator in **both debug and a real release build** (R8 on — see §4.0b). ❗ **Nothing in §1c or §1d has been on a real phone** — see §4.1 before publishing |
@@ -179,6 +179,101 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1k. Finding a shop is work, and a day starts before the first order
+
+2026-08-12, the owner's two asks. 256 tests (up 8), 0 tsc, 0 lint errors, 243
+rules tests — **no rules change was needed**, see below. The new-shop count was
+driven on the emulator; the app-open start was not.
+
+### New shops, counted
+
+A booker sent into a bazaar the company has never sold into can spend a morning
+finding counters and book nothing, and every screen in the app read that as a
+man who did not turn up.
+
+`addShop` has written `createdAt: serverTimestamp()` and `createdBy` since the
+collection existed. Neither was on the `Shop` type, so nothing could read them
+and the snapshot never converted `createdAt` out of its Firestore Timestamp —
+the data was there the whole time and unreachable. Both are declared now,
+converted, and stamped identically in `devStore` so preview shows the same line.
+
+- **The booker's My Day** says *"3 orders today • 2 new shops • Rs 12,000"*.
+  Hidden at zero: a man who worked an established round all morning did nothing
+  wrong and does not need a nought held up to him. NOT behind
+  `bookerSeesOwnTotals` — that switch withholds money, and how many counters he
+  found is not money.
+- **The owner's Team Today** gets a `new shops` stat per person, from the same
+  `computeWorkday` derivation rather than a second count in a screen.
+
+> ⚠️ **This is the first screen that had to ask "which of these did *I* do".**
+> Orders arrive already narrowed — the read rule is `bookedBy == uid` — but
+> every shop in the company is readable on purpose, because the shop picker
+> searches company-wide. So `StoreApi` now carries **`myUid`**. Without it the
+> tile counts the whole team's shops and tells a man he found eleven counters
+> on a morning he found two. That was harmless when a round had one booker and
+> stopped being harmless on 2026-08-10 (§1a).
+
+**Registering a shop is now a work stamp**, so it moves `startedAt` /
+`lastActionAt` / `shopsTouched`, not just its own counter. A shop registered and
+then ordered from is ONE shop touched, not two — there is a test.
+
+### The day starts when the app opens, not at the first order
+
+The rider brackets his day with [Start route] and [Hand over]. The booker
+presses nothing, so his day was read off his first BOOKING — late by the whole
+ride into the bazaar and the first conversation at a counter.
+
+`DayState.appOpenedAt` is stamped once per working day by the store provider on
+mount — not by a screen, because the screen that forgot would be whichever one
+the app happened to land on that morning. The latch is **MMKV, not the day
+document**: the day arrives over a listener that has not necessarily landed at
+app start, so trusting `day.appOpenedAt` would write a later time over the
+morning's on every cold start with no signal, which is the exact morning this
+is supposed to be right about.
+
+- **No rules change.** `days` never whitelisted keys — it allows any write from
+  the owning staff except `handoverConfirmed`. Checked before writing the code,
+  and `npm run test:rules` is still 243.
+- **It is used only when it is genuinely earlier.** A man who books an order
+  and opens the app afterwards — a re-install or a phone swap mid-round —
+  started at the order, and `startSource` does not claim otherwise.
+- **An app-open with no work is not a working day.** Opening the app from bed
+  is exactly what got the clock-in button rejected in the first place.
+- `startSource` gained **`appOpen`**, and Team Today prints `FROM APP OPEN`
+  beside it the way it already prints `FROM FIRST SHOP`. Neither is a clock-in,
+  and saying where the number came from is what stops it being read as one.
+
+> **This is not covert, and covert is not available.** The owner asked whether a
+> man's hours could be tracked without his knowing. On Android they cannot:
+> background location makes the user pick "Allow all the time" in Settings, a
+> location foreground service must show a notification that cannot be
+> dismissed, Android 12+ puts an indicator in the status bar on every read, and
+> Play's background-location policy needs a declaration and a disclosure screen
+> shown BEFORE the prompt. Misdeclaring risks the developer account, and this
+> keystore signs the whole Apptech portfolio (§3). What is here is the honest
+> version of the same question, and it costs no permission at all.
+
+### Also, and it is the trap this file keeps warning about
+
+`devStore.startRoute` never wrote `routeStartedAt`. Team Today therefore read a
+real start time against Firestore and fell back to `FROM FIRST SHOP` in preview,
+for no reason any screen could see — two store implementations, one interface,
+and the half nobody was looking at was wrong. Fixed in the same pass.
+
+### What was checked
+
+✅ Driven on `Pixel9_API35_ARM` (debug build, demo store, 2026-08-12):
+registered *Rehman Store* in Cantt and My Day went to **"0 orders today • 1 new
+shop • Rs 0"** on the same tick, singular correct.
+
+❗ **The app-open start has not been seen on a screen.** It is covered by six
+unit tests and by nothing else: preview keeps one shared day document with no
+`staffId`, so Team Today has no row to attach it to, and the real path needs a
+signed-in staff member across a real morning. The first thing to check against
+Firestore is that `appOpenedAt` lands on `days/{uid}_{date}` at all.
 
 ---
 
