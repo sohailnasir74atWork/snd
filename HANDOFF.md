@@ -11,7 +11,7 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 18 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
+| Branch | **`booker-screens-pass`**, 17 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
 | Version | `versionCode 24` / `versionName "2.8"` — built 2026-08-11, see §5 |

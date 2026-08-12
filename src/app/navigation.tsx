@@ -729,11 +729,22 @@ const styles = StyleSheet.create({
   btnDisabled: { backgroundColor: color.textFaint, shadowOpacity: 0, elevation: 0 },
   secondaryBtnDisabled: { borderColor: color.border, backgroundColor: color.surfaceAlt },
   secondaryBtnTextDisabled: { color: color.textFaint },
-  // The address sits under the button rather than inside it: the button says
-  // who you are, this says which account that is, without crowding the label.
+  /**
+   * The address sits under the button rather than inside it: the button says
+   * who you are, this says which account that is, without crowding the label.
+   *
+   * The spacing is what makes that true, and it used to say the opposite. With
+   * 14 above (the button's own margin plus this one) and 4 below, the line was
+   * nearer to "Use a different account" than to the button it describes — so
+   * it read as a caption for the wrong control, and floated in the gap
+   * belonging to neither. It is now roughly 1:2, which groups it upward: the
+   * 10 above is the button's margin alone, kept rather than tightened further
+   * because the CTA's shadow spreads about that far and text any closer sits
+   * inside the glow.
+   */
   accountLine: {
     fontSize: font.sub, color: color.textSub, textAlign: 'center',
-    marginTop: space.xs, marginBottom: space.xs,
+    marginBottom: space.xl,
   },
   /**
    * The fork, as two cards rather than two pills.
