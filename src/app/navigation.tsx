@@ -464,6 +464,24 @@ export function StaffSignInScreen({
   );
 }
 
+/**
+ * Who the Continue button says you are.
+ *
+ * The name, when there is one — that is what a person recognises, and it is
+ * the whole reason the address no longer has a line of its own underneath.
+ *
+ * The fallbacks exist because a stored account without a name used to produce a
+ * button reading only "Continue", which identifies nobody on a phone two
+ * brothers share. A staff member gets the pair off his slip rather than the
+ * synthesised `ali@alitraders.snd.app`, which is meaningless on sight and was
+ * never shown to him anywhere else.
+ */
+function whoLabel(a: { email: string; name: string; loginId?: string; companyCode?: string }): string {
+  if (a.name.trim()) return a.name;
+  if (a.loginId) return a.companyCode ? `${a.loginId} · ${a.companyCode}` : a.loginId;
+  return a.email;
+}
+
 export function WelcomeScreen({
   onSignIn,
   onCreateBusiness,
@@ -535,17 +553,23 @@ export function WelcomeScreen({
               <View style={styles.btnRow}>
                 {busy ? <ActivityIndicator size="small" color={color.onDark} /> : null}
                 <Text style={styles.primaryBtnText} numberOfLines={1}>
-                  {lastAccount?.name ? `Continue as ${lastAccount.name}` : 'Continue'}
+                  {`Continue as ${whoLabel(lastAccount)}`}
                 </Text>
               </View>
             </Pressable>
-            {/* A staff address is synthesised and meaningless on sight. What
-                the man recognises is the pair he was handed on a slip. */}
-            <Text style={styles.accountLine} numberOfLines={1}>
-              {lastAccount?.kind === 'staff' && lastAccount.loginId
-                ? `${lastAccount.loginId} · ${lastAccount.companyCode}`
-                : lastAccount?.email}
-            </Text>
+            {/* No account line under the button.
+
+                The address used to sit here, and it was the wrong shape for
+                the screen: a lone line of grey text between a solid CTA and an
+                outlined button reads as a gap rather than as a label, whichever
+                way it is spaced. The button already names the person, and
+                "Use a different account" is directly underneath for anyone it
+                is not — so the line was buying identification the button had
+                already given.
+
+                It is inside the button now for the one case that needs it —
+                a stored account with no name, which used to render a button
+                that said only "Continue" and identified nobody. */}
             <Pressable
               style={[styles.secondaryBtn, busy && styles.secondaryBtnDisabled]}
               disabled={busy}
@@ -729,23 +753,11 @@ const styles = StyleSheet.create({
   btnDisabled: { backgroundColor: color.textFaint, shadowOpacity: 0, elevation: 0 },
   secondaryBtnDisabled: { borderColor: color.border, backgroundColor: color.surfaceAlt },
   secondaryBtnTextDisabled: { color: color.textFaint },
-  /**
-   * The address sits under the button rather than inside it: the button says
-   * who you are, this says which account that is, without crowding the label.
-   *
-   * The spacing is what makes that true, and it used to say the opposite. With
-   * 14 above (the button's own margin plus this one) and 4 below, the line was
-   * nearer to "Use a different account" than to the button it describes — so
-   * it read as a caption for the wrong control, and floated in the gap
-   * belonging to neither. It is now roughly 1:2, which groups it upward: the
-   * 10 above is the button's margin alone, kept rather than tightened further
-   * because the CTA's shadow spreads about that far and text any closer sits
-   * inside the glow.
-   */
-  accountLine: {
-    fontSize: font.sub, color: color.textSub, textAlign: 'center',
-    marginBottom: space.xl,
-  },
+  // `accountLine` lived here. The address under the Continue button was
+  // removed on 2026-08-12: between a solid CTA and an outlined button, a lone
+  // line of grey text reads as a gap however it is spaced, and the button
+  // already names the person. The two buttons now sit on the primary's own
+  // 10px margin, the same as every other stacked pair on this screen.
   /**
    * The fork, as two cards rather than two pills.
    *
