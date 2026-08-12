@@ -1550,6 +1550,46 @@ export function FirestoreStoreProvider({
       batch.commit().catch(writeRejected(`Void ${p.receiptNo}`));
     },
 
+    restorePayment(paymentId) {
+      const p = payments.find(pp => pp.id === paymentId);
+      if (!p || !p.voided) return;
+      const batch = writeBatch(db);
+      /**
+       * `voidedAt`/`voidedBy` are deliberately LEFT ON the document.
+       *
+       * The rules whitelist exactly five keys on an admin update —
+       * confirmed, voided, voidedBy, voidedAt, orderIds — so there is nowhere
+       * to record who undid it without a rules change, and a rules change
+       * would make this build depend on a deploy landing first. The backend
+       * may run ahead of the app safely; the app may not run ahead of the
+       * backend.
+       *
+       * So `voided: false` with a `voidedAt` still present is the record: this
+       * receipt was voided once, at that time, by that person, and the void
+       * was undone. Reading it as "not voided" is correct — `voided` is the
+       * only flag anything tests.
+       */
+      batch.update(doc(db, `${base}/payments/${p.id}`), { voided: false });
+      // Mirrors voidPayment's own condition. An unconfirmed exception payment
+      // never moved the khata, so undoing its void must not move it either.
+      const khataWasMoved = !p.exception || p.confirmed;
+      if (khataWasMoved) {
+        batch.update(doc(db, `${base}/shops/${p.shopId}`), { outstanding: increment(-p.amount) });
+        for (const a of p.orderIds ?? []) {
+          const o = orders.find(oo => oo.id === a.orderId);
+          if (!o) continue; // 'old-khata' pseudo-bill has no order doc
+          const newPaid = o.amountPaid + a.amount;
+          batch.update(doc(db, `${base}/orders/${o.id}`), {
+            amountPaid: increment(a.amount),
+            paymentStatus: newPaid <= 0
+              ? 'unpaid'
+              : newPaid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' : 'partial',
+          });
+        }
+      }
+      batch.commit().catch(writeRejected(`Restore ${p.receiptNo}`));
+    },
+
     cashWithStaff() {
       return payments.filter(p => !p.confirmed && !p.voided).reduce((s, p) => s + p.amount, 0);
     },

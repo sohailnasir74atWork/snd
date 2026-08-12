@@ -570,6 +570,37 @@ export function DevStoreProvider({ children }: { children: React.ReactNode }) {
       });
     },
 
+    // The exact inverse, written twice deliberately — see the header on the
+    // two stores. `voidedAt`/`voidedBy` stay on the row for the same reason
+    // they do against Firestore: they are the record that a void happened and
+    // was undone, and `voided` is the only flag anything tests.
+    restorePayment(paymentId) {
+      setState(st => {
+        const p = st.payments.find(pp => pp.id === paymentId);
+        if (!p || !p.voided) return st;
+        const khataWasMoved = !p.exception || p.confirmed;
+        return {
+          ...st,
+          payments: st.payments.map(pp => (pp.id === paymentId ? { ...pp, voided: false } : pp)),
+          shops: khataWasMoved
+            ? st.shops.map(s => (s.id === p.shopId ? { ...s, outstanding: s.outstanding - p.amount } : s))
+            : st.shops,
+          orders: khataWasMoved
+            ? st.orders.map(o => {
+                const a = (p.orderIds ?? []).find(x => x.orderId === o.id);
+                if (!a) return o;
+                const newPaid = o.amountPaid + a.amount;
+                return {
+                  ...o, amountPaid: newPaid,
+                  paymentStatus: newPaid <= 0 ? 'unpaid' as const
+                    : newPaid >= (o.billedTotals?.grandTotal ?? 0) ? 'paid' as const : 'partial' as const,
+                };
+              })
+            : st.orders,
+        };
+      });
+    },
+
     // Mirrors firestoreStore exactly, clearing included.
     setLogo(url) {
       setState(st => ({ ...st, settings: { ...st.settings, logoUrl: url ?? undefined } }));

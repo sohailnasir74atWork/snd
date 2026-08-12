@@ -338,6 +338,27 @@ export function ReportsScreen() {
                         )
                       } />
                   )}
+                  {/* The way back, and it did not exist until 2026-08-12.
+                      Voiding was one tap and permanent: the amount went onto
+                      the shop's khata and nothing could take it off again, so
+                      a shop that had paid showed as owing on the owner's own
+                      Action screen with no screen anywhere saying why. Same
+                      busy latch as Void for the same reason — the local flag
+                      lags the listener, and a second confirm would take the
+                      amount off the khata twice. */}
+                  {p.voided && (
+                    <Chip small label="Undo void"
+                      onPress={isBusy(`unvoid:${p.id}`) ? undefined : () =>
+                        Alert.alert(
+                          'Put this receipt back?',
+                          `${p.receiptNo} — Rs ${p.amount.toLocaleString()}. It counts as paid again and comes off the shop's khata.`,
+                          [
+                            { text: 'Leave it voided', style: 'cancel' },
+                            { text: 'Put it back', onPress: () => run(`unvoid:${p.id}`, () => store.restorePayment(p.id)) },
+                          ],
+                        )
+                      } />
+                  )}
                 </View>
               </View>
             ))}

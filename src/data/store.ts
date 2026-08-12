@@ -341,6 +341,22 @@ export interface StoreApi {
    * khata is restored and the FIFO allocations are un-applied.
    */
   voidPayment(paymentId: string): void;
+  /**
+   * Undo a void — the receipt counts again and the shop stops owing it.
+   *
+   * Added 2026-08-12 because a void was one tap and permanent. An owner voided
+   * a Rs 1,360 receipt 38 minutes after his rider collected it, and the app put
+   * that money straight back onto the shop's khata with no way to take it off
+   * again: `voidPayment` returns early on an already-voided row, nothing else
+   * writes the flag, and the only remaining routes were inventing a second
+   * payment the shop never made or editing the database by hand. The shop then
+   * showed as owing money it had paid, on the owner's own Action screen, with
+   * nothing on any screen saying why.
+   *
+   * Exactly the inverse of the void, so the two can be pressed alternately
+   * forever without the khata drifting.
+   */
+  restorePayment(paymentId: string): void;
   updateSettings(patch: Partial<CompanySettings>): void;
   /** Invite a Google address. The person is "Invited" until they sign in. */
   addEmployee(email: string, name: string, role: Employee['role']): Promise<void>;
