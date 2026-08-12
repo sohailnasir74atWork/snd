@@ -1,4 +1,6 @@
-Verified every claim below against the files (and against `node_modules/react-native-maps` and `@react-native-community/geolocation` native sources). Line numbers are as of the working tree today.
+Verified every claim below against the files (and against `node_modules/react-native-maps` and `@react-native-community/geolocation` native sources). Line numbers are as of `versionCode 23`, the tree this was written against.
+
+> ⚠️ **Line numbers in `location.ts`, `geo.ts`, `AreaSweepScreen.tsx`, `PinShopScreen.tsx` and `ShopPlace.tsx` have all moved since** — commits 1 and 2 landed in `versionCode 24` and findings 9 and 10 were fixed on 2026-08-12. Read them as pointers to the right function, not the right line. The mechanism in each finding is what was verified; that has not moved.
 
 ---
 
@@ -323,6 +325,8 @@ Raise the threshold at `:173` from 30 s to **120 s** and move the suffix out of 
 ### 9. Re-pinning never reads the phone, shows a months-old accuracy as a live reading, and Save launders the pin as freshly verified
 **`PinShopScreen.tsx:36`, `:60`, `:67`, `:135-141`, `:75`** · severity: **wrong data on a permanent record**
 
+> ✅ **FIXED 2026-08-12**, as prescribed below: `fresh` provenance flag, `usable` via `isPlaced`, panel text branching on provenance before quality, "Keep this spot" label, and the `if (!moved && !fresh) { onCancel(); return; }` guard in `save()`. Static-green only — no device. Finding 12 (the camera never follows an explicit read) is still open on this same screen.
+
 `useState(!existing)` plus `if (!existing) void locate();` mean that when the screen is opened to **correct** a pin — every "Move pin" entry point: `RiderScreens.tsx:92` and `BookerScreens.tsx:290`, both `existing={pinningShop.location ?? null}` — the GPS is never read. `poor` (`:67`) is computed from the **stored** `accuracyM` and `:140` renders, in the present tense, *"Good fix (±8 m). Drag the pin if it is off the door."* — a sentence about a reading somebody else took months ago somewhere else.
 
 Press Save without dragging and `save()` passes `existing` straight through to `firestoreStore.tsx:1212-1216`, which writes `{ ...fix, savedAt: Date.now(), savedBy: user.uid }`. The pin has not moved, but it now reads as just-verified by this person today — and `models.ts:79-84` says `savedAt` exists precisely so the owner can see how old a pin is. The rider who opened this screen *because* the pin was wrong is shown a screen telling him it is right, and then quietly resets the only staleness signal the owner has.
@@ -362,6 +366,8 @@ Also relabel the primary button to "Keep this spot" while `!fresh && !moved`, so
 
 ### 10. A photo upload that resolves after "Save shop" attaches the previous shop's shopfront to the next one
 **`ShopPlace.tsx:36`** · severity: **wrong data on a permanent record**
+
+> ✅ **FIXED 2026-08-12**: generation ref in `useShopPhoto`, bumped on unmount, guarding both `onUrl` and the Alert. `reset` was deliberately NOT added to the return — `NewShopPlaceChips` is the only new-shop call site and `saveShop` unmounts it (`setAddingShop(false)`, `BookerScreens.tsx:352`), so the unmount bump already disowns the in-flight upload and an exported `reset` nobody calls is API surface that will rot. Add it the day a form survives its own save. Static-green only — no device.
 
 `useShopPhoto`'s async IIFE calls `onUrl(url)` with no generation or mounted check. In the new-shop form `onPhotoUrl` is `setNewPhotoUrl` (`BookerScreens.tsx:611`) — state on the **parent**, which stays mounted when `saveShop` closes the card. `saveShop` (`BookerScreens.tsx:340-354`) never consults `capturing`: it reads `newPhotoUrl` (still null), calls `addShop` with `photoUrl: undefined`, and resets the form. The upload then resolves and sets `newPhotoUrl` to shop A's CDN URL. The next "Add shop" renders "✓ Photo added" and shop B is created carrying shop A's shopfront, with nothing downstream able to tell.
 
@@ -523,7 +529,9 @@ return orderedIds.map(id => byId.get(id)).filter((s): s is Shop => !!s && s.acti
 
 ## Ordered action list
 
-**Commit 1 — "Location works on Android 12+" (ship first, alone, and test on a real Xiaomi with a fresh install)**
+> **Status, 2026-08-12.** Commits 1 and 2 shipped in `versionCode 24` (`88e897f`). Commit 4 shipped items 13 and 15 — findings 9 and 10, the two that write wrong data — but **not** item 14 (finding 12, the camera). Commits 3 and 5 are untouched. Open: findings 6, 7, 8, 11, 12, 13, 14, 15. Nothing since `versionCode 24` is in any build, and none of it has been on a device.
+
+**Commit 1 — "Location works on Android 12+" (ship first, alone, and test on a real Xiaomi with a fresh install)** — ✅ shipped in `versionCode 24`
 1. `location.ts:71-102` — `ensurePermission` → `requestMultiple([FINE, COARSE])`, return `'fine' | 'coarse'`. *(finding 1)*
 2. `location.ts:111-123` — `getCurrentFix` uses the granularity; widen the retry to `timeout || unavailable`. *(finding 2)*
 3. `location.ts:165-168` — stop claiming "Location is switched off" for `POSITION_UNAVAILABLE`. *(finding 2)*
@@ -531,7 +539,7 @@ return orderedIds.map(id => byId.get(id)).filter((s): s is Shop => !!s && s.acti
 5. `location.ts:209-212` — forward codes 1 and 2 via `onError` and `clearWatch`; keep code 3 silent. *(finding 4)*
 6. `AreaSweepScreen.tsx:321` — render `error` in the sweep header; clear it conditionally at `:142`. *(finding 4)*
 
-**Commit 2 — "No coordinate reaches native unvalidated"**
+**Commit 2 — "No coordinate reaches native unvalidated"** — ✅ shipped in `versionCode 24`
 7. `geo.ts` — add `isPlaced()`; use it at `geo.ts:81`. *(finding 5)*
 8. `AreaSweepScreen.tsx:103, 125, 164-168, 178-180, 295-301, 368` and `PinShopScreen.tsx:35-36, 60`, `ShopPlace.tsx:72-73` — apply it. *(findings 5, 9)*
 
@@ -541,10 +549,10 @@ return orderedIds.map(id => byId.get(id)).filter((s): s is Shop => !!s && s.acti
 11. `AreaSweepScreen.tsx:171` — `arrived` gates on accuracy. *(finding 8a)*
 12. `AreaSweepScreen.tsx:138-147, 173, 318-320` — 15 s tick inside the focus effect, 120 s threshold, staleness suffix in **both** branches. *(finding 8b)*
 
-**Commit 4 — "Pins say what they are"**
-13. `PinShopScreen.tsx:36, 48, 60, 69-76, 135-141` — `fresh` provenance flag, honest panel text, no re-stamp when nothing was measured, "Keep this spot" label. *(finding 9)*
-14. `PinShopScreen.tsx:46-54, 89` — `mapRef` + guarded one-shot `animateToRegion` on an explicit read. *(finding 12)*
-15. `ShopPlace.tsx:26-48` — generation ref on `useShopPhoto`, guarding both `onUrl` and the Alert. *(finding 10)*
+**Commit 4 — "Pins say what they are"** — partly done 2026-08-12, not in any build
+13. ✅ `PinShopScreen.tsx:36, 48, 60, 69-76, 135-141` — `fresh` provenance flag, honest panel text, no re-stamp when nothing was measured, "Keep this spot" label. *(finding 9)*
+14. ⬜ `PinShopScreen.tsx:46-54, 89` — `mapRef` + guarded one-shot `animateToRegion` on an explicit read. *(finding 12)*
+15. ✅ `ShopPlace.tsx:26-48` — generation ref on `useShopPhoto`, guarding both `onUrl` and the Alert. *(finding 10)*
 
 **Commit 5 — "Counts and caps"**
 16. `AreaSweepScreen.tsx:413` — `skipNext` rotates instead of marking done. *(finding 13)*

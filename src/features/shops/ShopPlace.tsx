@@ -25,20 +25,42 @@ import type { Shop } from '../../data/models';
  */
 export function useShopPhoto() {
   const [capturing, setCapturing] = React.useState(false);
+  /**
+   * Which form asked for this photo.
+   *
+   * The camera returns as soon as it closes; the upload runs after it. On the
+   * NEW-shop form that gap is long enough to press "Save shop", and the
+   * handler there reads `newPhotoUrl` — still null — so the shop is created
+   * without a photo and the form is reset. The upload then resolves into the
+   * parent's state, and the NEXT shop the booker adds is created carrying the
+   * previous shop's shopfront, with nothing downstream able to tell.
+   *
+   * Closing that card unmounts these chips, so bumping the generation on
+   * unmount is enough to disown the in-flight upload. The existing-shop path
+   * is deliberately unaffected: its `onUrl` closes over a shop id, so a late
+   * resolve there writes to the right document and is correct behaviour.
+   */
+  const gen = React.useRef(0);
+  React.useEffect(() => () => { gen.current++; }, []);
   const capture = React.useCallback((onUrl: (url: string) => void) => {
     if (capturing) return;
     setCapturing(true);
+    const mine = gen.current;
     void (async () => {
       try {
         const base64 = await capturePhotoBase64();
         if (base64 === null) return; // a real cancel, nothing to say
         const url = await uploadPhotoBase64(base64, 'shop');
-        onUrl(url);
+        if (gen.current === mine) onUrl(url);
       } catch (e) {
-        Alert.alert(
-          'Photo not saved',
-          `${e instanceof Error ? e.message : String(e)}\n\nThe shop is fine — add the photo next time you have signal.`,
-        );
+        // The alert is guarded too: a failure that belongs to a form the
+        // person has already left should not pop over the next shop's screen.
+        if (gen.current === mine) {
+          Alert.alert(
+            'Photo not saved',
+            `${e instanceof Error ? e.message : String(e)}\n\nThe shop is fine — add the photo next time you have signal.`,
+          );
+        }
       } finally {
         setCapturing(false);
       }
