@@ -787,6 +787,29 @@ the box would find the default back on his next visit, and on his next bill.
 (nothing else has a bill), newest first, Today / 7 days / All, tick and
 download. `Open full bill` per row still produces the rider's real A5 invoice.
 
+> **2026-08-12 — the rows were made compact, and PROVISIONAL made legible.**
+> The owner asked what the orange PROVISIONAL pill meant, which is the answer:
+> a tag nobody can decode is decoration, and this one is about the number
+> printed on a shopkeeper's paper. Three changes, all driven on the emulator
+> against the live company:
+>
+> - **Edit / Open-full moved under a chevron**, one card open at a time, the
+>   way Route does it (§1b). They were a third row on every card, permanently,
+>   for two controls the owner touches rarely — while the job he came for is
+>   ticking boxes. Nine bills filled two screens; they now fit on one.
+> - **The document type is a HEADING, not a tag on every row.** In the To-print
+>   tab, which sorts undelivered first, `FOR THE RIDER` was nine identical
+>   pills in a column. It is `For the rider (9)` once, with the count. The
+>   Printed tab keeps the per-row tag: it sorts by print time, so the two kinds
+>   interleave and there are no blocks to head.
+> - **The sub line is kept to ONE line at this width** — "deliver tomorrow"
+>   became "tomorrow", because it wrapped, and a second line puts back most of
+>   the height the collapse just saved. The heading already says whose they are.
+> - `provisional` now sits next to the number it describes, and expanding the
+>   row explains it in a sentence: booked with no internet, the number came
+>   from the phone, it is unique and safe to print, it sits outside the
+>   `ORD-2026` run. See §4.14 — the promotion half is still not built.
+
 - **`paidAgainstOrder`** (`lib/order.ts`) sums every non-voided payment's
   allocation to that order. It counts UNCONFIRMED payments deliberately:
   `confirmed` means the owner has the cash, not that the shop paid. Ignoring

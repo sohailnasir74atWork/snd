@@ -12,9 +12,9 @@
  * shops' copies should not have to throw away thirty-seven pages to get them.
  */
 import React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
+  Card, Chip, EmptyState, Icon, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag,
   color, font, space,
 } from '../../components/ui';
 import { useNeed, useStore } from '../../data/store';
@@ -92,6 +92,15 @@ export function BillsScreen({ navigation }: { navigation?: { navigate: (r: strin
    */
   const [loadSheet, setLoadSheet] = React.useState(true);
   const [picked, setPicked] = React.useState<readonly string[]>([]);
+  /**
+   * One card open at a time, the way Route does it.
+   *
+   * Every row used to carry Edit and Open-full permanently, which is a third
+   * line of card on every bill for two controls the owner touches rarely — and
+   * the job he came here for is ticking boxes. Nine bills filled two screens;
+   * a forty-bill day was eight. Collapsed, the same nine fit on one.
+   */
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
   const allBills = store.orders.filter(isPrintable);
@@ -276,65 +285,128 @@ export function BillsScreen({ navigation }: { navigation?: { navigate: (r: strin
             )}
           </View>
 
-          {bills.map(o => {
+          {bills.map((o, i) => {
             const shop = shopFor(o.shopId);
             const totals = totalsFor(o);
             const paid = paidAgainstOrder(store.payments, o.id);
             const owed = totals.grandTotal - paid;
             const on = picked.includes(o.id);
             const no = o.invoiceNo ?? o.orderNo;
+            const open = expandedId === o.id;
+            /**
+             * The document type, said ONCE per group instead of on every row.
+             *
+             * It used to be a tag on every card — and in the To-print tab,
+             * which sorts undelivered first, that is nine identical pills in a
+             * column telling the owner nothing. The distinction still matters,
+             * because one pile goes to the rider and the other gets filed, so
+             * it is a heading now: same fact, one line, and it holds the count.
+             *
+             * Only in this tab. Printed sorts by when it was printed, so the
+             * two kinds interleave and there are no blocks to head — that tab
+             * keeps the per-row tag below.
+             */
+            const heading = tab === 'todo'
+              && (i === 0 || isDelivered(bills[i - 1]) !== isDelivered(o));
             return (
-              <Card key={o.id}>
-                <ListRow
-                  icon={on ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                  tint={on ? color.primary : color.textFaint}
-                  title={shop?.name ?? 'Unknown shop'}
-                  sub={`${no} · ${totalQty(o.items, isDelivered(o))} pcs${
-                    isDelivered(o)
-                      ? owed > 0 ? ` · Rs ${owed.toLocaleString()} owed` : ' · paid'
-                      : ` · ${o.deliveryDay === 'today' ? 'deliver today' : 'deliver tomorrow'}`}`}
-                  right={<Money amount={totals.grandTotal} bold />}
-                  onPress={() => toggle(o.id)}
-                />
-                <View style={styles.rowFoot}>
-                  {/* Which document this row will print. The owner is handing
-                      one pile to the rider and filing the other; they must not
-                      look alike on screen either. */}
-                  <Tag
-                    label={isDelivered(o) ? 'BILL' : 'FOR THE RIDER'}
-                    tone={isDelivered(o) ? 'success' : 'primary'}
+              <React.Fragment key={o.id}>
+                {heading && (
+                  <SectionLabel>
+                    {isDelivered(o)
+                      ? `Bills to file (${bills.filter(isDelivered).length})`
+                      : `For the rider (${bills.filter(b => !isDelivered(b)).length})`}
+                  </SectionLabel>
+                )}
+                <Card>
+                  <ListRow
+                    icon={on ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                    tint={on ? color.primary : color.textFaint}
+                    title={shop?.name ?? 'Unknown shop'}
+                    // "provisional number" rides next to the number it is
+                    // about, rather than as a pill at the far end of the card.
+                    // The owner who asked what the orange tag meant had it in
+                    // front of him and it explained nothing where it sat.
+                    // Kept to ONE line at this width. It wrapped at "deliver
+                    // tomorrow", and a second line puts back most of the height
+                    // the collapse just saved. The heading above already says
+                    // these are the rider's, so the verb was carrying nothing.
+                    sub={`${no}${isProvisional(no) ? ' · provisional' : ''} · ${
+                      totalQty(o.items, isDelivered(o))} pcs · ${
+                      isDelivered(o)
+                        ? owed > 0 ? `Rs ${owed.toLocaleString()} owed` : 'paid'
+                        : o.deliveryDay === 'today' ? 'today' : 'tomorrow'}`}
+                    right={(
+                      <View style={styles.rowRight}>
+                        <Money amount={totals.grandTotal} bold />
+                        {/* Its own Pressable, not the card's: the card's job is
+                            ticking, which is what the owner came here to do
+                            forty times in a row. Opening the actions is the
+                            rare one and pays for its own target. */}
+                        <Pressable
+                          onPress={() => setExpandedId(open ? null : o.id)}
+                          hitSlop={12}
+                          style={styles.moreBtn}>
+                          <Icon
+                            name={open ? 'chevron-up' : 'chevron-down'}
+                            size={22}
+                            color={color.textFaint}
+                          />
+                        </Pressable>
+                      </View>
+                    )}
+                    onPress={() => toggle(o.id)}
                   />
-                  {isProvisional(no) && <Tag label="PROVISIONAL" tone="warn" />}
-                  {tab === 'done' && (
-                    <Text style={styles.doneAt}>Printed {daysAgo(log[o.id] ?? now, now)}</Text>
-                  )}
+                  {open && (
+                    <View style={styles.rowFoot}>
+                      {tab === 'done' && (
+                        <Tag
+                          label={isDelivered(o) ? 'BILL' : 'FOR THE RIDER'}
+                          tone={isDelivered(o) ? 'success' : 'primary'}
+                        />
+                      )}
+                      {tab === 'done' && (
+                        <Text style={styles.doneAt}>Printed {daysAgo(log[o.id] ?? now, now)}</Text>
+                      )}
 
-                  {/* The way back. An owner who printed a batch by mistake
-                      would otherwise have no way to put it in front of
-                      himself again except by remembering it forever. */}
-                  {tab === 'done' && (
-                    <Chip
-                      label="Not printed"
-                      onPress={() => setLog(unmarkDownloaded([o.id], Date.now()))}
-                    />
+                      {/* The way back. An owner who printed a batch by mistake
+                          would otherwise have no way to put it in front of
+                          himself again except by remembering it forever. */}
+                      {tab === 'done' && (
+                        <Chip
+                          label="Not printed"
+                          onPress={() => setLog(unmarkDownloaded([o.id], Date.now()))}
+                        />
+                      )}
+                      {/* "Edit", not "View" — the screen behind it changes prices,
+                          and a label that undersells what a button does is how
+                          somebody taps it expecting to look and ends up changing
+                          what a shop is charged. It reads View only once the order
+                          is delivered, where the fields are genuinely locked. */}
+                      {navigation && (
+                        <Chip
+                          label={isDelivered(o) ? 'View' : 'Edit'}
+                          onPress={() => { setPendingOrder(o.id); navigation.navigate('Order'); }}
+                        />
+                      )}
+                      <Chip
+                        label={isDelivered(o) ? 'Open full bill' : 'Open full order'}
+                        onPress={() => { void shareOne(o); }}
+                      />
+                      {/* The one thing the old orange pill never said. A tag
+                          nobody can decode is decoration, and this one is
+                          about the number printed on a shopkeeper's paper. */}
+                      {isProvisional(no) && (
+                        <Text style={styles.provisionalNote}>
+                          Booked with no internet, so this number came from the phone rather
+                          than the company counter. It is unique and safe to print — it just
+                          sits outside the {no.replace(/^LOCAL-/, '').replace(/-\d+$/, '')}-2026
+                          run.
+                        </Text>
+                      )}
+                    </View>
                   )}
-                  {/* "Edit", not "View" — the screen behind it changes prices,
-                      and a label that undersells what a button does is how
-                      somebody taps it expecting to look and ends up changing
-                      what a shop is charged. It reads View only once the order
-                      is delivered, where the fields are genuinely locked. */}
-                  {navigation && (
-                    <Chip
-                      label={isDelivered(o) ? 'View' : 'Edit'}
-                      onPress={() => { setPendingOrder(o.id); navigation.navigate('Order'); }}
-                    />
-                  )}
-                  <Chip
-                    label={isDelivered(o) ? 'Open full bill' : 'Open full order'}
-                    onPress={() => { void shareOne(o); }}
-                  />
-                </View>
-              </Card>
+                </Card>
+              </React.Fragment>
             );
           })}
 
@@ -422,6 +494,14 @@ const styles = StyleSheet.create({
     marginTop: space.s, gap: space.s,
   },
   doneAt: { fontSize: font.tiny, color: color.textSub },
+  // Money and the disclosure sit together on the right of the collapsed row.
+  rowRight: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  moreBtn: { paddingVertical: space.xs, paddingLeft: space.xs },
+  // Full width inside the wrapping foot, so it reads as a sentence rather than
+  // as another chip in the row.
+  provisionalNote: {
+    width: '100%', fontSize: font.tiny, color: color.textSub, lineHeight: font.tiny + 5,
+  },
   ctaWrap: { marginTop: space.m },
   pickBlock: { paddingVertical: space.s },
   pickRow: { flexDirection: 'row', alignItems: 'center' },
