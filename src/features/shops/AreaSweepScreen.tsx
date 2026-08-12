@@ -28,7 +28,9 @@ import {
 import { useStore } from '../../data/store';
 import { todayKey } from '../../data/models';
 import type { Shop } from '../../data/models';
-import { distanceM, formatDistance, isPlaced, orderByNearest } from '../../lib/geo';
+import {
+  POOR_ACCURACY_M, distanceM, formatAccuracy, formatDistance, isPlaced, orderByNearest,
+} from '../../lib/geo';
 import type { GeoFix } from '../../lib/geo';
 import { GeoError, bearingLabel, getCurrentFix, watchFix } from '../../lib/location';
 import { clearDone, loadDone, saveDone } from './sweepProgress';
@@ -79,10 +81,26 @@ const LIST_STOPS = 25;
 
 export function AreaSweepScreen() {
   const store = useStore();
-  const dayKey = todayKey();
   const mapRef = React.useRef<MapView | null>(null);
 
-  const [areaName, setAreaName] = React.useState<string | null>(null);
+  /**
+   * The round, and the working day it belongs to — stamped ONCE, when it opens.
+   *
+   * The day used to be a bare `todayKey()` call in the render body. The GPS
+   * watch re-renders this screen every few seconds, so the first render after
+   * midnight changed the string and the persist effect below immediately wrote
+   * the whole completed set into TOMORROW's key. The next evening the round
+   * opened already finished and those stops vanished from the rider's day —
+   * precisely what a day key exists to prevent.
+   *
+   * `useState(todayKey)` and a memo are the same bug one day later: this is a
+   * tab screen that stays mounted for the life of the app, so a phone left
+   * running overnight would carry yesterday's key into today's first round.
+   * The day belongs to the ROUND. Stamp it at the start and never reach for
+   * the clock again.
+   */
+  const [round, setRound] = React.useState<{ area: string; day: string } | null>(null);
+  const areaName = round?.area ?? null;
   const [here, setHere] = React.useState<GeoFix | null>(null);
   const [hereAt, setHereAt] = React.useState<number | null>(null);
   const [locating, setLocating] = React.useState(false);
@@ -92,6 +110,18 @@ export function AreaSweepScreen() {
   // Panning the map is a deliberate act of looking somewhere else; the camera
   // stops chasing until the person asks for it back.
   const [followMe, setFollowMe] = React.useState(true);
+  /**
+   * A clock for `stale`, and nothing else.
+   *
+   * `stale` is a `Date.now()` comparison, so it can only change on a re-render
+   * — and every re-render source here (the watch callback, a Firestore
+   * snapshot, a touch) stops at the same moment the signal does. Under a market
+   * awning the flag was structurally unable to fire in the one situation it was
+   * written for. It ticks inside the focus effect below so it dies on blur;
+   * a standalone interval would keep a native MapView re-rendering while the
+   * rider is on another tab, which is the battery cost the watch itself refuses.
+   */
+  const [, setTick] = React.useState(0);
 
   const areasWithShops = React.useMemo(() => {
     const live = store.areas.filter(a => a.active).map(a => a.name);
@@ -111,26 +141,50 @@ export function AreaSweepScreen() {
   const begin = React.useCallback(async (name: string) => {
     setLocating(true);
     setError(null);
+    /**
+     * The day is stamped when a round OPENS, and re-stamped never.
+     *
+     * This function has two callers: the picker, which opens a round, and the
+     * footer's "Re-order from where I am now", which does not. Reading the
+     * clock unconditionally would let the second one walk a round across
+     * midnight into tomorrow's key — the rider presses re-order at 00:05 and
+     * his morning's progress disappears off the screen. Same bug as the one
+     * `round` exists to kill, through the other door.
+     */
+    const day = round && round.area === name ? round.day : todayKey();
     try {
       const fix = await getCurrentFix();
       const inArea = store.shops.filter(s => s.active && s.area === name);
       setHere(fix);
       setHereAt(Date.now());
       setOrderedIds(orderByNearest(fix, inArea).map(s => s.id));
-      setDone(loadDone(name, dayKey));
-      setAreaName(name);
+      setDone(loadDone(name, day));
+      setRound({ area: name, day });
       setFollowMe(true);
     } catch (e) {
       setError(e instanceof GeoError ? e.message : 'Could not read this phone’s location.');
-      // Still open the round: the ordering needs GPS, the shops and their pins
-      // do not, and someone who knows the area can work from the list.
-      setOrderedIds(store.shops.filter(s => s.active && s.area === name && isPlaced(s)).map(s => s.id));
-      setDone(loadDone(name, dayKey));
-      setAreaName(name);
+      /**
+       * A FAILED re-order keeps the order this round already has.
+       *
+       * The footer's "Re-order from where I am now" calls this same function
+       * mid-round, and indoors the GPS takes 22 s to give up (12 s precise,
+       * then 10 s coarse). This used to overwrite the frozen nearest-first
+       * route with raw Firestore document order and name a "next" shop three
+       * kilometres away — silently, because it is the same code path that
+       * legitimately opens a NEW round unordered when there is no GPS.
+       *
+       * `prev` is null exactly when a genuinely new round is opening, because
+       * "Pick another round" nulls it. Functional update so nothing is
+       * stale-captured from this callback's closure.
+       */
+      setOrderedIds(prev => prev ?? store.shops
+        .filter(s => s.active && s.area === name && isPlaced(s)).map(s => s.id));
+      setDone(loadDone(name, day));
+      setRound({ area: name, day });
     } finally {
       setLocating(false);
     }
-  }, [store.shops, dayKey]);
+  }, [store.shops, round]);
 
   /**
    * The only continuous sensor in the app, and it runs ONLY while this screen
@@ -150,7 +204,9 @@ export function AreaSweepScreen() {
         },
         e => setError(e.message),
       );
-      return stop;
+      // The clock behind `stale`. Same lifetime as the sensor, deliberately.
+      const tick = setInterval(() => setTick(n => n + 1), 15000);
+      return () => { stop(); clearInterval(tick); };
     }, [areaName]),
   );
 
@@ -158,12 +214,36 @@ export function AreaSweepScreen() {
     if (!orderedIds) return [];
     // Resolved fresh each render so a shop renamed mid-round shows its new
     // name — the frozen thing is the ORDER, not the data.
+    //
+    // Indexed rather than `store.shops.find` per id: this memo rebuilds on
+    // every shops snapshot, which is every time any colleague writes any shop
+    // document, and the scan is O(stops × company). A 150-stop round against
+    // 3,000 shops was ~450k comparisons landing on the frame budget of a screen
+    // animating a map camera under a moving rider. The memo has to re-run
+    // either way, so the index is strictly cheaper.
+    const byId = new Map(store.shops.map(s => [s.id, s]));
     return orderedIds
-      .map(id => store.shops.find(s => s.id === id))
+      .map(id => byId.get(id))
       .filter((s): s is Shop => !!s && s.active);
   }, [orderedIds, store.shops]);
 
   const remaining = stops.filter(s => !done.has(s.id));
+  /**
+   * The done stops, derived ONCE from the same population the cards render.
+   *
+   * `done` is a raw MMKV set and is never intersected with `stops`, so the
+   * header counted ids that are no longer stops: deactivating a shop mid-day
+   * is one tap and lands through the live snapshot immediately, leaving
+   * "Done (7)" above six cards while the progress figure — correctly derived
+   * from `stops` — read 6. Three populations on one screen, two of them wrong.
+   *
+   * Deliberately NOT pruned back into `done` itself: `stops` resolves against
+   * `store.shops`, which is empty on the first render before the snapshot lands
+   * and empties again on a listener error, so a prune would write an empty set
+   * over the day's real progress at exactly the moment the app is least sure of
+   * itself.
+   */
+  const doneStops = React.useMemo(() => stops.filter(s => done.has(s.id)), [stops, done]);
   const next = remaining[0] ?? null;
   /**
    * What the map is allowed to draw: the next few stops that actually have a
@@ -173,14 +253,39 @@ export function AreaSweepScreen() {
   const mapHidden = remaining.filter(isPlaced).length - mapStops.length;
   // A pin that cannot be drawn belongs in this list, not on the map — which is
   // what makes `isPlaced` the right test here rather than `!s.location`.
-  const unpinned = areaName
-    ? store.shops.filter(s => s.active && s.area === areaName && !isPlaced(s))
-    : [];
+  // Memoized: unmemoized it re-reconciled the whole block on every GPS tick.
+  const unpinned = React.useMemo(
+    () => (areaName ? store.shops.filter(s => s.active && s.area === areaName && !isPlaced(s)) : []),
+    [areaName, store.shops],
+  );
 
   const toNext = here && next && isPlaced(next) ? distanceM(here, next.location) : null;
-  const arrived = toNext !== null && toNext <= ARRIVE_M;
-  // A fix older than half a minute is not where you are any more.
-  const stale = hereAt !== null && Date.now() - hereAt > 30000;
+  /**
+   * How wide the phone says its own uncertainty is.
+   *
+   * NaN stays permissive — `location.ts` uses it to mean "this handset will not
+   * say", and a phone that can never arrive is worse than the bug below.
+   */
+  const acc = here && Number.isFinite(here.accuracyM) ? here.accuracyM : 0;
+  /**
+   * Arrival is distance AND certainty.
+   *
+   * This was distance-only, and `accuracyM` was read nowhere on this screen.
+   * When `getCurrentFix` falls back to the coarse wifi/cell pass the phone can
+   * report a position 300 m out; if that phantom landed within 40 m of the pin
+   * the header went green, the guide read "You are here — 0 m away" and the
+   * button turned into the CTA — telling a rider he had arrived at a shop two
+   * streets away. An uncertainty wider than the arrival ring cannot support the
+   * claim, so it is measured against the same constant the ring is drawn from.
+   */
+  const arrived = toNext !== null && acc <= ARRIVE_M && toNext <= ARRIVE_M;
+  /**
+   * 120 s, not 30 s. `watchFix` uses `distanceFilter: 5`, so a rider standing
+   * still at a counter receives no callbacks at all — his fix is perfectly good
+   * and `hereAt` stops advancing within half a minute of arriving, which is the
+   * exact moment the old threshold started calling it stale.
+   */
+  const stale = hereAt !== null && Date.now() - hereAt > 120000;
 
   // Keep the camera on the person while they are following, and swing to the
   // next shop the moment one is marked done.
@@ -218,8 +323,8 @@ export function AreaSweepScreen() {
   // invoked more than once for a single update, and writing to storage from
   // inside one is a side effect in a place React is free to repeat.
   React.useEffect(() => {
-    if (areaName) saveDone(areaName, dayKey, done);
-  }, [areaName, dayKey, done]);
+    if (round) saveDone(round.area, round.day, done);
+  }, [round, done]);
 
   /**
    * Advance to the next stop, once per press.
@@ -242,6 +347,37 @@ export function AreaSweepScreen() {
     mark(next.id, true);
   }, [next, mark]);
 
+  /**
+   * "Skip for now" — push the stop to the back of the round, do not mark it.
+   *
+   * This chip was wired to `markNext`, the identical handler as the CTA three
+   * lines above it: a skipped shutter entered `done`, was persisted, counted in
+   * the n/n progress and rendered struck through under "Done", indistinguishable
+   * from a shop that was served. "For now" promised a return that nothing
+   * implemented, and the only way back was an Undo chip in a list capped at 25
+   * and ordered for the stop you had just mis-tapped.
+   *
+   * Rotating the id inside `orderedIds` keeps ONE source of truth. A separate
+   * `skipped` Set would have to be persisted alongside `done` under the same
+   * area+day key or the first unmount returns every skipped shutter to the
+   * front of the round while `done` survives. The frozen-order comment at the
+   * top of this file defends against GPS-driven re-planning, not against a stop
+   * the rider has explicitly pushed back.
+   *
+   * With one stop left this is a visible no-op — there is nowhere behind it to
+   * go. That is the honest answer, because the round is not finished and the
+   * shop was not served, but it is a control that appears to do nothing. If
+   * that ever confuses anyone in the field, hide the chip at
+   * `remaining.length === 1`; do not go back to marking the stop done.
+   */
+  const skipNext = React.useCallback(() => {
+    if (!next) return;
+    const now = Date.now();
+    if (now - lastMarkAt.current < 700) return; // same latch as markNext
+    lastMarkAt.current = now;
+    setOrderedIds(prev => (prev ? [...prev.filter(id => id !== next.id), next.id] : prev));
+  }, [next]);
+
   /** The long hop into an area is the one place road directions earn their keep. */
   const openExternally = (shop: Shop) => {
     if (!shop.location) return;
@@ -256,7 +392,7 @@ export function AreaSweepScreen() {
   };
 
   const restart = () => {
-    if (!areaName) return;
+    if (!round) return;
     Alert.alert(
       'Start this round again?',
       'Every stop goes back to not-visited. Nothing else changes — orders and payments stay exactly as they are.',
@@ -265,7 +401,7 @@ export function AreaSweepScreen() {
         {
           text: 'Start again',
           style: 'destructive',
-          onPress: () => { clearDone(areaName, dayKey); setDone(new Set()); },
+          onPress: () => { clearDone(round.area, round.day); setDone(new Set()); },
         },
       ],
     );
@@ -319,6 +455,20 @@ export function AreaSweepScreen() {
         { latitude: next.location.lat, longitude: next.location.lng },
       ]
     : [];
+  /**
+   * Both suffixes ride on BOTH branches of the guide line.
+   *
+   * The staleness note used to sit inside the not-arrived branch only, so the
+   * single most dangerous state — a green "You are here" computed from a
+   * ten-minute-old fix — was silent by design.
+   *
+   * The accuracy note appears only when the fix is worse than the app's own
+   * "pointing at the block, not the door" threshold. That is also roughly what
+   * now holds `arrived` shut, so without it a rider would watch the button
+   * refuse to go green with nothing on screen saying why.
+   */
+  const ageNote = stale ? ' • location is a moment old' : '';
+  const accNote = acc > POOR_ACCURACY_M ? ` • ${formatAccuracy(acc)}` : '';
 
   return (
     <View style={styles.screen}>
@@ -336,8 +486,8 @@ export function AreaSweepScreen() {
             {toNext === null
               ? 'Waiting for your location…'
               : arrived
-                ? `You are here — ${formatDistance(toNext)} away`
-                : `${formatDistance(toNext)} • head ${bearingLabel(here!, next.location!)}${stale ? ' • location is a moment old' : ''}`}
+                ? `You are here — ${formatDistance(toNext)} away${accNote}${ageNote}`
+                : `${formatDistance(toNext)} • head ${bearingLabel(here!, next.location!)}${accNote}${ageNote}`}
           </Text>
         ) : (
           <Text style={styles.guide}>
@@ -436,7 +586,9 @@ export function AreaSweepScreen() {
               onPress={markNext}
             />
             <View style={styles.rowWrap}>
-              <Chip small label="Skip for now" onPress={markNext} />
+              {/* Pushes this stop to the back of the round. NOT `markNext` —
+                  a skip is not a visit, and it used to be recorded as one. */}
+              <Chip small label="Skip for now" onPress={skipNext} />
               {next.phone ? (
                 <Chip small label="Call" onPress={() => { void Linking.openURL(`tel:${next.phone}`).catch(() => {}); }} />
               ) : null}
@@ -469,12 +621,12 @@ export function AreaSweepScreen() {
           </>
         )}
 
-        {done.size > 0 && (
+        {doneStops.length > 0 && (
           <>
-            <SectionLabel>{`Done (${done.size})`}</SectionLabel>
+            <SectionLabel>{`Done (${doneStops.length})`}</SectionLabel>
             {/* Newest first and capped: Undo is for the one just marked by
                 mistake, not for something forty shops ago. */}
-            {stops.filter(s => done.has(s.id)).slice(-LIST_STOPS).reverse().map(s => (
+            {doneStops.slice(-LIST_STOPS).reverse().map(s => (
               <Card key={s.id}>
                 <View style={styles.rowBetween}>
                   <Text style={[styles.stopDone, styles.flexLabel]} numberOfLines={1}>{s.name}</Text>
@@ -482,8 +634,8 @@ export function AreaSweepScreen() {
                 </View>
               </Card>
             ))}
-            {done.size > LIST_STOPS && (
-              <Text style={styles.capNote}>{`+ ${done.size - LIST_STOPS} more done earlier.`}</Text>
+            {doneStops.length > LIST_STOPS && (
+              <Text style={styles.capNote}>{`+ ${doneStops.length - LIST_STOPS} more done earlier.`}</Text>
             )}
           </>
         )}
@@ -497,14 +649,26 @@ export function AreaSweepScreen() {
                 guide you to them. Save a location while you are standing at one and it joins
                 the sweep next time.
               </Text>
+              {/* Capped like every other list on this screen. This was the one
+                  that escaped the policy, and it is longest in exactly the
+                  state the caps exist for — a freshly imported area where
+                  nothing is pinned, which the picker actively invites with
+                  "Open anyway". The SectionLabel above still prints the true
+                  total, so nothing is hidden. */}
               <View style={styles.rowWrap}>
-                {unpinned.map(s => (
+                {unpinned.slice(0, LIST_STOPS).map(s => (
                   <View key={s.id} style={styles.ghostRow}>
                     <Icon name="map-marker-off-outline" size={16} color={color.textFaint} />
                     <Text style={styles.ghostName} numberOfLines={1}>{s.name}</Text>
                   </View>
                 ))}
               </View>
+              {/* Outside the rowWrap, or it becomes a flex child of it. */}
+              {unpinned.length > LIST_STOPS && (
+                <Text style={styles.capNote}>
+                  {`+ ${unpinned.length - LIST_STOPS} more not on the map. Save a location at any of them and it joins the round.`}
+                </Text>
+              )}
             </Card>
           </>
         )}
@@ -533,7 +697,7 @@ export function AreaSweepScreen() {
             variant="quiet"
             label="Pick another round"
             icon="format-list-bulleted"
-            onPress={() => { setAreaName(null); setOrderedIds(null); setError(null); setHere(null); }}
+            onPress={() => { setRound(null); setOrderedIds(null); setError(null); setHere(null); }}
           />
         </View>
       </ScrollView>

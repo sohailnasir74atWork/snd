@@ -64,11 +64,45 @@ export function PinShopScreen({
   const [fresh, setFresh] = React.useState(!usable);
   const [saving, setSaving] = React.useState(false);
 
+  /**
+   * Move the camera onto a fix this screen just read — and only then.
+   *
+   * The MapView had `initialRegion` and nothing else, and the native side
+   * latches that on first use, so only the marker followed a new reading.
+   * `SPAN` is roughly a 130 m box and the GPS deliberately falls back to a
+   * coarse wifi/cell fix, so a correction of more than ~65 m put the only pin
+   * off-screen: a blank map, no pin, nothing explaining it, on the one screen
+   * whose whole job is letting someone SEE where the dot landed. A pin off the
+   * viewport is also a pin nobody can drag.
+   *
+   * NOT a controlled `region` prop: that re-applies on every prop change, and
+   * `fix` changes on drag-end, so the camera would recentre under the thumb —
+   * the exact thing "no follow-me" exists to prevent.
+   */
+  const mapRef = React.useRef<MapView | null>(null);
+  const pendingCentre = React.useRef<GeoFix | null>(null);
+  const centre = React.useCallback((f: GeoFix) => {
+    if (!mapRef.current) { pendingCentre.current = f; return; }
+    try {
+      mapRef.current.animateToRegion(
+        { latitude: f.lat, longitude: f.lng, latitudeDelta: SPAN, longitudeDelta: SPAN },
+        400,
+      );
+    } catch {
+      // The native handle may not be attached yet — react-native-maps throws
+      // rather than no-opping. Swallowed on purpose: this must never surface
+      // as "Could not read this phone's location", which is what would happen
+      // if it were allowed to reach the catch in `locate()`.
+    }
+  }, []);
+
   const locate = React.useCallback(async () => {
     setLocating(true);
     setError(null);
+    let read: GeoFix | null = null;
     try {
       const next = await getCurrentFix();
+      read = next;
       setFix(next);
       setMoved(false);
       setFresh(true);
@@ -77,7 +111,9 @@ export function PinShopScreen({
     } finally {
       setLocating(false);
     }
-  }, []);
+    // Outside the try: a camera failure is not a GPS failure.
+    if (read) centre(read);
+  }, [centre]);
 
   React.useEffect(() => {
     // Ask the moment the screen opens: the person is standing at the door
@@ -117,9 +153,17 @@ export function PinShopScreen({
       <View style={styles.mapWrap}>
         {region ? (
           <MapView
+            ref={mapRef}
             style={styles.fill}
             provider={PROVIDER_GOOGLE}
             initialRegion={region}
+            // A read that resolved before the map attached is centred here.
+            onMapReady={() => {
+              if (pendingCentre.current) {
+                centre(pendingCentre.current);
+                pendingCentre.current = null;
+              }
+            }}
             // No follow-me: the marker is the answer, and a map that keeps
             // re-centring fights the thumb that is trying to nudge it.
             showsUserLocation

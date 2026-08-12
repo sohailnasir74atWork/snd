@@ -529,7 +529,9 @@ return orderedIds.map(id => byId.get(id)).filter((s): s is Shop => !!s && s.acti
 
 ## Ordered action list
 
-> **Status, 2026-08-12.** Commits 1 and 2 shipped in `versionCode 24` (`88e897f`). Commit 4 shipped items 13 and 15 — findings 9 and 10, the two that write wrong data — but **not** item 14 (finding 12, the camera). Commits 3 and 5 are untouched. Open: findings 6, 7, 8, 11, 12, 13, 14, 15. Nothing since `versionCode 24` is in any build, and none of it has been on a device.
+> **Status, 2026-08-12 — all 15 findings are now fixed.** Commits 1 and 2 shipped in `versionCode 24` (`88e897f`). Commits 3, 4 and 5 landed on 2026-08-12 and are **not in any build**. Everything since `versionCode 24` is static-green only (0 tsc, 0 eslint errors, 248 unit tests, 243 rules tests) and **none of it has been on a device** — this file's own P0 section is the reminder of what that is worth: findings 1 and 2 were both invisible to every check that is not a phone.
+>
+> One departure from the prescription, in commit 3. `begin()` has two callers — the picker, which opens a round, and the footer's "Re-order from where I am now", which does not — so stamping `todayKey()` unconditionally would let a re-order press at 00:05 walk the round into tomorrow's key and take the morning's progress off the screen. Finding 6 through the other door. The day is now stamped only when the area actually changes: `round && round.area === name ? round.day : todayKey()`.
 
 **Commit 1 — "Location works on Android 12+" (ship first, alone, and test on a real Xiaomi with a fresh install)** — ✅ shipped in `versionCode 24`
 1. `location.ts:71-102` — `ensurePermission` → `requestMultiple([FINE, COARSE])`, return `'fine' | 'coarse'`. *(finding 1)*
@@ -543,21 +545,21 @@ return orderedIds.map(id => byId.get(id)).filter((s): s is Shop => !!s && s.acti
 7. `geo.ts` — add `isPlaced()`; use it at `geo.ts:81`. *(finding 5)*
 8. `AreaSweepScreen.tsx:103, 125, 164-168, 178-180, 295-301, 368` and `PinShopScreen.tsx:35-36, 60`, `ShopPlace.tsx:72-73` — apply it. *(findings 5, 9)*
 
-**Commit 3 — "The round does not lie about the day, the order, or the distance"**
-9. `AreaSweepScreen.tsx:82, 118, 126, 200-202, 248` — round-scoped `{area, day}`, delete render-time `dayKey`. *(finding 6)*
-10. `AreaSweepScreen.tsx:125` — failed re-order keeps the existing order. *(finding 7)*
-11. `AreaSweepScreen.tsx:171` — `arrived` gates on accuracy. *(finding 8a)*
-12. `AreaSweepScreen.tsx:138-147, 173, 318-320` — 15 s tick inside the focus effect, 120 s threshold, staleness suffix in **both** branches. *(finding 8b)*
+**Commit 3 — "The round does not lie about the day, the order, or the distance"** — ✅ done 2026-08-12, not in any build
+9. ✅ `AreaSweepScreen.tsx:82, 118, 126, 200-202, 248` — round-scoped `{area, day}`, delete render-time `dayKey`. *(finding 6)*
+10. ✅ `AreaSweepScreen.tsx:125` — failed re-order keeps the existing order. *(finding 7)*
+11. ✅ `AreaSweepScreen.tsx:171` — `arrived` gates on accuracy. *(finding 8a)*
+12. ✅ `AreaSweepScreen.tsx:138-147, 173, 318-320` — 15 s tick inside the focus effect, 120 s threshold, staleness suffix in **both** branches. *(finding 8b)*
 
 **Commit 4 — "Pins say what they are"** — partly done 2026-08-12, not in any build
 13. ✅ `PinShopScreen.tsx:36, 48, 60, 69-76, 135-141` — `fresh` provenance flag, honest panel text, no re-stamp when nothing was measured, "Keep this spot" label. *(finding 9)*
-14. ⬜ `PinShopScreen.tsx:46-54, 89` — `mapRef` + guarded one-shot `animateToRegion` on an explicit read. *(finding 12)*
+14. ✅ `PinShopScreen.tsx:46-54, 89` — `mapRef` + guarded one-shot `animateToRegion` on an explicit read. *(finding 12)*
 15. ✅ `ShopPlace.tsx:26-48` — generation ref on `useShopPhoto`, guarding both `onUrl` and the Alert. *(finding 10)*
 
-**Commit 5 — "Counts and caps"**
-16. `AreaSweepScreen.tsx:413` — `skipNext` rotates instead of marking done. *(finding 13)*
-17. `AreaSweepScreen.tsx:446-460` — single `doneStops` derivation for gate, label, list and cap note. *(finding 11)*
-18. `AreaSweepScreen.tsx:166-168, 475` — memoize `unpinned`, cap at `LIST_STOPS`, cap note outside `rowWrap`. *(finding 14)*
-19. `AreaSweepScreen.tsx:153-155` — `Map` index instead of `Array.find` per id. *(finding 15)*
+**Commit 5 — "Counts and caps"** — ✅ done 2026-08-12, not in any build
+16. ✅ `AreaSweepScreen.tsx:413` — `skipNext` rotates instead of marking done. *(finding 13)*
+17. ✅ `AreaSweepScreen.tsx:446-460` — single `doneStops` derivation for gate, label, list and cap note. *(finding 11)*
+18. ✅ `AreaSweepScreen.tsx:166-168, 475` — memoize `unpinned`, cap at `LIST_STOPS`, cap note outside `rowWrap`. *(finding 14)*
+19. ✅ `AreaSweepScreen.tsx:153-155` — `Map` index instead of `Array.find` per id. *(finding 15)*
 
-Commits 1 and 2 are the release. Everything from 3 down can follow.
+Commits 1 and 2 were the release (`versionCode 24`). Commits 3, 4 and 5 followed on 2026-08-12 and need a build.

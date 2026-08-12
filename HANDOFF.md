@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-12 (§1j — the map audit; **8 findings still open, see `MAP-AUDIT.md`**)
+**Written:** 2026-08-09 · **Last updated:** 2026-08-12 (§1j — the map audit; **all 15 findings fixed, none of the last 10 on a device or in a build**)
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -11,7 +11,7 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 16 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
+| Branch | **`booker-screens-pass`**, 18 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
 | Version | `versionCode 24` / `versionName "2.8"` — built 2026-08-11, see §5 |
@@ -182,7 +182,7 @@ back up without putting the rate where the booker can see it.
 
 ---
 
-## 1j. The map audit — 15 findings, 7 fixed, 8 open
+## 1j. The map audit — 15 findings, all 15 fixed, none on a device
 
 2026-08-11. A second crash came off the owner's phone on `versionCode 23`, so
 the whole map/location subsystem was audited by six independent reviewers, each
@@ -281,24 +281,82 @@ has already left must not pop over the next shop's screen.
 > `onUrl` closes over a shop id, so a late resolve there writes to the right
 > document and is correct behaviour.
 
-### STILL OPEN — tomorrow's work
+### Fixed 2026-08-12 — the remaining six (findings 6, 7, 8, 11, 12, 13, 14, 15)
 
-Ordered as the report orders them. Every line number is in `MAP-AUDIT.md`
-along with the fix.
+Nothing is left open. All eight went in one pass over `AreaSweepScreen` plus the
+camera on `PinShopScreen`, in the order the report gives them.
 
-| # | What | Where |
-|---|---|---|
-| 6 | `dayKey` recomputed every render — a round open at MIDNIGHT writes its progress into tomorrow's key and loses the day | `AreaSweepScreen.tsx:82`, `:200` |
-| 7 | A failed GPS re-read replaces the nearest-first route with Firestore document order, silently | `AreaSweepScreen.tsx:125` |
-| 8 | The arrival gate ignores GPS accuracy; the staleness warning can essentially never render | `AreaSweepScreen.tsx:171`, `:318` |
-| 11 | "Done (N)" counts ids that are no longer stops | `AreaSweepScreen.tsx:446` |
-| 12 | "Read location again" moves the marker but never the camera | `PinShopScreen.tsx:92` |
-| 13 | "Skip for now" marks the shop VISITED and inflates the progress counter | `AreaSweepScreen.tsx:413` |
-| 14 | "Not on the map" is the one uncapped list on a screen built entirely of hard caps | `AreaSweepScreen.tsx:475` |
-| 15 | `stops` does a linear `Array.find` per ordered id | `AreaSweepScreen.tsx:154` |
+**6 — the round carries its own day now.** `dayKey` was a bare `todayKey()` in
+the render body, and the GPS watch re-renders this screen every few seconds: the
+first render after midnight changed the string and the persist effect wrote the
+whole completed set into TOMORROW's key. The next evening the round opened
+already finished and those stops vanished off the rider's day. State is
+`{area, day}`, stamped when the round opens.
 
-Finding 6 is the worst of what is left — a round open across midnight writes its
-progress into tomorrow's key and the day's work disappears.
+> ⚠️ **This one needed more than the report prescribed.** `begin()` has two
+> callers — the picker, which opens a round, and the footer's *Re-order from
+> where I am now*, which does not. Stamping `todayKey()` unconditionally, as
+> written up, would let a re-order press at 00:05 walk the round into tomorrow's
+> key and take the morning's progress off the screen: the same bug through the
+> other door. The day is re-stamped only when the area actually changes.
+> Not `useState(todayKey)` or a memo either — this is a tab screen that stays
+> mounted for the life of the app, so either would carry yesterday's key into
+> today's first round.
+
+**7 — a failed re-order keeps the order the round already has.** The catch in
+`begin()` fell back to raw Firestore document order, and the footer button calls
+that same function mid-round. Indoors the GPS takes 22 seconds to give up, and
+at the end of it the frozen nearest-first route was silently replaced and a
+"next" shop three kilometres away named. `setOrderedIds(prev => prev ?? …)` —
+`prev` is null exactly when a genuinely new round is opening.
+
+**8 — arrival is distance AND certainty, and the staleness note rides on both
+branches.** `accuracyM` was read nowhere on this screen. On the coarse wifi/cell
+fallback the phone can report a position 300 m out, and if that phantom landed
+within 40 m of the pin the header went green and the guide read *"You are here —
+0 m away"* at a shop two streets off. The gate now also requires the phone's own
+uncertainty to be inside the arrival ring, and the guide shows the figure when
+it is worse than 30 m so the rider can see why the button is not going green.
+The staleness threshold went 30 s → **120 s** (`distanceFilter: 5` means a rider
+standing still at a counter gets no callbacks at all, so his perfectly good fix
+was called stale within half a minute of arriving), it ticks off a 15-second
+interval that lives and dies with the GPS watch inside the focus effect, and the
+suffix moved out of the not-arrived branch — a green "you have arrived" computed
+from a ten-minute-old fix used to be silent by design.
+
+**11 — one derivation of "done".** `done` is a raw MMKV set never intersected
+with `stops`, so the header counted ids that are no longer stops: deactivating a
+shop mid-day left "Done (7)" above six cards. `doneStops` now feeds the gate,
+the label, the list and the cap note. The `done.size` test on *Start this round
+again* is deliberately left alone — that button clears the MMKV entry and should
+still appear when all that survives in storage is orphan ids.
+
+**12 — the camera follows an explicit read.** `PinShopScreen` had
+`initialRegion` and nothing else, and the native side latches it. `SPAN` is a
+~130 m box and the GPS deliberately falls back to a coarse fix, so a correction
+of more than ~65 m put the only pin off-screen — a blank map on the one screen
+whose whole job is letting someone see where the dot landed, and a pin nobody
+can drag. One-shot `animateToRegion` on an explicit read only, **outside** the
+try block: `react-native-maps` throws when the native handle is not attached
+yet, and inside the try that would have been reported to the rider as *"Could
+not read this phone's location"* — a GPS error for a camera problem.
+
+**13 — "Skip for now" skips.** It was wired to the identical handler as the
+*Mark visited* CTA, so a skipped shop entered `done`, persisted, counted in the
+progress and rendered struck through, indistinguishable from one that was
+served. It rotates the stop to the back of `orderedIds` now — one source of
+truth, no second persisted set to fall out of step with the first.
+
+**14 — "Not on the map" is capped** at `LIST_STOPS` like every other list on the
+screen, and memoized so it stops re-reconciling on every GPS tick. It was the
+one list that escaped the policy, and it is longest in exactly the state the
+caps exist for: a freshly imported area where nothing is pinned, which the
+picker actively invites with *Open anyway*.
+
+**15 — `stops` indexes instead of scanning.** `store.shops.find` per ordered id
+rebuilt on every shops snapshot — every time any colleague writes any shop
+document. A 150-stop round against 3,000 shops was ~450k comparisons on the
+frame budget of a screen animating a map camera under a moving rider.
 
 ### Deliberately NOT fixing
 
@@ -1246,7 +1304,8 @@ two shops visited, because marking one puts the next under the same button.
    libraries are tested; not one screen is.
 9. **Not re-audited, except the map.** §1j is a fresh adversarial scan, but only
    of the map/location subsystem — it found 15 real findings in two screens and
-   one lib, of which 8 are still open. Assume the same density elsewhere. The
+   one lib, all now fixed. Assume the same density elsewhere; nothing else in
+   this app has had that treatment. The
    largest new surfaces are the sweep, the areas migration path, the workday
    derivation, and now the whole booker round in §1b — the typed price in
    particular, because it is the one new control that moves money.
@@ -1384,9 +1443,10 @@ cd android && ./gradlew bundleRelease
 | Needs | the rules deployed — done, including the shops `delete` rule and the `name` restriction (2026-08-10) |
 | Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23 and 24. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. Rebuildable from `1f8eec1` if 17 is ever wanted; nothing depends on it. |
 
-> ⚠️ **`versionCode 24` does NOT contain the finding 9 and 10 fixes** (§1j,
-> 2026-08-12). It was built before them. Anything that ships those needs a new
-> build.
+> ⚠️ **`versionCode 24` contains NONE of the 2026-08-12 work** — that is ten of
+> the fifteen map-audit findings (§1j), including every one that touches the
+> sweep. It was built before all of them. Anything that ships those needs a new
+> build, and that build has never existed.
 
 **Not published, and §4.1 has not moved.** Ten device checks, of which only 9
 and half of 10 have been run. Building the file is safe; putting it on a track
