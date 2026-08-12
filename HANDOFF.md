@@ -16,7 +16,7 @@ and `PROGRESS.md` (the SRS-facing plan).
 | Branch | **`booker-screens-pass`**, 26 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 26` / `versionName "2.10"` — built 2026-08-12, see §5 |
+| Version | `versionCode 27` / `versionName "2.11"` — built 2026-08-12, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
 | Unit tests | **256 / 256**, 16 suites |
@@ -232,6 +232,31 @@ sits beside **Void** on Reports, behind the same busy latch.
 money records from the tooling was blocked, correctly. He repairs it himself:
 Reports → `RCP-2026-0008` → **Undo void**, on `versionCode 26` or later. That
 puts the correction through the app's own audited path instead of a hand edit.
+
+### The screen itself was also mounting the whole khata
+
+Looking at it raised a second thing. `oldCredit` was **every active shop with a
+balance**, in snapshot order, in a plain `ScrollView` — no cap, no sort. At 22
+shops that is nothing. At 500 shops with 200 carrying a balance it is 200 cards
+on the FIRST screen the owner opens, which is exactly what froze the Map tab on
+a real phone (§1h) and exactly the uncapped list the map audit caught on the
+sweep (§1j, finding 14). Every other list in this app has a hard cap; four on
+this screen had escaped it.
+
+Credit is now **sorted biggest-first** — an owner scanning this acts on the
+largest debt, not on whichever shop Firestore returned first — capped at
+`ACTION_CARDS` (8), with a note carrying both units he thinks in: how many
+shops and how many rupees are held back. A list that simply stopped at eight
+would read as a business owed less than it is, which is the one direction that
+number must never be wrong in. Cancelled/sent-back orders take the same cap;
+they are bounded by the clock (7 days) but not by how bad a week was.
+
+> **Exception payments and pending claims are deliberately NOT capped.** They
+> scale with what the owner has not dealt with yet, not with the size of the
+> business — a payment is confirmed and gone, a claim approved and gone,
+> usually the same day. And each row is an individual decision about money:
+> hiding the ninth behind a cap would take a payment off the only screen that
+> offers it, which is worse than a long list.
 
 ### Worth taking as a lesson, not just a fix
 
@@ -1677,16 +1702,16 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 26` / `versionName "2.10"` — `2.10` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
-| File | `builds/SnD-Manager-v2.10-build26.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Version | `versionCode 27` / `versionName "2.11"` — `2.11` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
+| File | `builds/SnD-Manager-v2.11-build27.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
 | Built | 2026-08-12 22:0x, from `booker-screens-pass` — **not from `main`** |
 | Reproducible | ✅ from the commit before the version bump; the tree was clean. |
 | Needs | the rules deployed — done. `admitSignIn` is deployed too (§1l), which `versionCode 25` does NOT depend on but the owner's push notifications do. |
-| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24, 25 and 26. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
+| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24, 25, 26 and 27. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
 
-> **`versionCode 26` adds the Undo-void (§1m) on top of `versionCode 25`, which was the first build to contain any of 2026-08-12.** That
+> **`versionCode 27` is everything found on 2026-08-12** — all fifteen map-audit findings, the new-shop count, the app-open start, the compact bill rows, the welcome and sign-out changes, the type scale, the Undo-void and the Action-screen caps. `versionCode 25` was the first build to contain any of it. That
 > is all fifteen map-audit findings (§1j), the new-shop count and the app-open
 > start (§1k), the compact bill rows, the welcome-screen changes, and the type
 > scale. It is also the first build anyone can put on a real phone to find out
