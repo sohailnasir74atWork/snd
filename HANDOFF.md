@@ -11,10 +11,10 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 19 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
+| Branch | **`booker-screens-pass`**, 26 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 24` / `versionName "2.8"` — built 2026-08-11, see §5 |
+| Version | `versionCode 25` / `versionName "2.9"` — built 2026-08-12, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
 | Unit tests | **256 / 256**, 16 suites |
@@ -1616,19 +1616,24 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 24` / `versionName "2.8"` — `2.8` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87) and the `Release 2.8 (versionCode 24)` commit, because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
-| File | `builds/SnD-Manager-v2.8-build24.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Version | `versionCode 25` / `versionName "2.9"` — `2.9` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
+| File | `builds/SnD-Manager-v2.9-build25.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
-| Built | 2026-08-11 22:36, from `booker-screens-pass` — **not from `main`** |
-| Reproducible | ✅ from `0ae64e0`. The tree was clean when it was built, unlike `versionCode 18`. |
-| Needs | the rules deployed — done, including the shops `delete` rule and the `name` restriction (2026-08-10) |
-| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23 and 24. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. Rebuildable from `1f8eec1` if 17 is ever wanted; nothing depends on it. |
+| Built | 2026-08-12 21:02, from `booker-screens-pass` — **not from `main`** |
+| Reproducible | ✅ from the commit before the version bump; the tree was clean. |
+| Needs | the rules deployed — done. `admitSignIn` is deployed too (§1l), which `versionCode 25` does NOT depend on but the owner's push notifications do. |
+| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24 and 25. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
 
-> ⚠️ **`versionCode 24` contains NONE of the 2026-08-12 work** — that is ten of
-> the fifteen map-audit findings (§1j), including every one that touches the
-> sweep. It was built before all of them. Anything that ships those needs a new
-> build, and that build has never existed.
+> **`versionCode 25` is the first build that contains any of 2026-08-12.** That
+> is all fifteen map-audit findings (§1j), the new-shop count and the app-open
+> start (§1k), the compact bill rows, the welcome-screen changes, and the type
+> scale. It is also the first build anyone can put on a real phone to find out
+> whether the font-scaling cap in `components/ui` actually works — it does not
+> appear to on the emulator, and that is written up in the commit rather than
+> papered over.
+>
+> ❗ Still unpublished, and §4.1's ten checks still have not been run.
 
 **Not published, and §4.1 has not moved.** Ten device checks, of which only 9
 and half of 10 have been run. Building the file is safe; putting it on a track
