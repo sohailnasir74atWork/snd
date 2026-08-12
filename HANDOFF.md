@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-11 (§1j — the map audit; **21 findings still open, see `MAP-AUDIT.md`**)
+**Written:** 2026-08-09 · **Last updated:** 2026-08-12 (§1j — the map audit; **8 findings still open, see `MAP-AUDIT.md`**)
 **Read this first**, then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
 outstanding, but the "before the next scan" note at the bottom is still live)
 and `PROGRESS.md` (the SRS-facing plan).
@@ -11,13 +11,13 @@ and `PROGRESS.md` (the SRS-facing plan).
 
 | | |
 |---|---|
-| Branch | **`booker-screens-pass`**, 9 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
+| Branch | **`booker-screens-pass`**, 16 commits ahead of `main` and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 22` / `versionName "2.6"` — built 2026-08-11, see §5 |
+| Version | `versionCode 24` / `versionName "2.8"` — built 2026-08-11, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
-| Unit tests | **238 / 238**, 16 suites |
+| Unit tests | **248 / 248**, 16 suites |
 | Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
 | Device | debug build driven on the emulator (§1b); §1d driven on the emulator in **both debug and a real release build** (R8 on — see §4.0b). ❗ **Nothing in §1c or §1d has been on a real phone** — see §4.1 before publishing |
@@ -182,13 +182,18 @@ back up without putting the rate where the booker can see it.
 
 ---
 
-## 1j. The map audit — 36 findings, 15 fixed, 21 open
+## 1j. The map audit — 15 findings, 7 fixed, 8 open
 
 2026-08-11. A second crash came off the owner's phone on `versionCode 23`, so
 the whole map/location subsystem was audited by six independent reviewers, each
-finding then put through an adversarial pass that tried to refute it. **36
-findings survived.** The full report is in **`MAP-AUDIT.md`** — read that
-before touching any of this; it quotes the native sources line by line.
+finding then put through an adversarial pass that tried to refute it. **36 were
+raised; 15 survived** and are numbered 1–15 in the report. The full report is in
+**`MAP-AUDIT.md`** — read that before touching any of this; it quotes the native
+sources line by line.
+
+> An earlier version of this heading said "36 findings, 15 fixed, 21 open",
+> which was the raw count crossed with the survivors. The report has fifteen
+> numbered findings and never had thirty-six. Count them there, not here.
 
 ### The rule, stated once — Fabric does not tolerate a null prop
 
@@ -229,7 +234,52 @@ public void setPinColor(MapMarker view, @Nullable Integer value) {
 5. **`isPlaced()`** (`lib/geo.ts`) — a document with `location: {lat: null}`
    reached five native sites, and `animateToRegion` rethrows as an UNCATCHABLE
    RuntimeException. One predicate at the choke point, 10 tests.
-6. `pinColor` on the sweep markers — the reported crash.
+6. `pinColor` on the sweep markers — the reported crash. (This one was already
+   fixed before the audit ran; it is listed in `MAP-AUDIT.md` §0, not among the
+   fifteen numbered findings.)
+
+### Fixed 2026-08-12 — the two that wrote wrong data (findings 9, 10)
+
+These went first because both of them put something false onto a permanent
+record rather than merely showing it wrong. Static-green only: 0 tsc, 0 lint,
+248 tests. **Neither has been on a device**, and neither is in any build —
+`versionCode 24` predates them.
+
+**9 — a re-pin no longer launders a stale fix as a fresh one.**
+`PinShopScreen` deliberately does not read the GPS when it opens on a shop that
+already has a pin (auto-jumping the pin to a coarse fix is how a good
+hand-placed pin gets destroyed by someone who only came to look). But it then
+described that stored reading in the present tense — *"Good fix (±8 m)"* about a
+measurement somebody else took months ago somewhere else — and Save wrote it
+straight back with a fresh `savedAt`/`savedBy`. The rider who opened the screen
+BECAUSE the pin was wrong was told it was right, and the only staleness signal
+the owner has was quietly reset.
+
+> A `fresh` flag now says whether THIS screen measured what it is showing. The
+> panel branches on provenance before quality (*"Saved earlier (±8 m). Press
+> 'Read location again' to check it from where you are standing."*), the primary
+> button reads **Keep this spot** instead of *Save this spot*, and pressing it
+> closes the screen without writing. Nothing measured, nothing moved, nothing
+> stamped. Dragging the pin or reading the phone puts the real Save back.
+
+Same edit swapped the hand-rolled lat/lng check for `isPlaced` (§5's predicate),
+so a half-written `{lat: null}` still drops through to a fresh read instead of
+reaching `initialRegion` — one predicate, not two copies that can drift.
+
+**10 — a slow photo upload no longer lands on the next shop.**
+`useShopPhoto` called `onUrl(url)` with no generation check. On the NEW-shop
+form that callback is `setNewPhotoUrl` — state on the parent, which stays
+mounted — and `saveShop` never consults `capturing`: it reads `newPhotoUrl`
+(still null), creates the shop with no photo, and resets the form. The upload
+then resolved into the parent, the next "Add shop" rendered *"✓ Photo added"*,
+and shop B was created carrying shop A's shopfront with nothing downstream able
+to tell. A generation ref bumped on unmount now disowns an in-flight upload, and
+**the failure Alert is guarded too** — an error belonging to a form the person
+has already left must not pop over the next shop's screen.
+
+> The existing-shop path was never affected and is deliberately untouched: its
+> `onUrl` closes over a shop id, so a late resolve there writes to the right
+> document and is correct behaviour.
 
 ### STILL OPEN — tomorrow's work
 
@@ -241,15 +291,14 @@ along with the fix.
 | 6 | `dayKey` recomputed every render — a round open at MIDNIGHT writes its progress into tomorrow's key and loses the day | `AreaSweepScreen.tsx:82`, `:200` |
 | 7 | A failed GPS re-read replaces the nearest-first route with Firestore document order, silently | `AreaSweepScreen.tsx:125` |
 | 8 | The arrival gate ignores GPS accuracy; the staleness warning can essentially never render | `AreaSweepScreen.tsx:171`, `:318` |
-| 9 | Re-pinning never reads the phone, shows a months-old accuracy as a live reading, and Save re-stamps it as freshly verified | `PinShopScreen.tsx:36`, `:60`, `:135` |
-| 10 | A photo upload resolving after "Save shop" attaches the PREVIOUS shop's shopfront to the next one | `ShopPlace.tsx:36` |
 | 11 | "Done (N)" counts ids that are no longer stops | `AreaSweepScreen.tsx:446` |
 | 12 | "Read location again" moves the marker but never the camera | `PinShopScreen.tsx:92` |
 | 13 | "Skip for now" marks the shop VISITED and inflates the progress counter | `AreaSweepScreen.tsx:413` |
 | 14 | "Not on the map" is the one uncapped list on a screen built entirely of hard caps | `AreaSweepScreen.tsx:475` |
 | 15 | `stops` does a linear `Array.find` per ordered id | `AreaSweepScreen.tsx:154` |
 
-Findings 9 and 10 write WRONG DATA TO A PERMANENT RECORD and should go first.
+Finding 6 is the worst of what is left — a round open across midnight writes its
+progress into tomorrow's key and the day's work disappears.
 
 ### Deliberately NOT fixing
 
@@ -450,12 +499,17 @@ checklist has not moved.
 
 ---
 
-## 1g. The bill book — the owner's own copies, three to a page — NOT COMMITTED
+## 1g. The bill book — the owner's own copies, three to a page
 
 2026-08-11, same working tree as §1f. `npm run test:rules` not re-run (nothing
 touches the rules); **159 tests**, 0 TS errors, 0 lint errors. Never bundled,
 never on a device — see "what was NOT checked" at the end of §1f, which now
 covers this too.
+
+> This section and §1f were headed **NOT COMMITTED** for a day. They landed in
+> `3cfaf0f` on 2026-08-11 along with §1h; the working tree is clean. The test
+> counts quoted in both sections are the counts on the day they were written
+> and are deliberately not updated — the tree is at 248 (§1).
 
 ### Why it exists
 
@@ -531,12 +585,12 @@ download. `Open full bill` per row still produces the rider's real A5 invoice.
 
 ---
 
-## 1f. Rupees off, and what a morning was actually worth — NOT COMMITTED
+## 1f. Rupees off, and what a morning was actually worth
 
 2026-08-11, the owner's two asks. Green (0 errors / 0 errors / **141** tests,
-up 9) but sitting in the working tree, and **nothing has been on a device or
-even in an emulator** — not the screens, not a bundle. Two screens, one shared
-piece of order math.
+up 9). Two screens, one shared piece of order math. Committed in `3cfaf0f`, and
+the emulator pass at the end of this section came later the same day — read
+"What HAS and has not been checked" below rather than assuming either way.
 
 ### The booker may now say it either way round
 
@@ -1094,8 +1148,12 @@ two shops visited, because marking one puts the next under the same button.
    that is mitigation, not a fix. App Check plus a server-side failed-attempt
    lockout is the real answer. Do it before a real customer holds real khata.
 
-0b. **`versionCode 17` has not been on a real phone** — but the release build
-   HAS been driven. ✅ ⚠️
+0b. **The ProGuard question is closed; the real-phone question moved on.** ✅
+   ⚠️ *(Updated 2026-08-12: `versionCode 17` itself is gone — see §5 — and the
+   owner has since run later builds in the field, reporting three bugs off
+   `versionCode 17` in §1h and a crash off `versionCode 23` in §1j. "Nothing
+   has been on a real phone" stopped being true on 2026-08-11. What has NOT
+   happened is anyone walking the §4.1 checks below on one.)*
 
    The ProGuard question is **settled**. A release APK from this exact commit
    (`assembleRelease` — R8, `minifyEnabled` and `shrinkResources` all on, the
@@ -1108,17 +1166,22 @@ two shops visited, because marking one puts the next under the same button.
    actual account tap. The emulator's Play Services is not the field's. Still
    worth five minutes on a real phone before anyone else holds it.
 
-1. **`versionCode 16` HAS NOT BEEN DRIVEN ON A PHONE.** ❗
+1. **THE TEN CHECKS BELOW HAVE NEVER BEEN RUN ON A PHONE.** ❗
 
-   The AAB is built and signed. Nobody has run it. The SaaS round replaced
+   *(Retitled 2026-08-12. This said "`versionCode 16` has not been driven on a
+   phone", which is no longer the useful statement: the owner has run builds in
+   the field since — §1h and §1j are both field reports — but he was using the
+   app, not walking this list. The list is what is still unrun, on any build.)*
+
+   The AAB is built and signed. The SaaS round replaced
    four load-bearing assumptions, the booker round (§1b) then rebuilt three
    screens and removed a tab, and `firestoreStore.tsx` still has no unit
-   coverage — so 104 green tests say the code is internally consistent, not
+   coverage — so 248 green tests say the code is internally consistent, not
    that a rider's phone behaves correctly on a market street. The emulator
-   pass in §1b covers the new SCREENS; it covers none of the four checks
+   pass in §1b covers the new SCREENS; it covers none of the checks
    below, which are about money.
 
-   **Do these four before publishing to any track that reaches a real user.**
+   **Do these before publishing to any track that reaches a real user.**
    Roughly 30 minutes with `./gradlew installDebug`:
 
    | # | Check | What it proves |
@@ -1181,7 +1244,9 @@ two shops visited, because marking one puts the next under the same button.
    plus `onPress={undefined}`.
 8. **No component-level tests.** `orderByNearest`, `computeWorkday` and the money/serial
    libraries are tested; not one screen is.
-9. **Not re-audited.** Nobody has run a fresh adversarial scan since Round 8. The
+9. **Not re-audited, except the map.** §1j is a fresh adversarial scan, but only
+   of the map/location subsystem — it found 15 real findings in two screens and
+   one lib, of which 8 are still open. Assume the same density elsewhere. The
    largest new surfaces are the sweep, the areas migration path, the workday
    derivation, and now the whole booker round in §1b — the typed price in
    particular, because it is the one new control that moves money.
@@ -1310,19 +1375,21 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 18` / `versionName "2.3"` — read out of the AAB's own manifest, not off `build.gradle` |
-| File | `builds/SnD-Manager-v2.3-build18.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Version | `versionCode 24` / `versionName "2.8"` — `2.8` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87) and the `Release 2.8 (versionCode 24)` commit, because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
+| File | `builds/SnD-Manager-v2.8-build24.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
-| Built | 2026-08-11 17:41, from `booker-screens-pass` — **not from `main`** |
-| ❗ Contains uncommitted work | §1f, §1g and the load sheet were in the WORKING TREE when this was built and are still not committed. This bundle cannot be reproduced from any commit. Commit before it goes anywhere, or the day someone asks what is in `versionCode 18` there is no answer. |
-| `versionCode 17` | gone — it lived only at `app/build/outputs/.../app-release.aab` and this build overwrote it. Rebuildable from `1f8eec1` if it is ever wanted; nothing depends on it. |
-
-**Not published, and §4.1 has not moved.** Ten device checks, of which only 9 and half of 10 have been run. Building the file is safe; putting it on a track that reaches a real user is not.
+| Built | 2026-08-11 22:36, from `booker-screens-pass` — **not from `main`** |
+| Reproducible | ✅ from `0ae64e0`. The tree was clean when it was built, unlike `versionCode 18`. |
 | Needs | the rules deployed — done, including the shops `delete` rule and the `name` restriction (2026-08-10) |
+| Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23 and 24. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. Rebuildable from `1f8eec1` if 17 is ever wanted; nothing depends on it. |
 
-**Not published, and not yet safe to publish.** See §4.1 — the four device
-checks have not been run. Building the file is safe; putting it on a track
+> ⚠️ **`versionCode 24` does NOT contain the finding 9 and 10 fixes** (§1j,
+> 2026-08-12). It was built before them. Anything that ships those needs a new
+> build.
+
+**Not published, and §4.1 has not moved.** Ten device checks, of which only 9
+and half of 10 have been run. Building the file is safe; putting it on a track
 that reaches a real user is not, until they pass.
 
 Verify any future AAB the same way rather than trusting `BUILD SUCCESSFUL`,
