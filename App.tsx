@@ -380,6 +380,27 @@ function AuthGate() {
         user={stage.user}
         onSignOut={async () => {
           await signOutEverywhere();
+          /**
+           * Signing out forgets who it was, so the welcome screen comes back as
+           * the plain first-run fork rather than "Continue as <the account you
+           * just left>".
+           *
+           * Offering to walk straight back into the account somebody has just
+           * deliberately left is the app arguing with the last thing it was
+           * told, and it put that person's name — and under it, their email —
+           * on a screen that may be handed to someone else in the next minute.
+           *
+           * The returning screen still exists and still earns its place: a
+           * revoked token, a reset PIN, a session that expired overnight all
+           * land on the welcome screen WITHOUT this having run, and there
+           * "Continue as" is one tap instead of a whole sign-in. The difference
+           * is intent — nobody chose those.
+           *
+           * Same call `Use a different account` already makes, for the same
+           * reason, so a staff member loses the prefilled login ID either way.
+           */
+          forgetAccount();
+          setLastAccount(null);
           setStage({ kind: 'welcome' });
         }}
       />
