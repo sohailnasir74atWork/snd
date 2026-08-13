@@ -8,15 +8,17 @@
  * fragmentation and did not: the box was always right there.
  */
 import React from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 import {
-  Card, Chip, EmptyState, IconTile, ListRow, Money, OptionBar, PrimaryButton, SectionLabel, Tag, Text, TextInput, color, font, radius, space,
+  Card, Chip, EmptyState, Icon, IconTile, Money, OptionBar, PrimaryButton, Text, TextInput, color, font, radius, space,
 } from '../../components/ui';
 import { KeyboardScreen, useWriteGuard } from './AdminScreens';
 import { useStore } from '../../data/store';
 import type { Shop } from '../../data/models';
 import { AreaSelect } from '../../components/AreaSelect';
 import { CounterStaffSection } from './CounterStaffSection';
+import { digitsOnly, formatLocal, normalizeWhatsApp } from '../../lib/phone';
+import { formatAmount } from '../../lib/money';
 
 function toRupees(text: string): number {
   const n = parseInt(text.replace(/[^0-9]/g, ''), 10);
@@ -237,15 +239,200 @@ function Field({ label, value, onChange, placeholder, keyboardType }: {
   );
 }
 
+/** A 34pt round action beside a row — big enough to hit, small enough to repeat. */
+function RoundButton({ icon, tint, bg, onPress, disabled, label }: {
+  icon: string; tint: string; bg: string; onPress: () => void;
+  disabled?: boolean; label: string;
+}) {
+  return (
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      // The button is 34 so the row can stay two lines tall; the hit area is
+      // 46, which is what the thumb actually needs.
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled }}
+      style={({ pressed }) => [
+        styles.roundBtn,
+        { backgroundColor: disabled ? color.surfaceAlt : bg, opacity: pressed ? 0.55 : 1 },
+      ]}>
+      <Icon name={icon} size={17} color={disabled ? color.textFaint : tint} />
+    </Pressable>
+  );
+}
+
+/**
+ * One shop, one row.
+ *
+ * This list used to be a full card per shop — icon tile, two lines, and an
+ * "Edit / khata / payment" chip parked underneath — about a fifth of the screen
+ * each, so five shops filled the phone and the owner's twenty-two took five
+ * scrolls to walk past.
+ *
+ * The bigger miss was that none of that height bought an ACTION. The one thing
+ * an owner wants from a list of shops at his desk is to ring the shopkeeper,
+ * and the number was printed as dead text. Now the number itself dials, there
+ * is a call and a WhatsApp button on every row, and the row still opens the
+ * full editor — which is where khata corrections and payments live.
+ */
+function ShopRow({ shop, staffCount, countryCode, onOpen, last }: {
+  shop: Shop; staffCount: number; countryCode: string; onOpen: () => void; last?: boolean;
+}) {
+  const digits = digitsOnly(shop.phone);
+  // Normalising for WhatsApp also gives the tidy local form to print:
+  // "03001234567" reads as "0300-1234567".
+  const intl = digits ? normalizeWhatsApp(shop.phone, countryCode) : '';
+
+  const call = () => {
+    if (!digits) return;
+    void Linking.openURL(`tel:${digits}`).catch(() =>
+      Alert.alert('Could not dial', `This phone would not open the dialler for ${shop.phone}.`));
+  };
+
+  /**
+   * The app scheme first so an installed WhatsApp opens the chat straight
+   * away — even for a number that was never saved as a contact — with the
+   * wa.me link behind it for a phone that uses the browser hand-off.
+   */
+  const whatsapp = () => {
+    if (!intl) return;
+    void Linking.openURL(`whatsapp://send?phone=${intl}`).catch(() => {
+      void Linking.openURL(`https://wa.me/${intl}`).catch(() =>
+        Alert.alert('No WhatsApp', `This phone has no WhatsApp to message ${shop.phone} with.`));
+    });
+  };
+
+  return (
+    <Pressable
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel={`${shop.name} — edit, khata, payment`}
+      style={({ pressed }) => [
+        styles.row, !last && styles.rowDivider, pressed && styles.rowPressed,
+      ]}>
+      <View style={styles.rowBody}>
+        <View style={styles.rowTop}>
+          <Text style={styles.rowName} numberOfLines={1}>{shop.name}</Text>
+          {shop.outstanding > 0 && (
+            <Money amount={shop.outstanding} bold size={font.body} color={color.danger} />
+          )}
+        </View>
+        {/* One line for everything that is not the name: the number (which
+            dials), who runs the shop, and the two facts that need chasing —
+            no map pin, or switched off. They were full-width tags before. */}
+        <Text style={styles.rowMeta} numberOfLines={1}>
+          {digits
+            ? <Text style={styles.phoneLink} onPress={call}>{formatLocal(intl, countryCode)}</Text>
+            : <Text style={styles.metaWarn}>no number</Text>}
+          {shop.ownerName ? `  ·  ${shop.ownerName}` : ''}
+          {staffCount > 0 ? `  ·  ${staffCount} counter staff` : ''}
+          {!shop.location ? <Text style={styles.metaWarn}>{'  ·  no pin'}</Text> : ''}
+          {!shop.active ? <Text style={styles.metaDanger}>{'  ·  inactive'}</Text> : ''}
+        </Text>
+      </View>
+      <RoundButton
+        icon="phone" tint={color.primary} bg={color.primarySoft}
+        disabled={!digits} label={`Call ${shop.name}`} onPress={call} />
+      <RoundButton
+        icon="whatsapp" tint={color.success} bg={color.successSoft}
+        disabled={!intl} label={`WhatsApp ${shop.name}`} onPress={whatsapp} />
+    </Pressable>
+  );
+}
+
+/** Area heading — pressable, because a hundred shops is a lot to scroll past. */
+function AreaHeader({ title, count, owed, open, onToggle }: {
+  title: string; count: number; owed: number; open: boolean; onToggle: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      style={styles.areaHead}>
+      <Icon name={open ? 'chevron-down' : 'chevron-right'} size={16} color={color.textSub} />
+      <Text style={styles.areaTitle} numberOfLines={1}>{title}</Text>
+      <Text style={styles.areaCount} numberOfLines={1}>
+        {count}{owed > 0 ? ` · Rs ${formatAmount(owed)}` : ''}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
+ * Rows for one area in a single card, with the editor opening IN PLACE.
+ *
+ * The card is split around the shop being edited rather than the editor being
+ * pushed to the end of the group: the owner opened a specific line and the form
+ * has to appear where that line was, or the list moves under him.
+ */
+function ShopGroup({ shops, editingId, staffCount, countryCode, onOpen, onClose }: {
+  shops: Shop[]; editingId: string | null; staffCount: (id: string) => number;
+  countryCode: string; onOpen: (id: string) => void; onClose: () => void;
+}) {
+  const row = (list: Shop[]) => (
+    <Card style={styles.listCard}>
+      {list.map((s, i) => (
+        <ShopRow
+          key={s.id} shop={s} staffCount={staffCount(s.id)} countryCode={countryCode}
+          last={i === list.length - 1} onOpen={() => onOpen(s.id)} />
+      ))}
+    </Card>
+  );
+
+  const idx = shops.findIndex(s => s.id === editingId);
+  if (idx < 0) return shops.length > 0 ? row(shops) : null;
+
+  const before = shops.slice(0, idx);
+  const after = shops.slice(idx + 1);
+  return (
+    <>
+      {before.length > 0 && row(before)}
+      <ShopEditor shop={shops[idx]} onClose={onClose} />
+      {after.length > 0 && row(after)}
+    </>
+  );
+}
+
+/** A search box earns its place once the list is past a screenful. */
+const SEARCH_FROM = 8;
+
 export function ShopsScreen() {
   const store = useStore();
   const { isBusy, run } = useWriteGuard();
   const shops = store.shops;
-  const byArea = [...new Set(shops.map(s => s.area))];
+  const countryCode = store.settings.countryCode;
   // Counter staff hang off the shop by shopId, so the row can say whether a
   // shop has anyone selling for us without opening it.
   const counterStaffCount = (shopId: string) =>
     store.rewardStaff.filter(r => r.active && r.shopId === shopId).length;
+
+  const [query, setQuery] = React.useState('');
+  const [closedAreas, setClosedAreas] = React.useState<Record<string, boolean>>({});
+
+  const q = query.trim().toLowerCase();
+  const qDigits = digitsOnly(query);
+  // Four digits, because the tail of the number is what anyone remembers — and
+  // fewer than that matches half the list and looks broken.
+  const matches = (s: Shop) => !q
+    || s.name.toLowerCase().includes(q)
+    || s.area.toLowerCase().includes(q)
+    || (s.ownerName ?? '').toLowerCase().includes(q)
+    || (qDigits.length >= 4 && digitsOnly(s.phone).includes(qDigits));
+
+  const found = React.useMemo(
+    () => shops.filter(matches).sort((a, b) => a.name.localeCompare(b.name)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shops, q, qDigits],
+  );
+  // Firestore hands the shops over in document order, which is no order at
+  // all — the areas are sorted here so the same area is in the same place
+  // every time the screen opens. A shop with no area sinks to the bottom.
+  const byArea = [...new Set(found.map(s => s.area))]
+    .sort((a, b) => (a.trim() ? 0 : 1) - (b.trim() ? 0 : 1) || a.localeCompare(b));
+  const owedTotal = shops.reduce((n, s) => n + s.outstanding, 0);
 
   // ---- add-shop form state ----
   const [adding, setAdding] = React.useState(false);
@@ -291,12 +478,13 @@ export function ShopsScreen() {
     <KeyboardScreen style={styles.screen} contentContainerStyle={styles.content}>
       {shops.length > 0 && (
         <Text style={styles.subLine}>
-          {shops.length} shops — grouped by area
+          {shops.length} shops
           {/* How far the map has got. The route can only ever visit pinned
               shops, so this number is the feature's real progress bar. */}
           {shops.some(s => !s.location)
             ? ` • ${shops.filter(s => s.location).length} of ${shops.length} pinned`
             : ' • all pinned'}
+          {owedTotal > 0 ? ` • Rs ${formatAmount(owedTotal)} on the books` : ''}
         </Text>
       )}
 
@@ -369,43 +557,63 @@ export function ShopsScreen() {
         />
       )}
 
-      {byArea.map(a => (
-        <View key={a || 'no-area'}>
-          <SectionLabel>{a.trim() ? a : 'No area yet'}</SectionLabel>
-          {shops.filter(s => s.area === a).map(shop =>
-            editingId === shop.id ? (
-              <ShopEditor key={shop.id} shop={shop} onClose={() => setEditingId(null)} />
-            ) : (
-              <Card key={shop.id}>
-                <ListRow
-                  icon="storefront-outline"
-                  title={shop.name}
-                  // Counter staff belong to the shop, so the shop's own row is
-                  // where you find out it has any — without opening it.
-                  sub={`${shop.ownerName ? `${shop.ownerName} • ` : ''}${shop.phone}${
-                    counterStaffCount(shop.id) > 0
-                      ? ` • ${counterStaffCount(shop.id)} counter staff`
-                      : ''
-                  }`}
-                  right={shop.outstanding > 0
-                    ? <Money amount={shop.outstanding} bold color={color.danger} />
-                    : undefined}
-                />
-                <View style={styles.rowWrap}>
-                  {!shop.active && <Tag label="INACTIVE" tone="warn" />}
-                  {/* The owner sits at a desk, so this is a coverage report,
-                      not a button: an unpinned shop is one the map route will
-                      skip, and this is the only place that fact is visible. */}
-                  {!shop.location && <Tag label="NO PIN" tone="warn" />}
-                  <Chip small label="Edit / khata / payment" onPress={() => setEditingId(shop.id)} />
-                </View>
-                {shop.outstanding > 0 && (
-                  <Text style={styles.owes}>owes this much on the books</Text>
-                )}
-              </Card>
-            ))}
+      {shops.length >= SEARCH_FROM && (
+        <View style={styles.searchWrap}>
+          <Icon name="magnify" size={17} color={color.textFaint} />
+          <TextInput
+            style={styles.searchInput}
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search name, owner, area or number"
+            placeholderTextColor={color.textFaint}
+            autoCorrect={false}
+            autoCapitalize="none"
+            returnKeyType="search"
+          />
+          {query.length > 0 && (
+            <Pressable onPress={() => setQuery('')} hitSlop={10} accessibilityLabel="Clear search">
+              <Icon name="close-circle" size={17} color={color.textFaint} />
+            </Pressable>
+          )}
         </View>
-      ))}
+      )}
+
+      {q.length > 0 && (
+        <Text style={styles.subLine}>
+          {found.length === 0
+            ? 'No shop matches'
+            : `${found.length} of ${shops.length} shops match`}
+        </Text>
+      )}
+
+      {byArea.map(a => {
+        const list = found.filter(s => s.area === a);
+        const owed = list.reduce((n, s) => n + s.outstanding, 0);
+        // A search is its own answer: collapsing is for walking a long list,
+        // not for hiding the result someone just typed their way to.
+        const open = q.length > 0 || !closedAreas[a];
+        return (
+          <View key={a || 'no-area'}>
+            <AreaHeader
+              title={a.trim() ? a : 'No area yet'}
+              count={list.length}
+              owed={owed}
+              open={open}
+              onToggle={() => setClosedAreas(prev => ({ ...prev, [a]: !prev[a] }))}
+            />
+            {open && (
+              <ShopGroup
+                shops={list}
+                editingId={editingId}
+                staffCount={counterStaffCount}
+                countryCode={countryCode}
+                onOpen={setEditingId}
+                onClose={() => setEditingId(null)}
+              />
+            )}
+          </View>
+        );
+      })}
     </KeyboardScreen>
   );
 }
@@ -440,9 +648,52 @@ const styles = StyleSheet.create({
   // Tighter padding, but minHeight keeps the tap target at 40.
   moreLink: { paddingVertical: space.s, minHeight: 40, justifyContent: 'center', marginTop: space.xs },
   moreLinkText: { fontSize: font.body, fontWeight: '700', color: color.primary },
-  owes: { fontSize: font.sub, color: color.danger, textAlign: 'right' },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: space.xs, alignItems: 'center' },
   areaEmpty: { fontSize: font.sub, color: color.textSub, lineHeight: font.sub + 6, marginBottom: space.xs },
+
+  // ---- search ----
+  searchWrap: {
+    flexDirection: 'row', alignItems: 'center', gap: space.s,
+    marginHorizontal: space.gutter, marginTop: space.s,
+    paddingHorizontal: space.m, height: 38,
+    backgroundColor: color.surface, borderRadius: radius.chip,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: color.cardEdge,
+  },
+  searchInput: { flex: 1, minWidth: 0, height: 38, fontSize: font.body, color: color.text, padding: 0 },
+
+  // ---- area heading ----
+  areaHead: {
+    flexDirection: 'row', alignItems: 'center', gap: space.xs,
+    marginHorizontal: space.gutter, marginTop: space.m, marginBottom: 3,
+    minHeight: 26,
+  },
+  areaTitle: {
+    flex: 1, minWidth: 0,
+    fontSize: font.tiny + 1, fontWeight: '800', color: color.textSub,
+    textTransform: 'uppercase', letterSpacing: 0.6,
+  },
+  areaCount: { fontSize: font.tiny, fontWeight: '700', color: color.textFaint },
+
+  // ---- the list itself ----
+  // The card holds the group; each row carries its own padding, so the rows
+  // sit on one hairline instead of every shop having its own card edge.
+  listCard: { paddingVertical: 2, paddingHorizontal: space.m },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: space.s, minHeight: 46 },
+  rowDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.border },
+  rowPressed: { opacity: 0.6 },
+  rowBody: { flex: 1, minWidth: 0, marginRight: space.s },
+  rowTop: { flexDirection: 'row', alignItems: 'center', gap: space.s },
+  rowName: { flex: 1, minWidth: 0, fontSize: font.body + 1, fontWeight: '700', color: color.text },
+  rowMeta: { fontSize: font.sub, color: color.textSub, marginTop: 1 },
+  // Blue and underlined because it is the one word on the row that does
+  // something when you touch it.
+  phoneLink: { color: color.primary, fontWeight: '700', textDecorationLine: 'underline' },
+  metaWarn: { color: color.warn, fontWeight: '700' },
+  metaDanger: { color: color.danger, fontWeight: '700' },
+  roundBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    alignItems: 'center', justifyContent: 'center', marginLeft: space.s,
+  },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: space.s, alignItems: 'center', gap: space.xs },
   divider: {
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.border,
