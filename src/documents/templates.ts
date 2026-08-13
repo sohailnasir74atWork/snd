@@ -542,30 +542,51 @@ interface SheetLayout {
   /** Turn the PAPER, not the content. See the 3-up entry below. */
   landscape?: boolean;
   /**
-   * Ruled blank lines the item table is padded out to.
+   * Lay the tail — totals beside the signature and small print — instead of
+   * stacking it.
    *
-   * A five-line order on a 210mm column left the slip sitting in its top
-   * quarter under a field of white, which reads as a document that failed to
-   * print. Every paper invoice book in every shop solves this the same way:
-   * the lines are ruled whether or not anything is written on them. The table
-   * then has a predictable height, the totals sit where the eye expects them,
-   * and the footer anchors the foot.
-   *
-   * Set BELOW `maxItems` so a full basket simply uses the rows instead.
+   * Only 2-up sets it, and it is not a style choice. That cell is 210mm wide
+   * and 148.5mm tall: it runs out of HEIGHT while a third of its width sits
+   * empty. Stacked, the totals block alone cost five item rows, which is what
+   * made the widest layout hold the shortest basket. Turned on its side it
+   * costs none. The narrow cells keep the stack, where two columns would
+   * squeeze the product name that is already the tightest thing on the slip.
    */
-  minRows: number;
+  wide?: boolean;
 }
 
 /**
- * Caps measured off a rendered A4, not guessed: at 6-up a slip's header,
- * totals and warranty come to roughly a third of the 99mm cell, which leaves
- * room for about twenty item rows. These sit near HALF that, because a product
- * name long enough to wrap takes two rows and the cell clips rather than
- * flowing. The "+N more" line is the backstop; it should be rare, not normal.
+ * Caps and type sizes, MEASURED off a rendered A4 rather than guessed.
+ *
+ * ⚠️ These numbers were wrong, and the wrongness was invisible. `maxItems`
+ * read 20 / 14 / 14 on the theory that a half-page cell holds the longest
+ * basket. It does not, because **only the 3-up layout is tall**:
+ *
+ * | layout | cell | rows it really holds |
+ * |---|---|---|
+ * | 2-up | 210 × 148.5mm | wide and short — the FEWEST of the three |
+ * | 3-up | 99 × 210mm | the tall one, roughly double either other |
+ * | 4-up | 105 × 148.5mm | 2-up's height at smaller type, so more rows |
+ *
+ * So 2-up promised twenty lines, held eleven, and lines twelve onward were
+ * dropped by `overflow: hidden` with no "+N more" to say so — silent loss on a
+ * document about money, which is the one failure this layout may not have.
+ *
+ * **Re-measure rather than adjusting by eye.** A sweep harness that renders
+ * baskets of 1..26 lines and reports `scrollHeight - clientHeight` per cell is
+ * half an hour's work and is how these were set; nudging a number because a
+ * slip "looks a bit empty" is how the last set stopped being true. Keep
+ * `maxItems` at or under the measured ceiling, and keep the margin: a product
+ * name long enough to wrap costs two rows, and the "+N more" line is the
+ * backstop, not the normal case.
+ *
+ * The measured ceilings at the sizes below are 11 / 19 / 10, and each cap sits
+ * one under its ceiling to pay for a single wrapped name.
  */
 const SHEET_LAYOUTS: Record<BillsPerPage, SheetLayout> = {
-  // 210 × 148.5mm each — a landscape A5. One cut, and room for a long basket.
-  2: { cols: 1, rows: 2, maxItems: 20, font: 11, pad: 9, minRows: 11 },
+  // 210 × 148.5mm each — a landscape A5. One cut and the biggest type. It is
+  // short, so `wide` lays the tail out sideways to buy the rows back.
+  2: { cols: 1, rows: 2, maxItems: 9, font: 12, pad: 9, wide: true },
   // 99 × 210mm each on a LANDSCAPE sheet — the default. Three columns, cut
   // top to bottom.
   //
@@ -575,10 +596,26 @@ const SHEET_LAYOUTS: Record<BillsPerPage, SheetLayout> = {
   // a portrait sheet they came out 70mm wide and skinny, with two thirds of
   // the height empty. Turning the PAPER gives each slip 99mm — half again as
   // wide — and drops the wasted height. Same three per page, same two cuts.
-  3: { cols: 3, rows: 1, maxItems: 14, font: 9, pad: 6, landscape: true, minRows: 13 },
-  // 105 × 148.5mm each — A6. Densest, but the item name gets half the width.
-  4: { cols: 2, rows: 2, maxItems: 14, font: 8.5, pad: 6, minRows: 10 },
+  //
+  // The tall cell is also why this one holds the longest basket AND carries
+  // legible type at the same time. It is the default for both reasons.
+  3: { cols: 3, rows: 1, maxItems: 18, font: 11, pad: 6, landscape: true },
+  // 105 × 148.5mm each — A6. Densest, and the item name gets half the width.
+  4: { cols: 2, rows: 2, maxItems: 9, font: 10, pad: 5 },
 };
+
+/**
+ * How many item lines a slip shows at this layout before it starts
+ * summarising.
+ *
+ * Exported so the screen can tell the owner BEFORE he prints, and — more to
+ * the point — so it cannot tell him a different number from the one the sheet
+ * enforces. The button used to carry its own hand-written figures; they
+ * disagreed with `SHEET_LAYOUTS` and both were wrong.
+ */
+export function itemsPerSlip(perPage: BillsPerPage): number {
+  return SHEET_LAYOUTS[perPage].maxItems;
+}
 
 export interface BillSlip {
   order: Order;
@@ -693,12 +730,6 @@ function slipBody(slip: BillSlip, settings: CompanySettings, layout: SheetLayout
   }).join('\n');
 
   // Never silent. The count is the whole point of the line.
-  // The ruled blanks. `&nbsp;` rather than an empty cell so the row keeps its
-  // height in every renderer, and no dotted rule under the last one.
-  const blanks = Math.max(0, layout.minRows - shown.length - (hidden > 0 ? 1 : 0));
-  const blankRows = Array.from({ length: blanks },
-    () => '<tr><td class="s-name">&nbsp;</td><td class="s-num"></td><td class="s-num"></td></tr>').join('\n');
-
   const moreLine = hidden > 0
     ? `<tr><td class="s-more" colspan="3">+ ${hidden} more item${hidden === 1 ? '' : 's'} — TOTAL below covers all ${lines.length}</td></tr>`
     : '';
@@ -727,15 +758,20 @@ function slipBody(slip: BillSlip, settings: CompanySettings, layout: SheetLayout
   <div class="s-tag">BILL</div>
 </div>
 <div class="s-meta">
-  <div><b>${esc(displayName(shop.name))}</b> · ${esc(shop.area)}</div>
-  <div>${esc(billNo)}${prov} · ${esc(order.deliveredAt !== undefined ? formatDate(order.deliveredAt) : formatDate(order.bookedAt))}</div>
+  <div class="s-shop">${esc(displayName(shop.name))}</div>
+  <div class="s-ref">
+    <span>${esc(shop.area)}</span>
+    <span>${esc(order.deliveredAt !== undefined ? formatDate(order.deliveredAt) : formatDate(order.bookedAt))}</span>
+  </div>
+  <div class="s-ref"><span>${esc(billNo)}${prov}</span></div>
 </div>
 <table class="s-items">
 <tr><th>Product</th><th class="s-num">Qty</th><th class="s-num">Amount</th></tr>
 ${itemLines}
 ${moreLine}
-${blankRows}
 </table>
+<div class="s-fill"></div>
+<div class="s-bottom">
 <table class="s-tot">
 ${totals.discountTotal > 0 ? `<tr><td>Discount</td><td class="s-num">-${formatAmount(totals.discountTotal)}</td></tr>` : ''}
 ${totals.taxTotal ? `<tr><td>Sales tax</td><td class="s-num">${formatAmount(totals.taxTotal)}</td></tr>` : ''}
@@ -750,6 +786,7 @@ ${who}
     <div class="s-signline">For ${esc(settings.brandName)}</div>
   </div>
 ${warrantyBlock(settings, 's-warranty')}
+</div>
 </div>`;
 }
 
@@ -796,9 +833,30 @@ export function billSheetHtml(args: BillSheetArgs): string {
     ? { size: 'A4 landscape', w: '297mm', h: '210mm' }
     : { size: 'A4 portrait', w: '210mm', h: '297mm' };
 
+  /**
+   * The height of one item row, and the pitch the ruled filler repeats at.
+   *
+   * Derived, not typed in: line-height 1.35 on the cell's font, plus 2.5px of
+   * padding top and bottom, plus the 1px rule. If any of those three change in
+   * the CSS below, this follows them or the ruling steps at the join between
+   * the last written line and the blanks under it.
+   */
+  const ROW_H = Math.round(layout.font * 1.35) + 6;
+
   const body = `<style>
   @page { size: ${page.size}; margin: 0; }
   html, body { background: #FFFFFF; }
+  /* Print the backgrounds.
+     A print renderer drops background colours and images by default — it is
+     saving somebody's toner on a web page. Everything that carries meaning on
+     this sheet is a background: the navy TOTAL bar, the banded Balance, the
+     tinted table head, the panel behind the shop name, and the ruled lines the
+     blank half of a short bill is filled with. Without this the slip prints as
+     text floating on white with no structure at all, and the ruling — which is
+     a background image, the first thing any renderer discards — goes first.
+     Set on every element, because the property does not inherit reliably
+     across the WebView versions this ships to. */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .page {
     width: ${page.w}; height: ${page.h}; display: grid;
     grid-template-columns: repeat(${layout.cols}, 1fr);
@@ -817,40 +875,102 @@ export function billSheetHtml(args: BillSheetArgs): string {
   /* No guide along the paper's own edge — there is nothing to cut there. */
   .cell:nth-child(${layout.cols}n) { border-right: none; }
   .cell:nth-child(n+${cells - layout.cols + 1}) { border-bottom: none; }
-  /* The pad, compressed. Same navy, same order of things — masthead, rule,
-     panel, items, totals, band — just at a size that survives being cut out. */
-  .s-head { display: flex; align-items: center; gap: 4px; padding-bottom: 2px;
-            border-bottom: 1.5px solid ${PAD.navy}; }
-  .s-logo { width: ${layout.font + 12}px; height: ${layout.font + 12}px; object-fit: contain; flex: 0 0 auto; }
-  .s-brand { font-weight: 800; font-size: ${layout.font + 3}px; flex: 1 1 auto; color: ${PAD.navy}; }
+  /* The pad, compressed. Same navy, the same order of things — masthead,
+     rule, panel, items, totals, band — but the weight is now carried by TYPE
+     and white space instead of by filled blocks. Three reasons, none of them
+     taste:
+
+     - Small white-on-navy text FILLS IN. The item header used to be a solid
+       navy bar carrying 6.5px white capitals; at that size the counters close
+       up on a tired laser drum and it prints as a dark smear with a word
+       somewhere inside it. Tinted panel, navy ink, same emphasis, legible.
+     - Ink is a running cost the owner pays. Three slips to a page, forty bills
+       a day, and the old slip laid down two solid navy bars each.
+     - ONE filled element per slip means the eye lands on it. When the header,
+       the table head and the total are all filled, none of them is emphasis.
+       TOTAL keeps the fill because TOTAL is the number being looked for. */
+  .s-head { display: flex; align-items: center; gap: 5px; padding-bottom: 3px;
+            border-bottom: 2px solid ${PAD.navy}; }
+  .s-logo { width: ${layout.font + 14}px; height: ${layout.font + 14}px; object-fit: contain; flex: 0 0 auto; }
+  .s-brand { font-weight: 800; font-size: ${layout.font + 4}px; flex: 1 1 auto;
+             color: ${PAD.navy}; letter-spacing: -0.2px; line-height: 1.15; }
   .s-tag {
-    font-size: ${layout.font - 2}px; font-weight: 800; letter-spacing: 1px;
-    background: ${PAD.navy}; color: #FFFFFF; border-radius: 2px; padding: 1px 5px;
+    font-size: ${Math.max(layout.font - 2, 6)}px; font-weight: 800; letter-spacing: 1.2px;
+    background: ${PAD.navy}; color: #FFFFFF; border-radius: 3px; padding: 1.5px 6px;
+    flex: 0 0 auto;
   }
   .s-meta {
-    margin: 3px 0; padding: 2px 4px; background: ${PAD.panel};
-    border-left: 2px solid ${PAD.navy}; border-radius: 1px;
+    margin: 4px 0 5px; padding: 3px 5px; background: ${PAD.panel};
+    border-left: 3px solid ${PAD.navy}; border-radius: 0 3px 3px 0;
   }
+  /* The shop name is what a filed stack is thumbed through by, so it is the
+     largest thing on the slip after the brand and it gets its own line. It
+     used to share one with the area, in the body size, in the same weight as
+     the bill number. */
+  .s-shop { font-weight: 800; font-size: ${layout.font + 1.5}px; line-height: 1.25; }
+  .s-ref { display: flex; justify-content: space-between; gap: 6px;
+           font-size: ${Math.max(layout.font - 1, 6)}px; color: ${PAD.quiet}; }
   .s-prov { color: #B3261E; font-weight: 800; }
-  .s-items { width: 100%; border-collapse: collapse; margin-bottom: 2px; }
+  .s-items { width: 100%; border-collapse: collapse; margin-bottom: 3px; }
   .s-items th {
-    background: ${PAD.navy}; color: #FFFFFF; font-size: ${Math.max(layout.font - 2.5, 5)}px;
-    text-align: left; padding: 1px 3px; letter-spacing: 0.5px; font-weight: 700;
+    background: ${PAD.panel}; color: ${PAD.navy}; font-size: ${Math.max(layout.font - 2, 6)}px;
+    text-align: left; padding: 2.5px 3px; letter-spacing: 0.7px; font-weight: 800;
+    text-transform: uppercase; border-bottom: 1.5px solid ${PAD.navy};
   }
   /* Same specificity trap as the A5 table above: the th selector beats a bare
      .s-num, so the heading is corrected at its own weight. */
   .s-items th.s-num { text-align: right; font-family: inherit; }
-  .s-items td { padding: 1.5px 3px; border-bottom: 1px solid #E3EAF2; }
+  /* Ruled like an invoice book, in a hairline rather than a line: these rows
+     run on past the last item as blanks, and a rule dark enough to read as
+     content would make an eight-line bill look like a twenty-line one. */
+  .s-items td { padding: 2.5px 3px; border-bottom: 1px solid #E6EDF4; }
   .s-items tbody tr:nth-child(even) td { background: #FAFCFE; }
   .s-name { word-break: break-word; }
   .s-num { text-align: right; white-space: nowrap; padding-left: 4px;
-           font-family: 'Menlo', 'Consolas', monospace; }
+           font-family: 'Menlo', 'Consolas', monospace; font-variant-numeric: tabular-nums; }
   .s-more { font-style: italic; color: #B3261E; border-bottom: none; }
-  .s-tot { width: 100%; border-collapse: collapse; }
-  .s-tot td { padding: 1px 0; }
-  .s-tot td { padding: 1.2px 3px; }
-  .s-grand td { background: ${PAD.navy}; color: #FFFFFF; font-weight: 800; font-size: ${layout.font + 1}px; padding: 2px 3px; }
-  .s-bal td { font-weight: 800; border-top: 1px solid ${PAD.navy}; }
+  /* The ruled blanks, and the reason they are a GRADIENT rather than empty
+     table rows.
+
+     A short order used to sit in the top quarter of the cell under a field of
+     white, which reads as a document that failed to print; every paper invoice
+     book solves that the same way, by ruling the lines whether or not anything
+     is written on them. That much is unchanged. What changed is who counts
+     them. A fixed minRows had to be guessed against a cell height it cannot
+     see, and a guess that is one row high does not look slightly wrong — it
+     pushes the small print off the bottom of a cell that clips, so the terms
+     silently stop being on the paper. This fills whatever is actually left
+     over, at any basket size, and cannot overflow because it only ever takes
+     free space. The min-height of 0 is load-bearing: a flex item defaults to
+     min-content and would otherwise refuse to shrink on a full basket.
+     (No backticks anywhere in here — this CSS lives inside a JS template
+     literal and one would end the string.)
+
+     The pitch matches the item rows exactly, so the ruling carries on through
+     the join rather than stepping at it. Change the row padding and this
+     number changes with it — it is derived from the same two figures. */
+  .s-fill {
+    flex: 1 1 auto; min-height: 0;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0, transparent ${ROW_H - 1}px,
+      #E6EDF4 ${ROW_H - 1}px, #E6EDF4 ${ROW_H}px);
+  }
+  .s-tot { width: 100%; border-collapse: collapse; margin-top: 1px; }
+  .s-tot td { padding: 2px 3px; color: ${PAD.quiet}; }
+  .s-grand td {
+    background: ${PAD.navy}; color: #FFFFFF; font-weight: 800;
+    font-size: ${layout.font + 2}px; padding: 3.5px 3px; letter-spacing: 0.3px;
+  }
+  /* What is still owed, and it is the second thing looked for after the total
+     — so it is banded rather than left as one more quiet row. Weight and rules
+     rather than a colour: these are printed in black by most of the people who
+     print them, and a red number that comes out grey is not a warning. */
+  .s-bal td {
+    font-weight: 800; font-size: ${layout.font + 0.5}px; color: ${PAD.ink};
+    background: ${PAD.panel}; border-top: 1px solid ${PAD.navy};
+    border-bottom: 1px solid ${PAD.navy}; padding: 3px;
+  }
   /* These slips get CUT APART and handed to shops, so the terms travel with
      each one — a warranty that only exists on the sheet the owner keeps is a
      warranty the buyer never received. Sized down hard: it must not push the
@@ -885,32 +1005,40 @@ export function billSheetHtml(args: BillSheetArgs): string {
      54 into nine piles — the counting the owner asked not to do by hand. */
   .l-split { font-size: 11px; font-weight: 400; color: #2F3E38; margin-top: 2px; line-height: 1.4; }
   .l-foot { margin-top: 10mm; font-size: 11px; color: #4A5A54; }
-  /* The cell is a column, and the footer is pushed to the BOTTOM of it.
-     Without this the whole slip sat in the top quarter of a 210mm column with
-     a field of white below it — which reads as a document that failed to
-     print rather than one that is simply short. The items table keeps its
-     natural height at the top; the signature and small print anchor the foot,
-     and the space between them is deliberate white space rather than a gap. */
+  /* The cell is a column: head and items keep their natural height at the top,
+     the filler eats whatever is left, and the tail is therefore anchored to
+     the foot without anything needing an auto top margin. */
   .cell { display: flex; flex-direction: column; }
-  .s-foot { margin-top: auto; }
+  /* Wide cells only (2-up). Totals to the right of the signature and the small
+     print instead of above them — see SheetLayout.wide. Reversing the row puts
+     the totals on the right while leaving them FIRST in source order, so the
+     stacked layouts and this one read from the same markup, and bottom-aligned
+     because the two columns are different heights and it is their feet that
+     want to line up on the cut. */
+  ${layout.wide ? `.s-bottom {
+    display: flex; flex-direction: row-reverse; align-items: flex-end; gap: 10mm;
+  }
+  .s-bottom .s-tot { flex: 0 0 46%; width: auto; }
+  .s-bottom .s-foot { flex: 1 1 0; min-width: 0; }` : ''}
+  .s-foot { margin-top: 6px; }
   .s-who {
     display: flex; justify-content: space-between; gap: 6px;
-    padding: 2px 4px; margin-bottom: 3px; background: ${PAD.panel};
-    border-left: 2px solid ${PAD.blue};
-    font-size: ${Math.max(layout.font - 1, 6)}px; color: ${PAD.ink};
+    padding: 2.5px 5px; margin-bottom: 4px; background: ${PAD.panel};
+    border-left: 3px solid ${PAD.blue}; border-radius: 0 3px 3px 0;
+    font-size: ${Math.max(layout.font - 1.5, 6)}px; color: ${PAD.ink};
   }
   .s-sign { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
   /* A line to sign ON. Drawn with a border rather than underscores so it is
      the same length whatever the font does. */
   .s-signline {
-    flex: 1 1 0; border-top: 1px solid ${PAD.ink}; padding-top: 2px;
-    margin-top: 22px; font-size: ${Math.max(layout.font - 2, 5.5)}px; color: #4A5A54;
+    flex: 1 1 0; border-top: 1px solid ${PAD.rule}; padding-top: 2.5px;
+    margin-top: 20px; font-size: ${Math.max(layout.font - 2.5, 5.5)}px; color: ${PAD.quiet};
     text-align: center;
   }
   .s-warranty {
-    margin-top: 3px; padding-top: 2px; border-top: 1px solid ${PAD.rule};
-    font-size: ${Math.max(layout.font - 2.5, 5)}px; line-height: 1.25;
-    color: #2F3E38; text-align: justify;
+    margin-top: 4px; padding-top: 3px; border-top: 1px solid ${PAD.rule};
+    font-size: ${Math.max(layout.font - 3, 5.5)}px; line-height: 1.3;
+    color: ${PAD.quiet}; text-align: justify;
   }
 </style>
 ${cover}

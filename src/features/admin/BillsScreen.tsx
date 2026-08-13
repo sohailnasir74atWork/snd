@@ -21,6 +21,7 @@ import type { Order } from '../../data/models';
 import { computeTotals, netOfTax, paidAgainstOrder, pickList, totalQty } from '../../lib/order';
 import { isProvisional } from '../../lib/serials';
 import { billHtml, billSheetHtml, orderConfirmationHtml } from '../../documents/templates';
+import { itemsPerSlip } from '../../documents/templates';
 import type { BillsPerPage, BillSlip } from '../../documents/templates';
 import { savePdf, sharePdf } from '../../documents/share';
 import { documentLogo } from '../../lib/logoCache';
@@ -418,16 +419,21 @@ export function BillsScreen({ navigation }: { navigation?: { navigate: (r: strin
               render={v => `${v} per page`}
             />
           </View>
-          {/* Says what the choice COSTS, not just what it is. Six-up is the
-              cheapest and the one that starts summarising long baskets, and
-              the owner should learn that here rather than from a printed
-              page that hides three items. */}
+          {/* Says what the choice COSTS, not just what it is — the owner should
+              learn that a layout summarises long baskets here, rather than from
+              a printed page that hides three items.
+
+              The item counts come from the layout table itself
+              (`itemsPerSlip`). They were typed in here as 20 and 12, neither
+              matched what the sheet did, and the 2-up figure was nearly double
+              what that cell physically holds. A number about what fits on paper
+              does not belong in a screen's copy. */}
           <Text style={styles.note}>
             {perPage === 2
-              ? 'Half a page each, cut once across. Up to 20 items — most paper used.'
+              ? `Half a page each, cut once across. Biggest print, up to ${itemsPerSlip(2)} items.`
               : perPage === 3
-                ? 'Full width, cut twice across. Up to 12 items each — best for most bills.'
-                : 'Two columns, cut across and down. Densest, but long product names wrap.'}
+                ? `Three tall strips, cut twice down the sheet. Holds the most — up to ${itemsPerSlip(3)} items — and stays readable.`
+                : `Four to a page, cut across and down. Densest: up to ${itemsPerSlip(4)} items, and long names wrap.`}
           </Text>
 
           <SectionLabel>What to pull off the shelf</SectionLabel>

@@ -1,4 +1,4 @@
-import { orderConfirmationHtml, billHtml, billSheetHtml, receiptHtml } from '../templates';
+import { orderConfirmationHtml, billHtml, billSheetHtml, receiptHtml, itemsPerSlip } from '../templates';
 import { DEFAULT_VISIBILITY } from '../../data/models';
 import type { CompanySettings, Order, Payment, Shop } from '../../data/models';
 
@@ -368,36 +368,62 @@ describe('bill sheet — many copies on one A4 (§8.2b)', () => {
     expect(html).toContain('4,900'); // 9,900 - 5,000
   });
 
-  test('a long basket is summarised, never silently cut', () => {
-    // Eighteen delivered lines into a 3-up column, which shows fourteen.
-    const many = {
+  /** n delivered lines, named so the first hidden one can be looked for. */
+  function basket(n: number) {
+    return {
       ...order,
-      items: Array.from({ length: 18 }, (_, i) => ({
+      items: Array.from({ length: n }, (_, i) => ({
         productId: `p${i}`, name: `Product ${String(i + 1).padStart(2, '0')}`,
         qty: 2, unitPrice: 100, deliveredQty: 2,
       })),
     };
+  }
+
+  test('a long basket is summarised, never silently cut', () => {
+    // Twenty-four delivered lines into a 3-up column, which shows eighteen.
     const html = billSheetHtml({
-      settings, perPage: 3, bills: [{ order: many, shop, paid: 0 }],
+      settings, perPage: 3, bills: [{ order: basket(24), shop, paid: 0 }],
     });
-    expect(html).toContain('+ 4 more items');
-    expect(html).toContain('covers all 18');
-    expect(html).toContain('Product 14');      // the last one shown
-    expect(html).not.toContain('Product 15');  // the first one hidden
+    expect(html).toContain('+ 6 more items');
+    expect(html).toContain('covers all 24');
+    expect(html).toContain('Product 18');      // the last one shown
+    expect(html).not.toContain('Product 19');  // the first one hidden
   });
 
-  test('the cap rises with the cell — the same basket fits at 2-up', () => {
-    // Sixteen lines overflow a 3-up strip and do NOT overflow a half-page one.
-    // If these two ever agree, a layout's cap has been changed without
-    // thinking about the space it actually has.
-    const many = {
-      ...order,
-      items: Array.from({ length: 16 }, (_, i) => ({
-        productId: `p${i}`, name: `Product ${i + 1}`, qty: 2, unitPrice: 100, deliveredQty: 2,
-      })),
-    };
-    expect(billSheetHtml({ settings, perPage: 2, bills: [{ order: many, shop, paid: 0 }] }))
-      .not.toContain('more item');
+  /**
+   * This test used to assert the opposite, and the app printed on that belief
+   * for a year: that a half-page 2-up cell holds the longest basket. It does
+   * not. 2-up and 4-up are both 148.5mm tall and only 3-up is 210mm, so the
+   * TALL layout is the roomy one and the wide one is the tightest — which is
+   * why 2-up's cap was set at twenty against a cell that held eleven, and
+   * lines twelve onward were cut off the paper with nothing to say so.
+   *
+   * Pinned in this direction so it cannot be quietly restored. If this fails,
+   * re-measure before changing the numbers: the caps come off a rendered A4,
+   * not off which layout sounds biggest.
+   */
+  test('the TALL layout holds the longest basket, not the widest', () => {
+    const caps = ([2, 3, 4] as const).map(perPage => {
+      const html = billSheetHtml({ settings, perPage, bills: [{ order: basket(30), shop, paid: 0 }] });
+      return Number(/covers all 30/.test(html) ? /\+ (\d+) more item/.exec(html)?.[1] ?? '0' : '0');
+    });
+    // Each layout hides 30 - cap lines, so the SMALLEST hidden count is the
+    // roomiest layout. That has to be 3-up.
+    const [hid2, hid3, hid4] = caps;
+    expect(hid3).toBeLessThan(hid2);
+    expect(hid3).toBeLessThan(hid4);
+  });
+
+  /**
+   * The cap is a promise about paper, so it has to be a promise the SCREEN
+   * makes with the same number. These were maintained separately and disagreed.
+   */
+  test('the screen reads its item counts off the layout table', () => {
+    for (const perPage of [2, 3, 4] as const) {
+      const cap = itemsPerSlip(perPage);
+      const html = billSheetHtml({ settings, perPage, bills: [{ order: basket(30), shop, paid: 0 }] });
+      expect(html).toContain(`+ ${30 - cap} more items`);
+    }
   });
 
   test('three to a page is three TALL columns — a receipt shape', () => {
