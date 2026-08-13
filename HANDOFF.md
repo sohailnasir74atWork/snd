@@ -16,7 +16,7 @@ and `PROGRESS.md` (the SRS-facing plan).
 | Branch | **`booker-screens-pass`**, 26 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 28` / `versionName "2.12"` — built 2026-08-13, see §5 |
+| Version | `versionCode 29` / `versionName "2.13"` — built 2026-08-13, see §5 |
 | TypeScript | 0 errors |
 | ESLint | 0 errors (115 warnings, all house style: `no-void`, `no-bitwise`, inline styles) |
 | Unit tests | **257 / 257**, 16 suites |
@@ -1791,8 +1791,9 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 28` / `versionName "2.12"` — `2.12` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
-| File | `builds/SnD-Manager-v2.12-build28.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Version | `versionCode 29` / `versionName "2.13"` — `2.13` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
+| File | `builds/SnD-Manager-v2.13-build29.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Same code as 28 | ⚠️ Yes. `29` is a version bump and nothing else — no source file differs from `eb0ec50`. It exists because a versionCode may only be uploaded to Play once, so a re-upload needs a fresh one. If you are hunting a behaviour change between 28 and 29, there isn't one. |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
 | Built | 2026-08-13, from `booker-screens-pass` — **not from `main`** |
@@ -1800,7 +1801,7 @@ cd android && ./gradlew bundleRelease
 | Needs | the rules deployed — done. `admitSignIn` is deployed too (§1l), which `versionCode 25` does NOT depend on but the owner's push notifications do. |
 | Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24, 25, 26 and 27. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
 
-> **`versionCode 28` carries TWO unrelated rounds**, written in parallel by two
+> **`versionCode 28` (and 29, which is the same code) carries TWO unrelated rounds**, written in parallel by two
 > sessions and committed separately:
 >
 > - **The bill sheet — §1n.** Bigger type at every layout, the restyle, and the
