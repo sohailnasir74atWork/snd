@@ -1,6 +1,6 @@
 # Handoff — SnD Manager
 
-**Written:** 2026-08-09 · **Last updated:** 2026-08-12 (§1j — the map audit; **all 15 findings fixed, none of the last 10 on a device or in a build**)
+**Written:** 2026-08-09 · **Last updated:** 2026-08-13 (§1n — bigger type on the bill sheet, and the 2-up cap that had been cutting items off the paper; **rendered to A4, never printed**)
 **Read this first**, then **`BUSINESS.md`** (2026-08-12 — whether this can be
 sold, what blocks revenue, and the order to do it in; the work items themselves
 live in §4 here), then `OPEN-BUGS.md` (the closed Round 8 backlog — nothing
@@ -16,10 +16,10 @@ and `PROGRESS.md` (the SRS-facing plan).
 | Branch | **`booker-screens-pass`**, 26 commits ahead of `main` (`git rev-list --count main..HEAD` — this number has been written wrong three times now; read it, do not trust it) and **not merged or pushed** — see §1b, §1c, §1d, §1e |
 | Remote | `github.com/sohailnasir74atWork/snd` (**public**) |
 | Uncommitted | none |
-| Version | `versionCode 27` / `versionName "2.11"` — built 2026-08-12, see §5 |
+| Version | `versionCode 28` / `versionName "2.12"` — built 2026-08-13, see §5 |
 | TypeScript | 0 errors |
-| ESLint | 0 errors (112 warnings, all house style: `no-void`, `no-bitwise`, inline styles; 110 of them predate §1f/§1g) |
-| Unit tests | **256 / 256**, 16 suites |
+| ESLint | 0 errors (115 warnings, all house style: `no-void`, `no-bitwise`, inline styles) |
+| Unit tests | **257 / 257**, 16 suites |
 | Rules tests | **243 / 243**, 2 suites — `npm run test:rules` |
 | CI | green on every push to `main` — [Actions](https://github.com/sohailnasir74atWork/snd/actions). **The branch above has never been through it.** |
 | Device | debug build driven on the emulator (§1b); §1d driven on the emulator in **both debug and a real release build** (R8 on — see §4.0b). ❗ **Nothing in §1c or §1d has been on a real phone** — see §4.1 before publishing |
@@ -181,6 +181,95 @@ nothing, written by nothing, left on old documents. It applied itself to every
 order for that shop without appearing on the order screen, the confirmation or
 the bill: the same objection that removed the percent chips. Do not wire it
 back up without putting the rate where the booker can see it.
+
+---
+
+## 1n. Bigger type on the bill sheet, and the cap that was never true
+
+2026-08-13, the owner's ask: *"on one page three bills, 4 bills, 2 bills — can
+we make the font a little bit bigger, and the bill styled modern, attractive."*
+257 tests (up 1), 0 tsc, 0 lint errors. Rules untouched, so `test:rules` was
+not re-run. **Rendered to A4 in headless Chrome and looked at; never printed,
+never on a device.**
+
+> **2, 3 and 4 per page already existed** — More → Bills → *Bills per A4 page*,
+> default 3 (§1g). Nothing was added there. The ask was about the type and the
+> look, and it turned into a correctness fix on the way.
+
+### The font was the ask; the cap was the bug
+
+Type went up about a fifth at every layout — 3-up 9→11px, 2-up 11→12, 4-up
+8.5→10. Sizing it meant measuring what a cell holds, and the numbers that were
+there did not survive being measured:
+
+| layout | cell | claimed | actually held |
+|---|---|---|---|
+| 2-up | 210 × 148.5mm | **20 items** | **11** |
+| 3-up | 99 × 210mm | 14 | 26+ |
+| 4-up | 105 × 148.5mm | 14 | ~15 |
+
+**2-up was cutting lines off the paper.** Not summarising them — the "+N more
+items" line only fires past `maxItems`, and `maxItems` was nine lines above
+what the cell could show, so lines twelve onward met `overflow: hidden` and
+were gone, on a document about money, with nothing anywhere saying so. Anyone
+who printed a fifteen-line bill two-up filed a bill missing four lines whose
+TOTAL still counted them.
+
+The reasoning that produced it is in the file and reads well: a half-page cell
+is big, so it holds the longest basket. It is wrong because **only 3-up is
+tall**. 2-up and 4-up are both 148.5mm high and differ only in width, so the
+widest layout was the tightest one, and the tall column that looked skinny had
+room to spare. Caps are now 9 / 18 / 9, each one under a measured ceiling.
+
+> The test that guarded this asserted the false direction — *"the cap rises
+> with the cell — the same basket fits at 2-up"* — so it went green on the bug
+> for a year. It has been rewritten to pin the true direction, with the reason
+> in the test body, because the plausible-sounding version is what someone will
+> reach for next time.
+
+### What replaced the guessing
+
+- **The ruled blanks are a gradient, not rows.** `minRows` is gone. It was a
+  per-layout guess at a cell height it could not see, and a guess one row high
+  does not look slightly wrong — it pushes the small print off the bottom of a
+  cell that clips, so the terms silently stop being on the paper. A flexible
+  ruled filler takes whatever is actually left, at any basket size, and cannot
+  overflow. Pitch is derived from the row's own line-height and padding so the
+  ruling carries through the join instead of stepping at it.
+- **The 2-up tail went sideways.** That cell runs out of height with a third of
+  its width empty, and the stacked totals block alone cost five item rows.
+  Beside the signature instead of above it, they cost none — which is what
+  makes 12px type affordable there at all.
+- **The screen no longer keeps its own copy of the numbers.** More → Bills said
+  "Up to 20 items" and "Up to 12"; neither matched `SHEET_LAYOUTS` and the
+  first was nearly double the truth. It reads `itemsPerSlip(perPage)` now. A
+  number about what fits on paper does not belong in a screen's copy.
+
+### The look
+
+Same navy, same order of things. The weight moved off filled blocks and onto
+type and white space: the item table's solid navy bar became a tinted panel
+with navy ink (small white-on-navy fills in on a tired drum, and three slips a
+page × forty bills a day is real toner), the shop name got its own line at the
+top of the size scale because that is what a filed stack is thumbed through by,
+Balance is banded because it is the second number anyone looks for, and TOTAL
+keeps the only fill on the slip so the eye still lands on it.
+
+> ❗ **`print-color-adjust: exact` was missing and now is not.** Print renderers
+> drop background colours and images by default. Everything structural on this
+> sheet is a background — the TOTAL bar, the Balance band, the table head, the
+> panel, and the ruling. Nobody had printed one, so nobody had found out. This
+> is a fix to §1g's sheet as much as to this round's.
+
+### What was NOT checked
+
+Headless Chrome is a fair proxy — the app renders through
+`react-native-html-to-pdf`, which is Android's WebView, also Chromium — and
+every primitive used here (flexbox in the cell, `linear-gradient`) was already
+in the template and already shipping. **It is still not a printer.** Nobody has
+put this on paper, checked that the cut guides line up through a real cut, or
+confirmed the backgrounds survive the WebView's print path. That is ten minutes
+with the owner's own printer and it has not been done.
 
 ---
 
@@ -1702,15 +1791,31 @@ cd android && ./gradlew bundleRelease
 
 | | |
 |---|---|
-| Version | `versionCode 27` / `versionName "2.11"` — `2.11` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
-| File | `builds/SnD-Manager-v2.11-build27.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
+| Version | `versionCode 28` / `versionName "2.12"` — `2.12` read out of the AAB's own manifest; the code is off [build.gradle:87](android/app/build.gradle#L87), because `versionCode` is a varint in the bundle's proto manifest and there is no `bundletool` on this Mac to decode it |
+| File | `builds/SnD-Manager-v2.12-build28.aab` (66 MB, outside the repo — AABs are not committed). Also at `android/app/build/outputs/bundle/release/app-release.aab` until the next build overwrites it. |
 | Signature | `jar verified` |
 | Signer | `CN=sohail, OU=solana, O=solana, L=wah, ST=punjab, C=PK` — SHA-1 `D1:95:A1:22:F9:1D:23:F1:B1:AD:22:21:FC:CB:F0:99:93:08:7A:F1`, the upload key in §3. Checked on this file, not assumed. |
-| Built | 2026-08-12 22:0x, from `booker-screens-pass` — **not from `main`** |
+| Built | 2026-08-13, from `booker-screens-pass` — **not from `main`** |
 | Reproducible | ✅ from the commit before the version bump; the tree was clean. |
 | Needs | the rules deployed — done. `admitSignIn` is deployed too (§1l), which `versionCode 25` does NOT depend on but the owner's push notifications do. |
 | Older bundles | `builds/` keeps 4, 5, 6, 14, 15, 16, 18, 19, 20, 22, 23, 24, 25, 26 and 27. `versionCode 17` and 21 were never kept — 17 lived only at `app/build/outputs/…` and was overwritten. |
 
+> **`versionCode 28` carries TWO unrelated rounds**, written in parallel by two
+> sessions and committed separately:
+>
+> - **The bill sheet — §1n.** Bigger type at every layout, the restyle, and the
+>   2-up cap that had been cutting items off the paper.
+> - **The shops list — NOT written up in this file.** A rebuilt More → Shops:
+>   call and WhatsApp buttons on every row, areas as collapsible groups
+>   carrying their own count and what they owe, a search box past eight shops
+>   that matches name / owner / area / the last four digits of a number, and
+>   the editor opening in place rather than at the end of the group. ❗ It came
+>   from another session, it is not described here, and **nobody has reviewed
+>   it or driven it** — it is green on tsc, lint and 257 tests, which is not the
+>   same thing. Whoever picks this up should read
+>   [ShopsScreen.tsx](src/features/admin/ShopsScreen.tsx) before trusting the
+>   screen, and write it up.
+>
 > **`versionCode 27` is everything found on 2026-08-12** — all fifteen map-audit findings, the new-shop count, the app-open start, the compact bill rows, the welcome and sign-out changes, the type scale, the Undo-void and the Action-screen caps. `versionCode 25` was the first build to contain any of it. That
 > is all fifteen map-audit findings (§1j), the new-shop count and the app-open
 > start (§1k), the compact bill rows, the welcome-screen changes, and the type

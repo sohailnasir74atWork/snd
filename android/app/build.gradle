@@ -84,8 +84,8 @@ android {
         applicationId "com.apptechsolutions.fieldsales"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 27
-        versionName "2.11"
+        versionCode 28
+        versionName "2.12"
 
         // Google Maps Android SDK key, injected into the manifest rather than
         // written into it: the manifest IS in version control and an exposed
